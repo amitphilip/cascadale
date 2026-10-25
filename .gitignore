@@ -30,7 +30,12 @@ pnpm-debug.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
 
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# left over from the local PGlite database and desktop build — never commit
+/data/
+/dist/
