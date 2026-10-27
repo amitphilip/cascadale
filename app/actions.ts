@@ -125,6 +125,46 @@ export async function saveAccount(form: FormData) {
   })
 }
 
+/**
+ * Match an account to the bank: set its opening balance so the opening balance plus every
+ * transaction up to `asOf` (default: all of them) equals the bank's balance on that day.
+ */
+export async function reconcileAccount(accountId: number, balance: number, asOf?: string) {
+  return run(async () => {
+    accountId = id.parse(accountId)
+    balance = money.parse(balance)
+    const db = await getDb()
+    const [account] = await must<
+      { openingBalance: number; akahuId: string | null; akahuStart: string | null }[]
+    >(
+      db
+        .from("accounts")
+        .select("openingBalance:opening_balance, akahuId:akahu_id, akahuStart:akahu_start")
+        .eq("id", accountId)
+    )
+    if (!account) throw new Error("Account not found")
+
+    const amounts = await selectAll<{ amount: number }>((from, to) => {
+      let query = db.from("transactions").select("amount").eq("account_id", accountId)
+      if (asOf) query = query.lte("date", isoDate.parse(asOf))
+      return query.order("id").range(from, to)
+    })
+    const total = amounts.reduce((s, r) => s + Number(r.amount), 0)
+    const openingBalance = Math.round((balance - total) * 100) / 100
+    await must(db.from("accounts").update({ opening_balance: openingBalance }).eq("id", accountId))
+
+    const previous = Number(account.openingBalance)
+    return {
+      previousOpeningBalance: previous,
+      openingBalance,
+      adjustment: Math.round((openingBalance - previous) * 100) / 100,
+      transactionsCounted: amounts.length,
+      // The hourly sync matches these to Akahu's balance itself (supabase/functions/akahu-sync).
+      overwrittenBySync: account.akahuId !== null && account.akahuStart === null,
+    }
+  })
+}
+
 export async function setAccountArchived(accountId: number, archived: boolean) {
   return run(async () => {
     await must(

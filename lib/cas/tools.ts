@@ -6,6 +6,7 @@ import { z } from "zod"
 import {
   categorizeMerchant,
   checkIn,
+  reconcileAccount,
   runAutoCategorize,
   saveUpcomingExpense,
   setCategoryBudgets,
@@ -462,6 +463,22 @@ export const TOOLS: CasTool[] = [
         .min(1),
     },
     run: ({ budgets }) => act(setCategoryBudgets(budgets)),
+  }),
+
+  tool({
+    name: "reconcile_account",
+    title: "Reconcile to bank balance",
+    access: "action",
+    description:
+      "Make an account's balance match the bank's: sets its opening balance so the opening balance plus every transaction up to asOf (default: all of them) equals the given balance. Use when get_overview's balance has drifted from the bank. Returns the old and new opening balance; overwrittenBySync means the hourly Akahu sync already matches this account to the bank and will undo the change.",
+    input: {
+      accountId: z.number().int().positive(),
+      balance: z.number().describe("The bank's balance, signed like get_overview (negative when owed)"),
+      asOf: isoDate
+        .optional()
+        .describe("The day the bank's balance is from, if it's older than the latest transactions"),
+    },
+    run: ({ accountId, balance, asOf }) => act(reconcileAccount(accountId, balance, asOf)),
   }),
 
   tool({
