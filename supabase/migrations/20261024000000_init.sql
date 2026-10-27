@@ -1,4 +1,4 @@
--- The Goal: schema, default categories, statement storage and query functions.
+-- Cascadale: schema, default categories, statement storage and query functions.
 --
 -- The app connects with the publishable key as the signed-in user. Every row belongs to
 -- a user (user_id defaults to auth.uid()) and row level security limits each user to

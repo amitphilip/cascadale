@@ -31,7 +31,7 @@ const fontMono = Geist_Mono({
 })
 
 export const metadata: Metadata = {
-  title: { default: "The Goal", template: "%s · The Goal" },
+  title: { default: "Cascadale", template: "%s · Cascadale" },
   description: "Personal finance analysis",
 }
 
@@ -75,7 +75,7 @@ export default async function RootLayout({
                 <SidebarInset className="min-w-0">
                   <header className="sticky top-0 z-20 flex min-h-12 shrink-0 items-center gap-2 border-b bg-background/95 px-2 pt-[env(safe-area-inset-top)] backdrop-blur supports-backdrop-filter:bg-background/80 md:hidden">
                     <SidebarTrigger className="size-11" />
-                    <span className="font-heading font-semibold">The Goal</span>
+                    <span className="font-heading font-semibold">Cascadale</span>
                   </header>
                   <div className="mx-auto flex w-full max-w-7xl min-w-0 flex-1 flex-col gap-6 px-3 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:p-4 md:p-8">
                     {children}

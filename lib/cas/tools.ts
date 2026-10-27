@@ -39,16 +39,16 @@ import {
   PAGE_SIZE,
 } from "@/lib/queries"
 
-// Every tool over your finances, defined once. The Goal's MCP server (lib/mcp.ts) offers the
+// Every tool over your finances, defined once. Cascadale's MCP server (lib/mcp.ts) offers the
 // read and action tools to clients such as claude.ai; the Cas agent (lib/cas/agent.ts)
 // gets the read and memory tools, so it never changes your finances itself. Changes go
 // through the MCP client, which asks you first.
 
 /**
- * - read: only reads; on The Goal's MCP server and for the agent
+ * - read: only reads; on Cascadale's MCP server and for the agent
  * - memory: reads or writes Cas's own notes; for the agent (the Cas MCP server
  *   shows them too)
- * - action: changes your data; only on The Goal's MCP server, so you confirm each one
+ * - action: changes your data; only on Cascadale's MCP server, so you confirm each one
  */
 export type ToolAccess = "read" | "memory" | "action"
 

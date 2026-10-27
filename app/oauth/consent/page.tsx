@@ -39,7 +39,7 @@ export default async function ConsentPage({
                 Connect {data.client.name || "this app"}?
               </CardTitle>
               <CardDescription>
-                It will be able to see everything in The Goal (accounts, transactions, bank
+                It will be able to see everything in Cascadale (accounts, transactions, bank
                 feeds, budgets and plans) and act on it as {data.user.email}: sync feeds,
                 categorize transactions, set budgets and add upcoming expenses.
               </CardDescription>

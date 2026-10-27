@@ -14,7 +14,6 @@ import {
   PiggyBankIcon,
   SparkleIcon,
   TagIcon,
-  TargetIcon,
   TrendUpIcon,
   UploadSimpleIcon,
 } from "@phosphor-icons/react"
@@ -35,12 +34,17 @@ import {
 } from "@/components/ui/sidebar"
 import { signOut } from "@/app/actions"
 import { useServerAction } from "@/hooks/use-server-action"
+import { LogoMark } from "@/components/logo"
 
 const NAV = [
   { href: "/", label: "Overview", icon: ChartPieSliceIcon },
   { href: "/statement", label: "Statement", icon: ScalesIcon },
   { href: "/income", label: "Income", icon: TrendUpIcon },
-  { href: "/recurring", label: "Recurring & budget", icon: ArrowsClockwiseIcon },
+  {
+    href: "/recurring",
+    label: "Recurring & budget",
+    icon: ArrowsClockwiseIcon,
+  },
   { href: "/plan", label: "Plan", icon: PiggyBankIcon },
   { href: "/transactions", label: "Transactions", icon: ListBulletsIcon },
   { href: "/accounts", label: "Accounts", icon: BankIcon },
@@ -73,13 +77,20 @@ export function AppSidebar({
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton size="lg" render={<Link href="/" onClick={() => setOpenMobile(false)} />}>
+            <SidebarMenuButton
+              size="lg"
+              render={<Link href="/" onClick={() => setOpenMobile(false)} />}
+            >
               <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-                <TargetIcon weight="bold" className="size-4" />
+                <LogoMark className="size-5" />
               </div>
               <div className="grid flex-1 text-left leading-tight">
-                <span className="truncate font-heading font-semibold">The Goal</span>
-                <span className="truncate text-xs text-muted-foreground">Personal finances</span>
+                <span className="truncate font-heading font-semibold">
+                  Cascadale
+                </span>
+                <span className="truncate text-xs text-muted-foreground">
+                  Personal finances
+                </span>
               </div>
             </SidebarMenuButton>
           </SidebarMenuItem>
@@ -94,7 +105,12 @@ export function AppSidebar({
                   <SidebarMenuButton
                     isActive={isActive(item.href)}
                     tooltip={item.label}
-                    render={<Link href={item.href} onClick={() => setOpenMobile(false)} />}
+                    render={
+                      <Link
+                        href={item.href}
+                        onClick={() => setOpenMobile(false)}
+                      />
+                    }
                   >
                     <item.icon />
                     <span>{item.label}</span>
@@ -116,7 +132,9 @@ export function AppSidebar({
             <SidebarMenuButton
               isActive={isActive("/settings")}
               tooltip="Settings"
-              render={<Link href="/settings" onClick={() => setOpenMobile(false)} />}
+              render={
+                <Link href="/settings" onClick={() => setOpenMobile(false)} />
+              }
             >
               <GearSixIcon />
               <span>Settings</span>

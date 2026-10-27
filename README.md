@@ -1,4 +1,4 @@
-# The Goal
+# Cascadale
 
 An app for analysing your personal finances. Import bank and card statements,
 categorize transactions (by hand or with rules), set budgets, and see where your
@@ -93,10 +93,10 @@ Two MCP servers (Streamable HTTP), each added to claude.ai as its own connector:
 
 | Connector     | URL                  | Purpose                                                       |
 | ------------- | -------------------- | ------------------------------------------------------------- |
-| **The Goal**  | `/api/mcp`           | Your data and actions, as plain tools                         |
-| **Cas**  | `/api/mcp/cas`  | Your financial advisor and accountant, as an agent            |
+| **Cascadale** | `/api/mcp`           | Your data and actions, as plain tools                         |
+| **Cas**       | `/api/mcp/cas`       | Your financial advisor and accountant, as an agent            |
 
-- **The Goal** has the read tools (`get_briefing`, `get_sync_status`,
+- **Cascadale** has the read tools (`get_briefing`, `get_sync_status`,
   `get_financial_picture`, `search_transactions`, …) and the action tools
   (`sync_bank_feeds`, `categorize_merchant`, `set_category_budgets`,
   `add_upcoming_expense`, `run_check_in`, …). Actions change your data, and
@@ -105,7 +105,7 @@ Two MCP servers (Streamable HTTP), each added to claude.ai as its own connector:
   ([lib/cas/agent.ts](lib/cas/agent.ts), Claude Opus 5.5 with the
   Anthropic key from Settings). It works through the read tools on its own,
   checks feed health, books, cash flow, budgets, bills and plan, and answers with
-  suggested actions for Claude to run on The Goal. It never changes your finances
+  suggested actions for Claude to run on Cascadale. It never changes your finances
   itself; it keeps notes (`cas_notes`) to remember decisions and to-dos
   between conversations, which `get_notes` and `resolve_note` expose.
 
@@ -122,7 +122,7 @@ and row level security still applies.
    `ask_cas` can take a few minutes, so allow long requests (its route sets
    `maxDuration = 300`).
 4. In claude.ai, go to **Settings → Connectors → Add custom connector** twice:
-   The Goal at `https://<your app>/api/mcp` and Cas at
+   Cascadale at `https://<your app>/api/mcp` and Cas at
    `https://<your app>/api/mcp/cas`. Sign in and allow each.
 
 ## Development

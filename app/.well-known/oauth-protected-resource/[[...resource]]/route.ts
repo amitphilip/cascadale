@@ -2,7 +2,7 @@ import { supabaseEnv } from "@/lib/db"
 import { MCP_RESOURCES } from "@/lib/mcp"
 
 const NAMES: Record<string, string> = {
-  [MCP_RESOURCES.tools]: "The Goal",
+  [MCP_RESOURCES.tools]: "Cascadale",
   [MCP_RESOURCES.cas]: "Cas",
 }
 
