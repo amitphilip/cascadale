@@ -2,7 +2,7 @@ import "server-only"
 
 import Papa from "papaparse"
 
-import { getDb, getUserId } from "@/lib/db"
+import { getDb, getOwnerId } from "@/lib/db"
 
 /**
  * Private storage bucket for the original statement files (see supabase/migrations),
@@ -22,7 +22,7 @@ function checkStored(storedName: string) {
 /** The bucket, and a function giving a stored file's path in the user's folder. */
 async function userFiles() {
   const db = await getDb()
-  const folder = await getUserId(db)
+  const folder = await getOwnerId(db)
   return {
     files: db.storage.from(BUCKET),
     folder,

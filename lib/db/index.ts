@@ -71,6 +71,14 @@ export async function getUserId(db?: Db) {
   return id
 }
 
+/** Whose data the signed-in user works on: their household's owner, or themselves. */
+export async function getOwnerId(db?: Db) {
+  db ??= await getDb()
+  const id = await must<string | null>(db.rpc("data_owner"))
+  if (!id) throw new Error("You're signed out. Sign in again.")
+  return id
+}
+
 type Result = { data: unknown; error: PostgrestError | null }
 
 export class DbError extends Error {

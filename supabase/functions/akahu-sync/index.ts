@@ -2,7 +2,8 @@
 //
 // Called two ways:
 // - by the app (Sync now, or right after linking an account) with the signed-in user's
-//   access token: syncs that user, or only `accountId` when the body names one;
+//   access token: syncs that user (a household member syncs the owner), or only
+//   `accountId` when the body names one;
 // - by the hourly pg_cron job (supabase/migrations) with AKAHU_CRON_SECRET: syncs every
 //   user with a linked account or saved tokens, or only `userId` when the body names one.
 //   A user relying on the AKAHU_* env tokens gets their accounts added by their first
@@ -439,7 +440,11 @@ Deno.serve(async (req) => {
     const { data, error } = await db.auth.getUser(token)
     if (error || !data.user) return json({ error: "You're signed out. Sign in again." }, 401)
     const accountId = Number.isInteger(body?.accountId) ? (body.accountId as number) : undefined
-    return json(await syncUser(data.user.id, "app", accountId))
+    // A household member syncs the owner's accounts.
+    const membership = await must<{ owner_id: string } | null>(
+      db.from("household_members").select("owner_id").eq("member_id", data.user.id).maybeSingle()
+    )
+    return json(await syncUser(membership?.owner_id ?? data.user.id, "app", accountId))
   } catch (err) {
     console.error(err)
     return json({ error: message(err) }, 500)
