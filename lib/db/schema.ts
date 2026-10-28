@@ -143,6 +143,8 @@ export type CategoryProjectionRow = {
 export type PlanThread = {
   id: number
   snapshot: PlanSnapshot
+  /** who rebuilt it (lib/plan-service.ts); null when made in the planner chat */
+  madeBy: "website" | "mcp" | "cas" | null
   createdAt: string
 }
 
@@ -194,6 +196,9 @@ export type CasNote = {
   kind: NoteKind
   content: string
   dueDate: string | null
+  /** a decision that changes the plan; it stays unapplied until a plan change carries it out */
+  affectsPlan: boolean
+  appliedAt: string | null
   createdAt: string
   resolvedAt: string | null
   resolution: string | null

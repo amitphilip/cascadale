@@ -123,7 +123,7 @@ export const COLUMNS = {
     "key, basis, growthRate:growth_rate, amount, excluded, updatedAt:updated_at",
   categoryProjections:
     "categoryId:category_id, basis, growthRate:growth_rate, amount, updatedAt:updated_at",
-  planThreads: "id, snapshot, createdAt:created_at",
+  planThreads: "id, snapshot, madeBy:made_by, createdAt:created_at",
   planMessages:
     "id, threadId:thread_id, role, content, context, plan, createdAt:created_at",
   upcomingExpenses:
@@ -131,7 +131,7 @@ export const COLUMNS = {
   checkIns:
     "id, periodStart:period_start, periodEnd:period_end, stats, result, createdAt:created_at",
   casNotes:
-    "id, kind, content, dueDate:due_date, createdAt:created_at, resolvedAt:resolved_at, resolution",
+    "id, kind, content, dueDate:due_date, affectsPlan:affects_plan, appliedAt:applied_at, createdAt:created_at, resolvedAt:resolved_at, resolution",
 } as const
 
 export { schema }

@@ -7,6 +7,7 @@ import { z } from "zod"
 import { anthropicClient } from "@/lib/anthropic"
 import { describeError } from "@/lib/categorize"
 import { TOOLS } from "@/lib/cas/tools"
+import type { DataHealth } from "@/lib/health"
 
 const MODEL = "claude-opus-5-5"
 const MAX_TOKENS = 16000
@@ -23,7 +24,10 @@ How to work:
 - Start with get_briefing unless the question is narrow, then dig in with the other tools. Check the numbers before you state them; never estimate what a tool can tell you.
 - Lead with what matters most. Flag problems early: a feed that stopped syncing, a projected balance below zero, spending well over pace, a bill no pot covers, a big upcoming expense.
 - Give concrete recommendations with amounts and dates, each grounded in the data. Say when you're assuming something.
-- You can't change their data yourself. When something should be done in the app, recommend it as an action for Claude to offer them, naming the action; Claude runs it through Cascadale's tools once they confirm. Actions available to Claude: ${ACTIONS.map((t) => `${t.name} (${t.title.toLowerCase()})`).join(", ")}. For anything else, say what to do in the app.
+- Check the data first: you're given data_health (stale bank feeds, drift between the app's balance and the bank's, pending transactions, whether the plan was built on balances that have since moved). Say plainly when an answer rests on stale or drifted data, and don't present those numbers as current.
+- The plan is the one on their Plan page. get_plan shows whether it's current; when it's out of date, say why and suggest rebuilding it.
+- You can't change their data yourself. When something should be done in the app, recommend it as an action for Claude to offer them, naming the action and its inputs (e.g. upsert_pot with name, amount, frequency, income and accounts; add_plan_adjustment with date, kind, target and amount; then regenerate_plan); Claude runs it through Cascadale's tools once they confirm.
+- When they decide something that changes the plan, save it as a decision note with affectsPlan, so the plan shows as out of date until it's applied, and give its note id with the recommended action (decisionIds). Actions available to Claude: ${ACTIONS.map((t) => `${t.name} (${t.title.toLowerCase()})`).join(", ")}. For anything else, say what to do in the app.
 - Keep your notes: save a note when you notice something worth tracking across conversations, when they state a decision or preference, or when you recommend a to-do. Resolve notes that are done or no longer true. Read your open notes (the briefing includes them) and follow up on them.
 - You are not a licensed financial adviser; for tax, legal or investment product decisions, give the general picture and suggest a professional where it really matters.
 
@@ -33,7 +37,7 @@ Answer for Claude to relay: plain and short, amounts in their currency, accounts
  * Ask Cas a question. It works through the read and memory tools as the current user
  * (getDb follows the request's token or cookies) and returns its answer.
  */
-export async function askCas(question: string, context?: string) {
+export async function askCas(question: string, context?: string, health?: DataHealth) {
   const client = await anthropicClient()
   const used: string[] = []
   const tools = TOOLS.filter((t) => t.access !== "action").map((t) =>
@@ -66,6 +70,7 @@ export async function askCas(question: string, context?: string) {
           content: [
             `Today is ${format(new Date(), "yyyy-MM-dd")}.`,
             context ? `What the conversation so far tells you:\n<context>\n${context}\n</context>` : "",
+            health ? `Data health, checked just now:\n<data_health>\n${JSON.stringify(health)}\n</data_health>` : "",
             `Question:\n${question}`,
           ]
             .filter(Boolean)

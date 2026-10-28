@@ -11,7 +11,8 @@
     "format": "prettier --write \"**/*.{ts,tsx}\"",
     "typecheck": "tsc --noEmit",
     "db:push": "supabase db push",
-    "db:reset": "supabase db reset"
+    "db:reset": "supabase db reset",
+    "test": "vitest run"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",
@@ -47,6 +48,7 @@
     "prettier-plugin-tailwindcss": "^0.8.1",
     "supabase": "^2.122.0",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^3.2.4"
   }
 }

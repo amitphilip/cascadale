@@ -1,5 +1,8 @@
 export type MoneyFormat = { currency: string; locale: string }
 
+/** The household's currency and locale until Settings says otherwise: Akahu is New Zealand only. */
+export const DEFAULT_MONEY: MoneyFormat = { currency: "NZD", locale: "en-NZ" }
+
 export function formatMoney(
   amount: number,
   { currency, locale }: MoneyFormat,

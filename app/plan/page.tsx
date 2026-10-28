@@ -19,6 +19,7 @@ import {
 
 import { CategoryBreakdown, type CategoryCost } from "./category-breakdown"
 import { NewPlanDialog } from "./new-plan-dialog"
+import { RebuildButton, RemoveAdjustmentButton, RemovePotButton } from "./plan-instructions"
 import { PlanAsk } from "./plan-ask"
 import { type ChatMessage } from "./plan-chat"
 import { PageHeader } from "@/components/page-header"
@@ -46,6 +47,10 @@ import {
   type PlanSnapshot,
   type Simulation,
 } from "@/lib/plan"
+import { isMaterialMove } from "@/lib/health"
+import { ACTOR_LABELS, type Actor } from "@/lib/plan-instructions"
+import { getPlanState } from "@/lib/plan-service"
+import { planDeps } from "@/lib/plan-repo"
 import { latestPlan, loadSnapshot } from "@/lib/planner"
 import { getPlanThread, getSettings } from "@/lib/queries"
 import { CADENCE_LABELS } from "@/lib/recurring"
@@ -68,7 +73,12 @@ const PRIORITY_DOT = {
 } as const
 
 export default async function PlanPage() {
-  const [fmt, thread, current] = await Promise.all([getSettings(), getPlanThread(), loadSnapshot()])
+  const [fmt, thread, current, deps] = await Promise.all([
+    getSettings(),
+    getPlanThread(),
+    loadSnapshot(),
+    planDeps("website"),
+  ])
 
   if (!current) {
     return (
@@ -93,6 +103,20 @@ export default async function PlanPage() {
   }
 
   const plan = thread && latestPlan(thread.messages)
+  // Out of date: instructions or Cas decisions not applied yet, new data, or balances that moved
+  const moved = thread
+    ? thread.snapshot.accounts.filter((a) => {
+        const now = current.accounts.find((c) => c.id === a.id)
+        return now && isMaterialMove(a.balance, now.balance)
+      })
+    : []
+  const newData =
+    thread && (thread.snapshot.dataEnd !== current.dataEnd || thread.snapshot.bills.length !== current.bills.length)
+  const state = await getPlanState(deps, [
+    ...(newData ? ["New transactions since this plan was built"] : []),
+    ...(moved.length ? [`Balances moved since it was built: ${moved.map((a) => a.name).join(", ")}`] : []),
+  ])
+
   if (!thread || !plan) {
     return (
       <>
@@ -109,7 +133,10 @@ export default async function PlanPage() {
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
-            <NewPlanDialog trigger={<Button>Create a plan</Button>} />
+            <div className="flex flex-wrap justify-center gap-2">
+              <NewPlanDialog trigger={<Button>Create a plan</Button>} />
+              {state.pots.length > 0 && <RebuildButton planId={null} size="default" />}
+            </div>
           </EmptyContent>
         </Empty>
       </>
@@ -119,7 +146,6 @@ export default async function PlanPage() {
   const snap = thread.snapshot
   const sim = simulate(snap, plan)
   const colors = potColors(sim)
-  const stale = snap.dataEnd !== current.dataEnd || snap.bills.length !== current.bills.length
   const messages: ChatMessage[] = thread.messages.map((m, i) => ({
     id: m.id,
     role: m.role,
@@ -132,7 +158,9 @@ export default async function PlanPage() {
     <>
       <PageHeader
         title="Plan"
-        description={`Data to ${formatDate(snap.dataEnd, fmt.locale)} · ${HORIZON_DAYS}-day projection`}
+        description={`Data to ${formatDate(snap.dataEnd, fmt.locale)} · ${HORIZON_DAYS}-day projection${
+          thread.madeBy ? ` · rebuilt by ${ACTOR_LABELS[thread.madeBy]}` : ""
+        }`}
       >
         <NewPlanDialog
           trigger={
@@ -143,13 +171,27 @@ export default async function PlanPage() {
         />
       </PageHeader>
 
-      {stale && (
+      {state.status === "out_of_date" && (
         <Alert>
           <ClockCounterClockwiseIcon />
-          <AlertTitle>New data since this plan</AlertTitle>
-          <AlertDescription>Start a new plan to include the latest transactions.</AlertDescription>
+          <AlertTitle>Out of date: {state.reasons.join(" · ")}</AlertTitle>
+          <AlertDescription>
+            <ul className="grid gap-1">
+              {state.pendingChanges.map((c) => (
+                <li key={`c${c.id}`}>
+                  • {c.summary ?? c.action} <span className="text-muted-foreground">({ACTOR_LABELS[c.actor]})</span>
+                </li>
+              ))}
+              {state.unappliedDecisions.map((d) => (
+                <li key={`d${d.id}`}>
+                  • Decision: {d.content} <span className="text-muted-foreground">(Cas)</span>
+                </li>
+              ))}
+            </ul>
+            Rebuild to apply your pots and adjustments to today’s data, or start a new plan.
+          </AlertDescription>
           <AlertAction>
-            <NewPlanDialog trigger={<Button size="sm" variant="outline">New plan</Button>} />
+            <RebuildButton planId={state.plan?.id ?? null} />
           </AlertAction>
         </Alert>
       )}
@@ -172,6 +214,8 @@ export default async function PlanPage() {
           <MoneyFlowCard plan={plan} sim={sim} colors={colors} fmt={fmt} />
 
           <Checks snap={snap} sim={sim} plan={plan} fmt={fmt} />
+
+          <InstructionsCard state={state} snap={snap} fmt={fmt} />
 
           <FocusCards plan={plan} fmt={fmt} />
 
@@ -373,6 +417,107 @@ function Checks({ snap, sim, plan, fmt }: Props & { plan: Plan }) {
     </Alert>
   )
 }
+
+const ACTION_LABELS: Record<string, string> = {
+  upsert_pot: "Pot",
+  remove_pot: "Pot removed",
+  add_plan_adjustment: "Adjustment",
+  remove_plan_adjustment: "Adjustment removed",
+  regenerate_plan: "Rebuilt",
+}
+
+/** Your pots, one-off adjustments and the latest changes to them, and who made each. */
+function InstructionsCard({
+  state,
+  snap,
+  fmt,
+}: {
+  state: Awaited<ReturnType<typeof getPlanState>>
+  snap: PlanSnapshot
+  fmt: MoneyFormat
+}) {
+  const { pots, adjustments, recentChanges } = state
+  if (!pots.length && !adjustments.length && !recentChanges.length) return null
+  const by = (actor: Actor, reason: string | null) =>
+    `${ACTOR_LABELS[actor]}${reason ? ` · ${reason}` : ""}`
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Your pots and adjustments</CardTitle>
+        <CardDescription className="text-pretty">
+          Set here or through Claude and Cas, and kept every time the plan is rebuilt.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-5 text-sm">
+        {pots.length > 0 && (
+          <ul className="grid gap-2">
+            {pots.map((p) => (
+              <li key={p.id} className="flex min-w-0 items-center gap-3">
+                <PiggyBankIcon className="size-4 shrink-0 text-muted-foreground" />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-medium">
+                    {p.name} · {formatMoney(p.amount, fmt)} {FREQUENCY_TEXT[p.frequency]}
+                  </div>
+                  <div className="truncate text-xs text-muted-foreground">
+                    {[
+                      p.incomeName && `from ${p.incomeName}`,
+                      p.fromAccountId && `out of ${accountName(snap, p.fromAccountId)}`,
+                      p.toAccountId && `into ${accountName(snap, p.toAccountId)}`,
+                      by(p.updatedBy, p.reason),
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </div>
+                </div>
+                <RemovePotButton name={p.name} />
+              </li>
+            ))}
+          </ul>
+        )}
+        {adjustments.length > 0 && (
+          <ul className="grid gap-2">
+            {adjustments.map((a) => {
+              const label =
+                a.kind === "skip"
+                  ? `Skip ${a.name}`
+                  : a.kind === "add"
+                    ? `${a.name}: ${formatMoney(a.amount ?? 0, fmt)}`
+                    : `${a.name} to ${formatMoney(a.amount ?? 0, fmt)}`
+              return (
+                <li key={a.id} className="flex min-w-0 items-center gap-3">
+                  <Badge variant="secondary" className="shrink-0 tabular-nums">
+                    {formatDate(a.date, fmt.locale)}
+                  </Badge>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate font-medium">{label}</div>
+                    <div className="truncate text-xs text-muted-foreground">{by(a.createdBy, a.reason)}</div>
+                  </div>
+                  <RemoveAdjustmentButton id={a.id} label={label} />
+                </li>
+              )
+            })}
+          </ul>
+        )}
+        {recentChanges.length > 0 && (
+          <div className="grid gap-1.5">
+            <div className="text-xs font-medium text-muted-foreground">Recent changes</div>
+            <ul className="grid gap-1 text-xs text-muted-foreground">
+              {recentChanges.slice(0, 8).map((c) => (
+                <li key={c.id} className="truncate">
+                  {formatDate(c.createdAt.slice(0, 10), fmt.locale)} · {ACTOR_LABELS[c.actor]} ·{" "}
+                  {c.summary ?? ACTION_LABELS[c.action] ?? c.action}
+                  {c.reason ? ` · ${c.reason}` : ""}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+const FREQUENCY_TEXT = { payday: "every payday", fortnightly: "a fortnight", monthly: "a month" } as const
 
 function FocusCards({ plan, fmt }: { plan: Plan; fmt: MoneyFormat }) {
   if (plan.focus.length === 0) return null
@@ -683,7 +828,8 @@ function UpcomingCard({ snap, sim, colors, fmt }: Props & { colors: Colors }) {
                     title={`${e.name} · ${accountName(snap, e.accountId)}`}
                   >
                     {e.kind === "set-aside" ? `To ${e.name}` : e.name}
-                    {e.kind === "bill" && !e.pot ? " · no pot" : ""}
+                    {e.kind === "bill" && !e.pot && !e.adjustment ? " · no pot" : ""}
+                    {e.adjustment ? " · one-off" : ""}
                   </span>
                   <span
                     className={cn(

@@ -86,6 +86,14 @@ cookies. `proxy.ts` refreshes the session and sends anyone signed out to
   money between your own accounts, card payments) are excluded from income
   and spending. Expense categories can have a monthly budget.
 - **Manual input:** add cash transactions, edit anything, and attach notes.
+- **Internal transfers:** money out of one of your accounts matched to the same
+  amount into another within three days is categorized as Transfer, both sides,
+  after every sync and import. The planner pairs them itself too, so they never
+  count as income or spending, and a transfer into a loan account counts as a
+  loan repayment bill.
+- **Recurring income and bills** are matched on the counterparty (descriptions
+  normalised, e.g. "D/C FROM Wood Partners Consu" and "Wood Partners Consu
+  WoodiPayroll41494-0579" are one payer), a ±20% amount band and the cadence.
 
 ## Use it from Claude (MCP)
 
@@ -109,7 +117,25 @@ Two MCP servers (Streamable HTTP), each added to claude.ai as its own connector:
   itself; it keeps notes (`cas_notes`) to remember decisions and to-dos
   between conversations, which `get_notes` and `resolve_note` expose.
 
-Tools are defined once in [lib/cas/tools.ts](lib/cas/tools.ts). Both
+- **The plan** is the one on the Plan page, through the same service
+  ([lib/plan-service.ts](lib/plan-service.ts)) the page and its actions use.
+  `get_plan` and `list_plan_adjustments` read it; `upsert_pot`, `remove_pot`,
+  `add_plan_adjustment` and `remove_plan_adjustment` record pots and one-off
+  changes (who, when and why, idempotent on an `operationId`) and mark the plan
+  out of date; `regenerate_plan` rebuilds it from today's data with all of them
+  applied and returns a diff. The Plan page shows the same pots, adjustments and
+  changes, and its Rebuild button does the same rebuild. Cas's decisions that
+  affect the plan also show it as out of date until they're applied.
+- **Data health:** `get_briefing`, `get_overview`, `get_plan`, `run_check_in`
+  and `ask_cas` return `data_health`: each account's last sync and Akahu refresh
+  time, drift between Cascadale's balance and the bank's, pending transactions
+  (included in balances, flagged, and dropped once they post), and how far the
+  plan's starting balances have moved.
+- Every response carries the household's currency and locale (NZD and en-NZ
+  unless Settings says otherwise).
+
+Tools are defined once in [lib/cas/tools.ts](lib/cas/tools.ts) (the plan tools in
+[lib/cas/plan-tools.ts](lib/cas/plan-tools.ts)). Both
 servers sign in through Supabase Auth's OAuth 2.1 server, so clients act as you,
 and row level security still applies.
 
@@ -130,6 +156,7 @@ and row level security still applies.
 ```bash
 npm run typecheck
 npm run lint
+npm test                              # vitest, on fixture data in tests/fixtures
 npx supabase migration new <change>   # then write SQL in supabase/migrations/
 npm run db:push                       # apply new migrations to the linked project
 ```
