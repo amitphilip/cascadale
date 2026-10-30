@@ -45,7 +45,8 @@ export type SnapshotInputs = {
 /**
  * The transactions the planner counts: transfers between your own accounts are left out
  * (both sides, matched by amount and date, whether or not they're categorized yet), except
- * the cash side of a loan repayment, which is a bill.
+ * the cash side of a loan repayment, which is a bill. Nothing on a loan account itself
+ * counts: its principal and interest lines are that same repayment seen from the loan.
  */
 export function planTransactions(txs: PlanTx[], accounts: { id: number; type: string }[]) {
   // only uncategorized money and transfers can be one side of a transfer; a categorized
@@ -56,8 +57,10 @@ export function planTransactions(txs: PlanTx[], accounts: { id: number; type: st
   const pairs = pairTransfers(candidates)
   const loans = loanRepaymentIds(candidates, accounts, pairs)
   const paired = new Set(pairs.flatMap((p) => [p.outId, p.inId]))
+  const loanAccounts = new Set(accounts.filter((a) => a.type === "loan").map((a) => a.id))
   const out: RecurringTx[] = []
   for (const t of txs) {
+    if (loanAccounts.has(t.accountId)) continue
     if (loans.has(t.id)) {
       out.push({
         date: t.date,

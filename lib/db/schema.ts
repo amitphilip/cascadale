@@ -17,6 +17,9 @@ export const ACCOUNT_TYPES = [
 ] as const
 export type AccountType = (typeof ACCOUNT_TYPES)[number]
 
+export const ASSET_KINDS = ["property", "vehicle", "investment", "other"] as const
+export type AssetKind = (typeof ASSET_KINDS)[number]
+
 /** How a rule matches: substring of the description, or normalized merchant key. */
 export const RULE_KINDS = ["contains", "merchant"] as const
 export type RuleKind = (typeof RULE_KINDS)[number]
@@ -31,6 +34,16 @@ export type CategorySource = (typeof CATEGORY_SOURCES)[number]
 
 export const CATEGORY_KINDS = ["expense", "income", "transfer"] as const
 export type CategoryKind = (typeof CATEGORY_KINDS)[number]
+
+/** Something you own and value by hand, for net worth. */
+export type Asset = {
+  id: number
+  name: string
+  kind: AssetKind
+  value: number
+  valuedOn: string
+  note: string | null
+}
 
 export type Account = {
   id: number

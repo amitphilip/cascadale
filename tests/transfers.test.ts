@@ -57,3 +57,29 @@ describe("planTransactions", () => {
     expect(loanRepayments.size).toBe(14)
   })
 })
+
+describe("planTransactions on a loan account", () => {
+  const tx = (id: number, accountId: number, description: string, amount: number) => ({
+    id,
+    date: "2026-10-29",
+    accountId,
+    description,
+    amount,
+    categoryId: null,
+    categoryKind: null,
+    ruleId: null,
+    ruleNote: null,
+  })
+
+  test("the loan's own lines aren't income or spending", () => {
+    const accounts = [
+      { id: 1, type: "checking" },
+      { id: 2, type: "loan" },
+    ]
+    const { txs } = planTransactions(
+      [tx(1, 2, "Principal payment", 222.22), tx(2, 2, "Interest", -620.85), tx(3, 1, "Salary", 5000)],
+      accounts
+    )
+    expect(txs.map((t) => t.description)).toEqual(["Salary"])
+  })
+})

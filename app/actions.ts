@@ -7,6 +7,7 @@ import { z } from "zod"
 
 import {
   ACCOUNT_TYPES,
+  ASSET_KINDS,
   CATEGORY_KINDS,
   type PlanMessage,
   type PlanThread,
@@ -108,6 +109,37 @@ async function insertId(db: Db, table: string, row: object) {
   return (
     await must<{ id: number }>(db.from(table).insert(row).select("id").single())
   ).id
+}
+
+// ── Assets ──────────────────────────────────────────────────────────────────
+
+const assetSchema = z.object({
+  name: z.string().trim().min(1, "Name is required"),
+  kind: z.enum(ASSET_KINDS),
+  value: money.nonnegative("Enter what it's worth"),
+  valuedOn: isoDate,
+  note: optionalText,
+})
+
+export async function saveAsset(form: FormData) {
+  return run(async () => {
+    const { valuedOn, ...data } = assetSchema.parse(fields(form))
+    const row = { ...data, valued_on: valuedOn }
+    const db = await getDb()
+    const assetId = form.get("id") ? id.parse(form.get("id")) : null
+    if (assetId) {
+      await must(db.from("assets").update(row).eq("id", assetId))
+      return { id: assetId }
+    }
+    return { id: await insertId(db, "assets", row) }
+  })
+}
+
+export async function deleteAsset(assetId: number) {
+  return run(async () => {
+    await must((await getDb()).from("assets").delete().eq("id", id.parse(assetId)))
+    return {}
+  })
 }
 
 // ── Accounts ────────────────────────────────────────────────────────────────

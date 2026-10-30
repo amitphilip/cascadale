@@ -6,6 +6,7 @@ import { format } from "date-fns"
 import { COLUMNS, DbError, getDb, must, selectAll } from "@/lib/db"
 import type {
   AccountType,
+  Asset,
   Category,
   CategoryKind,
   CategoryProjectionRow,
@@ -62,6 +63,13 @@ export async function getAccountsWithBalances() {
     lastDate: r.last_date,
     balance: Math.round((Number(r.opening_balance) + Number(r.tx_total)) * 100) / 100,
   }))
+}
+
+export async function getAssets() {
+  const rows = await must<Asset[]>(
+    (await db()).from("assets").select(COLUMNS.assets).order("id")
+  )
+  return rows.map((a) => ({ ...a, value: Number(a.value) }))
 }
 
 export async function getCategories() {

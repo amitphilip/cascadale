@@ -47,6 +47,13 @@ export const ACCOUNT_TYPE_LABELS: Record<string, string> = {
   other: "Other",
 }
 
+export const ASSET_KIND_LABELS: Record<string, string> = {
+  property: "Property",
+  vehicle: "Vehicle",
+  investment: "Investment",
+  other: "Other",
+}
+
 export const CATEGORY_KIND_LABELS: Record<string, string> = {
   expense: "Expense",
   income: "Income",

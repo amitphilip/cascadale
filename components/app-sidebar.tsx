@@ -5,6 +5,7 @@ import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import {
   ArrowsClockwiseIcon,
+  CoinsIcon,
   BankIcon,
   ChartPieSliceIcon,
   ScalesIcon,
@@ -48,6 +49,7 @@ const NAV = [
   { href: "/plan", label: "Plan", icon: PiggyBankIcon },
   { href: "/transactions", label: "Transactions", icon: ListBulletsIcon },
   { href: "/accounts", label: "Accounts", icon: BankIcon },
+  { href: "/net-worth", label: "Net worth", icon: CoinsIcon },
   { href: "/import", label: "Import statements", icon: UploadSimpleIcon },
   { href: "/categories", label: "Categories & rules", icon: TagIcon },
   { href: "/review", label: "Review categories", icon: SparkleIcon },
