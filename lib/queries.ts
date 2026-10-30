@@ -1,7 +1,6 @@
 import "server-only"
 
 import { connection } from "next/server"
-import { format } from "date-fns"
 
 import { COLUMNS, DbError, getDb, must, selectAll } from "@/lib/db"
 import type {
@@ -23,6 +22,7 @@ import { DEFAULT_MONEY, type MoneyFormat } from "@/lib/format"
 import type { CategoryProjection, RecurringOverride, RecurringTx } from "@/lib/recurring"
 import { merchantKey } from "@/lib/rules"
 import type { PlanTx } from "@/lib/snapshot"
+import { todayLocal } from "@/supabase/functions/_shared/akahu"
 
 async function db() {
   await connection()
@@ -70,6 +70,19 @@ export async function getAssets() {
     (await db()).from("assets").select(COLUMNS.assets).order("id")
   )
   return rows.map((a) => ({ ...a, value: Number(a.value) }))
+}
+
+/** Every transaction's account, date and amount, for rebuilding balances over time. */
+export async function getTransactionAmounts() {
+  const client = await db()
+  const rows = await selectAll<{ accountId: number; date: string; amount: number }>((from, to) =>
+    client
+      .from("transactions")
+      .select("accountId:account_id, date, amount")
+      .order("id")
+      .range(from, to)
+  )
+  return rows.map((t) => ({ ...t, amount: Number(t.amount) }))
 }
 
 export async function getCategories() {
@@ -569,7 +582,7 @@ export async function getUpcomingExpenses() {
     (await db())
       .from("upcoming_expenses")
       .select(COLUMNS.upcomingExpenses)
-      .gte("due_date", format(new Date(), "yyyy-MM-dd"))
+      .gte("due_date", todayLocal())
       .order("due_date")
       .order("id")
   )

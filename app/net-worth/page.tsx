@@ -10,7 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ACCOUNT_TYPE_LABELS, ASSET_KIND_LABELS, formatDate, formatMoney } from "@/lib/format"
 import { buildNetWorth, type NetWorthAccount } from "@/lib/net-worth"
 import { getAccountsWithBalances, getAssets, getSettings } from "@/lib/queries"
-import { localDate } from "@/supabase/functions/_shared/akahu"
+import { todayLocal } from "@/supabase/functions/_shared/akahu"
 
 export const metadata: Metadata = { title: "Net worth" }
 
@@ -22,7 +22,7 @@ export default async function NetWorthPage() {
   ])
   const worth = buildNetWorth(accounts, assets)
   const money = (n: number) => formatMoney(n, fmt)
-  const today = localDate(new Date().toISOString())
+  const today = todayLocal()
 
   const summary = [
     { label: "Net worth", value: worth.netWorth },

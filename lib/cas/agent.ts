@@ -1,13 +1,13 @@
 import "server-only"
 
 import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod"
-import { format } from "date-fns"
 import { z } from "zod"
 
 import { anthropicClient } from "@/lib/anthropic"
 import { describeError } from "@/lib/categorize"
 import { TOOLS } from "@/lib/cas/tools"
 import type { DataHealth } from "@/lib/health"
+import { todayLocal } from "@/supabase/functions/_shared/akahu"
 
 const MODEL = "claude-opus-5-5"
 const MAX_TOKENS = 16000
@@ -68,7 +68,7 @@ export async function askCas(question: string, context?: string, health?: DataHe
         {
           role: "user",
           content: [
-            `Today is ${format(new Date(), "yyyy-MM-dd")}.`,
+            `Today is ${todayLocal()}.`,
             context ? `What the conversation so far tells you:\n<context>\n${context}\n</context>` : "",
             health ? `Data health, checked just now:\n<data_health>\n${JSON.stringify(health)}\n</data_health>` : "",
             `Question:\n${question}`,

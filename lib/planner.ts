@@ -2,7 +2,6 @@ import "server-only"
 
 import Anthropic from "@anthropic-ai/sdk"
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod"
-import { format } from "date-fns"
 
 import { anthropicClient } from "@/lib/anthropic"
 import { describeError } from "@/lib/categorize"
@@ -31,6 +30,7 @@ import {
 } from "@/lib/queries"
 import { applyPots, potSetAside, type PotInstruction } from "@/lib/plan-instructions"
 import { snapshotFromData } from "@/lib/snapshot"
+import { todayLocal } from "@/supabase/functions/_shared/akahu"
 
 const MODEL = "claude-opus-5-5"
 const MAX_TOKENS = 64000
@@ -63,7 +63,7 @@ export async function loadPlanData() {
     projections,
     upcoming,
     currency: fmt.currency,
-    today: format(new Date(), "yyyy-MM-dd"),
+    today: todayLocal(),
   })
 }
 

@@ -24,6 +24,7 @@ import {
   akahuApi,
   daysBefore,
   localDate,
+  todayLocal,
   type AkahuAccount,
   type AkahuApi,
   type AkahuTokens,
@@ -392,7 +393,7 @@ async function syncUser(userId: string, runBy: RunBy, onlyAccountId?: number) {
  * same amount into another within a few days. Returns how many it categorized.
  */
 async function categorizeTransfers(userId: string) {
-  const since = new Date(Date.now() - PAIR_DAYS * DAY).toISOString().slice(0, 10)
+  const since = daysBefore(todayLocal(), PAIR_DAYS).slice(0, 10)
   const rows = await selectAll<{
     id: number
     accountId: number

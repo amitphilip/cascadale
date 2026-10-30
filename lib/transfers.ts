@@ -1,8 +1,7 @@
 import "server-only"
 
-import { addDays, format } from "date-fns"
-
 import { must, selectAll, type Db } from "@/lib/db"
+import { daysBefore, todayLocal } from "@/supabase/functions/_shared/akahu"
 import { pairTransfers } from "@/supabase/functions/_shared/transfers"
 
 /** How far back new syncs and imports are paired. */
@@ -27,7 +26,7 @@ type Row = {
  * function does the same after each scheduled sync.
  */
 export async function categorizeInternalTransfers(db: Db, days = PAIR_DAYS) {
-  const since = format(addDays(new Date(), -days), "yyyy-MM-dd")
+  const since = daysBefore(todayLocal(), days).slice(0, 10)
   const rows = await selectAll<Row>((from, to) =>
     db
       .from("transactions")

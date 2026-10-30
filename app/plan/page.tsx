@@ -3,22 +3,25 @@ import Link from "next/link"
 import {
   ArrowDownLeftIcon,
   ArrowRightIcon,
-  ArrowUpRightIcon,
+  CaretRightIcon,
   CheckCircleIcon,
   ClockCounterClockwiseIcon,
-  CoinsIcon,
   LightbulbIcon,
   PiggyBankIcon,
-  ShoppingCartIcon,
   SparkleIcon,
   UploadSimpleIcon,
-  VaultIcon,
-  WalletIcon,
   WarningCircleIcon,
 } from "@phosphor-icons/react/ssr"
 
 import { CategoryBreakdown, type CategoryCost } from "./category-breakdown"
 import { NewPlanDialog } from "./new-plan-dialog"
+import {
+  AllocationCard,
+  NetWorthCard,
+  UpcomingCard,
+  VerdictCard,
+  type Allocation,
+} from "./plan-summary-cards"
 import { RebuildButton, RemoveAdjustmentButton, RemovePotButton } from "./plan-instructions"
 import { PlanAsk } from "./plan-ask"
 import { type ChatMessage } from "./plan-chat"
@@ -48,18 +51,33 @@ import {
   type Simulation,
 } from "@/lib/plan"
 import { isMaterialMove } from "@/lib/health"
+import { buildNetWorth, monthEnds, netWorthHistory, pointBack } from "@/lib/net-worth"
+import { planVerdict } from "@/lib/plan-verdict"
 import { ACTOR_LABELS, type Actor } from "@/lib/plan-instructions"
 import { getPlanState } from "@/lib/plan-service"
 import { planDeps } from "@/lib/plan-repo"
 import { latestPlan, loadSnapshot } from "@/lib/planner"
-import { getPlanThread, getSettings } from "@/lib/queries"
+import {
+  getAccountsWithBalances,
+  getAssets,
+  getPlanThread,
+  getSettings,
+  getTransactionAmounts,
+} from "@/lib/queries"
 import { CADENCE_LABELS } from "@/lib/recurring"
 import { cn } from "@/lib/utils"
+import { localDate } from "@/supabase/functions/_shared/akahu"
 
 export const metadata: Metadata = { title: "Plan" }
 
-/** Upcoming events listed at the bottom. */
+/** Days of upcoming bills and paydays listed. */
 const UPCOMING_DAYS = 14
+/** Regular income smaller than this, such as bank interest, isn't worth a payday card. */
+const MIN_PAYDAY = 50
+/** Month-ends of net worth charted. */
+const HISTORY_MONTHS = 12
+/** How far back the verdict compares net worth and debts. */
+const TREND_MONTHS = 3
 /** Pots and accounts beyond this many share a neutral color, never a sixth hue. */
 const MAX_SERIES = SERIES_COLORS.length
 const OTHER_COLOR = "var(--muted-foreground)"
@@ -73,11 +91,14 @@ const PRIORITY_DOT = {
 } as const
 
 export default async function PlanPage() {
-  const [fmt, thread, current, deps] = await Promise.all([
+  const [fmt, thread, current, deps, accounts, assets, txs] = await Promise.all([
     getSettings(),
     getPlanThread(),
     loadSnapshot(),
     planDeps("website"),
+    getAccountsWithBalances(),
+    getAssets(),
+    getTransactionAmounts(),
   ])
 
   if (!current) {
@@ -143,9 +164,27 @@ export default async function PlanPage() {
     )
   }
 
-  const snap = thread.snapshot
+  // today's data, not the snapshot the plan was built on, so nothing shown is in the past
+  const snap = current
   const sim = simulate(snap, plan)
   const colors = potColors(sim)
+  const worth = buildNetWorth(accounts, assets)
+  const history = netWorthHistory(
+    accounts,
+    txs,
+    worth.totals.assets,
+    monthEnds(snap.dataEnd, HISTORY_MONTHS)
+  )
+  const from = pointBack(history, TREND_MONTHS)
+  const verdict = planVerdict({
+    sim,
+    warnings: state.status === "out_of_date" ? [] : plan.warnings,
+    balanceOf: (id) => snap.accounts.find((a) => a.id === id)?.balance ?? 0,
+    accountName: (id) => accountName(snap, id),
+    trend: from ? { months: TREND_MONTHS, from, to: history[history.length - 1] } : null,
+    money: (n) => formatMoney(n, fmt),
+    date: (iso) => formatDate(iso, fmt.locale),
+  })
   const messages: ChatMessage[] = thread.messages.map((m, i) => ({
     id: m.id,
     role: m.role,
@@ -174,8 +213,9 @@ export default async function PlanPage() {
       {state.status === "out_of_date" && (
         <Alert>
           <ClockCounterClockwiseIcon />
-          <AlertTitle>Out of date: {state.reasons.join(" · ")}</AlertTitle>
+          <AlertTitle>This plan is out of date</AlertTitle>
           <AlertDescription>
+            <p>{state.reasons.join(" · ")}</p>
             <ul className="grid gap-1">
               {state.pendingChanges.map((c) => (
                 <li key={`c${c.id}`}>
@@ -198,26 +238,16 @@ export default async function PlanPage() {
 
       <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] items-start gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="grid min-w-0 gap-6">
-          <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-            <StatCard icon={WalletIcon} label="Income" value={sim.monthly.income} fmt={fmt} />
-            <StatCard icon={VaultIcon} label="Set aside" value={sim.monthly.setAside} fmt={fmt} />
-            <StatCard icon={ShoppingCartIcon} label="Day-to-day" value={sim.monthly.variable} fmt={fmt} />
-            <StatCard
-              icon={CoinsIcon}
-              label="Left over"
-              value={sim.monthly.free}
-              fmt={fmt}
-              tone={sim.monthly.free < 0 ? "bad" : "good"}
-            />
-          </div>
+          <VerdictCard verdict={verdict} />
 
-          <MoneyFlowCard plan={plan} sim={sim} colors={colors} fmt={fmt} />
+          <AllocationCard
+            income={sim.monthly.income}
+            rows={allocation(sim, colors, snap)}
+            summary={state.status === "out_of_date" ? undefined : plan.summary}
+            fmt={fmt}
+          />
 
-          <Checks snap={snap} sim={sim} plan={plan} fmt={fmt} />
-
-          <InstructionsCard state={state} snap={snap} fmt={fmt} />
-
-          <FocusCards plan={plan} fmt={fmt} />
+          <PaydayCards snap={snap} plan={plan} colors={colors} fmt={fmt} />
 
           <CategoryBreakdown
             threadId={thread.id}
@@ -226,13 +256,28 @@ export default async function PlanPage() {
             fmt={fmt}
           />
 
-          <PaydayCards snap={snap} plan={plan} colors={colors} fmt={fmt} />
+          <NetWorthCard history={history} owned={worth.owned} owed={worth.totals.debts} fmt={fmt} />
 
-          <PotsCard snap={snap} sim={sim} colors={colors} fmt={fmt} />
+          <UpcomingCard
+            events={sim.events.filter((e) => e.date <= sim.days[Math.min(UPCOMING_DAYS, sim.days.length) - 1])}
+            days={UPCOMING_DAYS}
+            accountName={(id) => accountName(snap, id)}
+            fmt={fmt}
+          />
 
-          <BalancesCard snap={snap} sim={sim} fmt={fmt} />
+          {state.status !== "out_of_date" && <FocusCards plan={plan} fmt={fmt} />}
 
-          <UpcomingCard snap={snap} sim={sim} colors={colors} fmt={fmt} />
+          <details className="group grid gap-6">
+            <summary className="flex cursor-pointer list-none items-center gap-2 font-heading font-semibold">
+              <CaretRightIcon className="transition-transform group-open:rotate-90" />
+              Pots, balances and adjustments
+            </summary>
+            <div className="mt-6 grid min-w-0 gap-6">
+              <InstructionsCard state={state} snap={snap} fmt={fmt} />
+              <PotsCard snap={snap} sim={sim} colors={colors} fmt={fmt} />
+              <BalancesCard snap={snap} sim={sim} fmt={fmt} />
+            </div>
+          </details>
         </div>
 
         <PlanAsk threadId={thread.id} messages={messages} />
@@ -248,6 +293,25 @@ type Props = { snap: PlanSnapshot; sim: Simulation; fmt: MoneyFormat }
 function potColors(sim: Simulation): Colors {
   const ordered = [...sim.potSummaries].sort((a, b) => b.monthlyIn - a.monthlyIn)
   return new Map(ordered.map((p, i) => [p.name, SERIES_COLORS[i] ?? OTHER_COLOR]))
+}
+
+/** The month's income, pot by pot, then spending and what's left. */
+function allocation(sim: Simulation, colors: Colors, snap: PlanSnapshot): Allocation[] {
+  return [
+    ...sim.potSummaries
+      .toSorted((a, b) => b.monthlyIn - a.monthlyIn)
+      .map((p) => ({
+        key: p.name,
+        label: p.name,
+        detail: p.covers.length
+          ? `Pays ${p.covers.length} ${p.covers.length === 1 ? "bill" : "bills"}`
+          : `Stays in ${accountName(snap, p.accountId)}`,
+        color: colors.get(p.name)!,
+        value: p.monthlyIn,
+      })),
+    { key: "spend", label: "Day-to-day spending", color: SPEND_COLOR, value: sim.monthly.variable },
+    { key: "left", label: "Left over", color: LEFT_COLOR, value: sim.monthly.free },
+  ]
 }
 
 /** Monthly spending per expense category, biggest first. */
@@ -276,47 +340,6 @@ const accountName = (snap: PlanSnapshot, id: number) =>
 
 const money = (n: number, fmt: MoneyFormat) => formatMoney(n, fmt, { compact: Math.abs(n) >= 10000 })
 
-function StatCard({
-  icon: Icon,
-  label,
-  value,
-  fmt,
-  tone,
-}: {
-  icon: React.ComponentType<{ className?: string }>
-  label: string
-  value: number
-  fmt: MoneyFormat
-  tone?: "good" | "bad"
-}) {
-  return (
-    <Card size="sm">
-      <CardContent className="flex items-center gap-2 sm:gap-3">
-        <div
-          className={cn(
-            "flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted sm:size-10",
-            tone === "bad" && "bg-destructive/10 text-destructive",
-            tone === "good" && "bg-foreground text-background"
-          )}
-        >
-          <Icon className="size-4 sm:size-5" />
-        </div>
-        <div className="min-w-0">
-          <div className="truncate text-xs text-muted-foreground">{label} /mo</div>
-          <div
-            className={cn(
-              "truncate font-heading text-base font-semibold tabular-nums sm:text-xl",
-              tone === "bad" && "text-destructive"
-            )}
-          >
-            {money(value, fmt)}
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  )
-}
-
 type Segment = { key: string; label: string; color: string; value: number }
 
 function StackBar({ segments, fmt, className }: { segments: Segment[]; fmt: MoneyFormat; className?: string }) {
@@ -335,86 +358,6 @@ function StackBar({ segments, fmt, className }: { segments: Segment[]; fmt: Mone
           />
         ))}
     </div>
-  )
-}
-
-function Legend({ segments, fmt }: { segments: Segment[]; fmt: MoneyFormat }) {
-  return (
-    <div className="flex max-w-full flex-wrap gap-x-4 gap-y-2 text-sm">
-      {segments
-        .filter((s) => s.value > 0)
-        .map((s) => (
-          <div key={s.key} className="flex min-w-0 max-w-full items-center gap-1.5">
-            <span className="size-2.5 shrink-0 rounded-[3px]" style={{ backgroundColor: s.color }} />
-            <span className="truncate text-muted-foreground">{s.label}</span>
-            <span className="shrink-0 font-medium tabular-nums">{money(s.value, fmt)}</span>
-          </div>
-        ))}
-    </div>
-  )
-}
-
-function MoneyFlowCard({
-  plan,
-  sim,
-  colors,
-  fmt,
-}: {
-  plan: Plan
-  sim: Simulation
-  colors: Colors
-  fmt: MoneyFormat
-}) {
-  const segments: Segment[] = [
-    ...sim.potSummaries
-      .toSorted((a, b) => b.monthlyIn - a.monthlyIn)
-      .map((p) => ({ key: p.name, label: p.name, color: colors.get(p.name)!, value: p.monthlyIn })),
-    { key: "spend", label: "Day-to-day", color: SPEND_COLOR, value: sim.monthly.variable },
-    { key: "left", label: "Left over", color: LEFT_COLOR, value: sim.monthly.free },
-  ]
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Where each month’s income goes</CardTitle>
-        <CardDescription className="text-pretty">{plan.summary}</CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-4">
-        <StackBar segments={segments} fmt={fmt} className="h-8" />
-        <Legend segments={segments} fmt={fmt} />
-      </CardContent>
-    </Card>
-  )
-}
-
-function Checks({ snap, sim, plan, fmt }: Props & { plan: Plan }) {
-  const problems = [
-    ...sim.overdrafts.map(
-      (o) =>
-        `${accountName(snap, o.accountId)} below zero from ${formatDate(o.date, fmt.locale)} (lowest ${formatMoney(o.lowest, fmt)})`
-    ),
-    ...(sim.uncovered.length ? [`${sim.uncovered.length} bills not in any pot`] : []),
-    ...plan.warnings,
-  ]
-  if (problems.length === 0) {
-    return (
-      <div className="flex items-start gap-2 text-sm font-medium text-pretty text-foreground">
-        <CheckCircleIcon className="mt-0.5 size-5 shrink-0" />
-        <span>Every bill is covered and no account goes below zero.</span>
-      </div>
-    )
-  }
-  return (
-    <Alert>
-      <WarningCircleIcon />
-      <AlertTitle>Watch out</AlertTitle>
-      <AlertDescription>
-        <ul className="grid gap-1">
-          {problems.map((w, i) => (
-            <li key={i}>• {w}</li>
-          ))}
-        </ul>
-      </AlertDescription>
-    </Alert>
   )
 }
 
@@ -504,7 +447,7 @@ function InstructionsCard({
             <ul className="grid gap-1 text-xs text-muted-foreground">
               {recentChanges.slice(0, 8).map((c) => (
                 <li key={c.id} className="truncate">
-                  {formatDate(c.createdAt.slice(0, 10), fmt.locale)} · {ACTOR_LABELS[c.actor]} ·{" "}
+                  {formatDate(localDate(c.createdAt), fmt.locale)} · {ACTOR_LABELS[c.actor]} ·{" "}
                   {c.summary ?? ACTION_LABELS[c.action] ?? c.action}
                   {c.reason ? ` · ${c.reason}` : ""}
                 </li>
@@ -578,13 +521,16 @@ function PaydayCards({
       { id: MONTHLY, name: "1st of the month", when: "Monthly", amount: 0, accountId: null },
     ].filter((src) => plan.set_asides.some((s) => s.income_id === src.id)),
   ]
+  const funding = sources.filter(
+    (src) => src.amount >= MIN_PAYDAY || plan.set_asides.some((s) => s.income_id === src.id)
+  )
   return (
     <section className="grid gap-3">
       <h2 className="flex items-center gap-2 font-heading font-semibold">
         <ArrowDownLeftIcon /> On each payday, move
       </h2>
       <div className="grid gap-4 lg:grid-cols-2">
-        {sources.map((src) => {
+        {funding.map((src) => {
           const entries = plan.set_asides.filter((s) => s.income_id === src.id)
           const total = entries.reduce((s, x) => s + x.amount, 0)
           const left = Math.max(0, src.amount - total)
@@ -599,7 +545,7 @@ function PaydayCards({
           ]
           return (
             <Card key={src.id} size="sm">
-              <CardContent className="grid gap-3">
+              <CardContent className="grid grid-cols-[minmax(0,1fr)] gap-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="truncate font-medium" title={src.name}>
@@ -784,69 +730,6 @@ function BalancesCard({ snap, sim, fmt }: Props) {
             )
           })}
         </div>
-      </CardContent>
-    </Card>
-  )
-}
-
-function UpcomingCard({ snap, sim, colors, fmt }: Props & { colors: Colors }) {
-  const until = sim.days[Math.min(UPCOMING_DAYS, sim.days.length) - 1]
-  const byDate = Map.groupBy(
-    sim.events.filter((e) => e.date <= until),
-    (e) => e.date
-  )
-  if (byDate.size === 0) return null
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Next {UPCOMING_DAYS} days</CardTitle>
-      </CardHeader>
-      <CardContent className="grid gap-4">
-        {[...byDate].map(([date, events]) => (
-          <div key={date} className="grid grid-cols-1 gap-1.5 sm:grid-cols-[4.5rem_minmax(0,1fr)] sm:gap-3">
-            <div className="text-sm font-medium text-muted-foreground tabular-nums">
-              {new Intl.DateTimeFormat(fmt.locale, { day: "numeric", month: "short" }).format(
-                new Date(`${date}T00:00:00`)
-              )}
-            </div>
-            <ul className="grid min-w-0 gap-1.5 text-sm">
-              {events.map((e, i) => (
-                <li key={i} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2">
-                  {e.kind === "income" ? (
-                    <ArrowDownLeftIcon className="shrink-0 text-foreground" aria-label="Income" />
-                  ) : e.kind === "bill" ? (
-                    <ArrowUpRightIcon className="shrink-0 text-muted-foreground" aria-label="Bill" />
-                  ) : (
-                    <span
-                      className="mx-1 size-2.5 shrink-0 rounded-[3px]"
-                      style={{ backgroundColor: colors.get(e.pot!) ?? OTHER_COLOR }}
-                      aria-label="Set aside"
-                    />
-                  )}
-                  <span
-                    className={cn("min-w-0 truncate", e.kind === "set-aside" && "text-muted-foreground")}
-                    title={`${e.name} · ${accountName(snap, e.accountId)}`}
-                  >
-                    {e.kind === "set-aside" ? `To ${e.name}` : e.name}
-                    {e.kind === "bill" && !e.pot && !e.adjustment ? " · no pot" : ""}
-                    {e.adjustment ? " · one-off" : ""}
-                  </span>
-                  <span
-                    className={cn(
-                      "shrink-0 tabular-nums",
-                      e.kind === "income" && "font-medium text-foreground",
-                      e.kind === "set-aside" && "text-muted-foreground"
-                    )}
-                  >
-                    {e.kind === "set-aside"
-                      ? formatMoney(e.amount, fmt)
-                      : formatMoney(e.kind === "income" ? e.amount : -e.amount, fmt, { signed: true })}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ))}
       </CardContent>
     </Card>
   )

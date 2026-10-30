@@ -1,13 +1,12 @@
 import "server-only"
 
-import { addDays, format } from "date-fns"
-
 import { getAkahuOverview, getAkahuPending, type AkahuOverview } from "@/lib/akahu"
 import { getDb, must } from "@/lib/db"
 import { buildDataHealth, type PostedTx } from "@/lib/health"
 import { loadPlanData } from "@/lib/planner"
 import { getAccountsWithBalances, getPlanThread } from "@/lib/queries"
 import { findSeriesBreaks } from "@/lib/recurring"
+import { daysBefore, todayLocal } from "@/supabase/functions/_shared/akahu"
 
 /** Days of posted transactions read back to settle pending ones. */
 const POSTED_DAYS = 10
@@ -19,7 +18,7 @@ const POSTED_DAYS = 10
  * caller already has it, to save a round trip.
  */
 export async function loadDataHealth(overview?: AkahuOverview) {
-  const since = format(addDays(new Date(), -POSTED_DAYS), "yyyy-MM-dd")
+  const since = daysBefore(todayLocal(), POSTED_DAYS).slice(0, 10)
   const [accounts, feed, pending, posted, thread, data] = await Promise.all([
     getAccountsWithBalances(),
     overview ?? getAkahuOverview().catch((err: Error): AkahuOverview => ({ connected: true, error: err.message, accounts: [] })),

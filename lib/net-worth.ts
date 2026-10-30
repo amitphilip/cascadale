@@ -45,3 +45,44 @@ export function buildNetWorth<A extends NetWorthAccount, B extends NetWorthAsset
     netWorth: round2(totals.assets + totals.investments + totals.cash + totals.debts),
   }
 }
+
+export type NetWorthPoint = { date: string; netWorth: number; debts: number }
+
+/** The last day of each of the `months` months before `last`, oldest first, then `last`. */
+export function monthEnds(last: string, months: number) {
+  const [y, m] = last.split("-").map(Number)
+  const ends = Array.from({ length: months }, (_, i) =>
+    new Date(Date.UTC(y, m - 1 - (months - 1 - i), 0)).toISOString().slice(0, 10)
+  )
+  return [...ends, last]
+}
+
+/**
+ * Net worth at each date, rebuilt from every account's opening balance and transactions.
+ * Assets aren't dated, so their value today counts at every point.
+ */
+export function netWorthHistory(
+  accounts: { id: number; openingBalance: number; archived: boolean }[],
+  txs: { accountId: number; date: string; amount: number }[],
+  assetsTotal: number,
+  dates: string[]
+): NetWorthPoint[] {
+  const active = accounts.filter((a) => !a.archived)
+  const byAccount = Map.groupBy(txs, (t) => t.accountId)
+  return dates.map((date) => {
+    const balances = active.map((a) =>
+      (byAccount.get(a.id) ?? [])
+        .filter((t) => t.date <= date)
+        .reduce((s, t) => s + t.amount, a.openingBalance)
+    )
+    return {
+      date,
+      netWorth: total([...balances, assetsTotal]),
+      debts: total(balances.filter((b) => b < 0)),
+    }
+  })
+}
+
+/** The point `monthsBack` month-ends before the latest, if the history reaches that far. */
+export const pointBack = (history: NetWorthPoint[], monthsBack: number) =>
+  history[history.length - 1 - monthsBack]

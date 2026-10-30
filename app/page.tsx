@@ -60,15 +60,11 @@ import {
   getUpcomingExpenses,
 } from "@/lib/queries"
 import { cn } from "@/lib/utils"
+import { todayLocal } from "@/supabase/functions/_shared/akahu"
 
 const MAX_CATEGORY_BARS = 10
 /** How far ahead the vitals look for bills and the lowest cash balance. */
 const AHEAD_DAYS = 30
-
-function currentMonth() {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`
-}
 
 export default async function OverviewPage({
   searchParams,
@@ -84,7 +80,7 @@ export default async function OverviewPage({
   const month =
     monthParam && /^\d{4}-\d{2}$/.test(monthParam)
       ? monthParam
-      : (latest ?? currentMonth())
+      : (latest ?? todayLocal().slice(0, 7))
   const period = parsePeriod(per)
   const estimated = period !== "month"
   const perSuffix = estimated ? PERIOD_SUFFIX[period] : ""

@@ -22,6 +22,7 @@ import {
 } from "@/lib/plan"
 import { latestPlan, loadSnapshot } from "@/lib/planner"
 import { getPlanThread } from "@/lib/queries"
+import { todayLocal } from "@/supabase/functions/_shared/akahu"
 
 const MODEL = "claude-opus-5-5"
 const MAX_TOKENS = 32000
@@ -262,7 +263,7 @@ async function ask(stats: CheckInStats): Promise<CheckInResult> {
       messages: [
         {
           role: "user",
-          content: `Today is ${toIso(new Date())}. Here is what I just logged:\n<data>\n${JSON.stringify(stats)}\n</data>`,
+          content: `Today is ${todayLocal()}. Here is what I just logged:\n<data>\n${JSON.stringify(stats)}\n</data>`,
         },
       ],
     })

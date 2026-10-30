@@ -140,6 +140,11 @@ export function localDate(iso: string) {
   return nzDate.format(new Date(iso))
 }
 
+/** Today's date (yyyy-MM-dd) in New Zealand, whatever timezone the server runs in. */
+export function todayLocal(now = new Date()) {
+  return localDate(now.toISOString())
+}
+
 /** Midnight UTC `days` before a YYYY-MM-DD date, as an ISO timestamp. */
 export function daysBefore(date: string, days: number) {
   const d = new Date(`${date}T00:00:00Z`)

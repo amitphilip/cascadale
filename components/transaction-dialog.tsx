@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { useServerAction } from "@/hooks/use-server-action"
+import { todayLocal } from "@/supabase/functions/_shared/akahu"
 
 export type TransactionDraft = {
   id: number
@@ -40,11 +41,6 @@ const directionItems = [
   { value: "out", label: "Money out" },
   { value: "in", label: "Money in" },
 ]
-
-function today() {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
-}
 
 export function TransactionDialog({
   transaction,
@@ -127,7 +123,7 @@ export function TransactionDialog({
                   name="date"
                   type="date"
                   required
-                  defaultValue={transaction?.date ?? today()}
+                  defaultValue={transaction?.date ?? todayLocal()}
                 />
               </Field>
             </div>

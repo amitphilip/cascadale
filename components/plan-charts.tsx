@@ -30,12 +30,15 @@ export function TimelineChart({
   series,
   fmt,
   step = false,
+  fitted = false,
 }: {
   days: string[]
   series: Series[]
   fmt: MoneyFormat
   /** money that moves in jumps (pots) rather than day to day */
   step?: boolean
+  /** scale to the values rather than from zero, for a big number that moves slowly */
+  fitted?: boolean
 }) {
   const config = Object.fromEntries(
     series.map((s) => [s.key, { label: s.label, color: s.color }])
@@ -61,9 +64,10 @@ export function TimelineChart({
           tickLine={false}
           axisLine={false}
           width={mobile ? 44 : 64}
+          domain={fitted ? ["auto", "auto"] : undefined}
           tickFormatter={(v: number) => formatMoney(v, fmt, { compact: true })}
         />
-        <ReferenceLine y={0} stroke="var(--muted-foreground)" strokeDasharray="4 4" />
+        {!fitted && <ReferenceLine y={0} stroke="var(--muted-foreground)" strokeDasharray="4 4" />}
         <ChartTooltip
           content={
             <ChartTooltipContent
@@ -74,7 +78,7 @@ export function TimelineChart({
             />
           }
         />
-        {!mobile && (
+        {!mobile && series.length > 1 && (
           <ChartLegend
             content={<ChartLegendContent className="flex-wrap gap-x-3 gap-y-1" />}
             itemSorter={null}

@@ -1,6 +1,6 @@
 import "server-only"
 
-import { differenceInHours, format, parseISO } from "date-fns"
+import { differenceInHours, parseISO } from "date-fns"
 import { z } from "zod"
 
 import {
@@ -48,6 +48,7 @@ import {
   getUpcomingExpenses,
   PAGE_SIZE,
 } from "@/lib/queries"
+import { localDate, todayLocal } from "@/supabase/functions/_shared/akahu"
 
 export type { CasTool }
 
@@ -63,7 +64,6 @@ const month = yearMonth
 
 /** Hours after which a linked account that hasn't synced is worth mentioning (it runs hourly). */
 const STALE_HOURS = 26
-const today = () => format(new Date(), "yyyy-MM-dd")
 
 /** The month asked for, or the latest month with transactions. */
 async function monthOrLatest(m?: string) {
@@ -152,7 +152,7 @@ export const TOOLS: CasTool[] = [
         ])
       const plan = await planStatus(await planDeps("mcp"), undefined, healthReasons(health))
       return {
-        today: today(),
+        today: todayLocal(),
         sync,
         sinceLastCheckIn,
         categorization: {
@@ -162,7 +162,7 @@ export const TOOLS: CasTool[] = [
         },
         lastCheckIn: last
           ? {
-              date: last.createdAt.slice(0, 10),
+              date: localDate(last.createdAt),
               status: last.result.status,
               headline: last.result.headline,
               actions: last.result.actions,
@@ -364,7 +364,7 @@ export const TOOLS: CasTool[] = [
     input: { limit: z.number().int().min(1).max(20).optional().describe("Default 5") },
     run: async ({ limit }) =>
       (await getCheckIns(limit ?? 5)).map((c) => ({
-        date: c.createdAt.slice(0, 10),
+        date: localDate(c.createdAt),
         periodStart: c.periodStart,
         periodEnd: c.periodEnd,
         ...c.result,
@@ -524,7 +524,7 @@ export const TOOLS: CasTool[] = [
       form.set("name", name)
       form.set("kind", kind)
       form.set("value", String(value))
-      form.set("valuedOn", valuedOn ?? today())
+      form.set("valuedOn", valuedOn ?? todayLocal())
       if (note !== undefined) form.set("note", note)
       return act(saveAsset(form))
     },

@@ -45,15 +45,11 @@ import {
   type StatementLine,
 } from "@/lib/queries"
 import { cn } from "@/lib/utils"
+import { todayLocal } from "@/supabase/functions/_shared/akahu"
 
 export const metadata: Metadata = { title: "Statement" }
 
 const LIABILITY_TYPES = new Set(["credit_card", "loan"])
-
-function currentMonth() {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`
-}
 
 export default async function StatementPage({
   searchParams,
@@ -68,7 +64,7 @@ export default async function StatementPage({
     getAverageWindow(),
   ])
   const month =
-    monthParam && /^\d{4}-\d{2}$/.test(monthParam) ? monthParam : (latest ?? currentMonth())
+    monthParam && /^\d{4}-\d{2}$/.test(monthParam) ? monthParam : (latest ?? todayLocal().slice(0, 7))
   const period = parsePeriod(per)
   const avgOnly = view === "avg"
 
