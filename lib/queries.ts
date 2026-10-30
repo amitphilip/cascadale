@@ -18,9 +18,10 @@ import type {
   RuleSource,
   UpcomingExpense,
 } from "@/lib/db/schema"
-import type { MoneyFormat } from "@/lib/format"
+import { DEFAULT_MONEY, type MoneyFormat } from "@/lib/format"
 import type { CategoryProjection, RecurringOverride, RecurringTx } from "@/lib/recurring"
 import { merchantKey } from "@/lib/rules"
+import type { PlanTx } from "@/lib/snapshot"
 
 async function db() {
   await connection()
@@ -32,7 +33,7 @@ export async function getSettings(): Promise<MoneyFormat> {
     (await db()).from("settings").select("key, value")
   )
   const map = Object.fromEntries(rows.map((r) => [r.key, r.value]))
-  return { currency: map.currency ?? "USD", locale: map.locale ?? "en-US" }
+  return { currency: map.currency ?? DEFAULT_MONEY.currency, locale: map.locale ?? DEFAULT_MONEY.locale }
 }
 
 export async function getAccountsWithBalances() {
@@ -531,6 +532,14 @@ export async function getRecurringInputs(window: AverageWindow | null) {
       })
     ),
   }
+}
+
+/** Every transaction in the averaging window, transfers included, for the planner. */
+export async function getPlanTransactions(window: AverageWindow) {
+  const rows = await must<PlanTx[]>(
+    (await db()).rpc("plan_transactions", { p_start: window.start, p_end: window.end })
+  )
+  return rows.map((r): PlanTx => ({ ...r, amount: Number(r.amount) }))
 }
 
 /** The latest planning conversation and its messages, oldest first. */

@@ -22,6 +22,15 @@ export type AkahuAccount = {
   refreshed?: { transactions?: string }
 }
 
+/** A transaction the bank has authorised but not yet posted. It has no stable id. */
+export type AkahuPendingTransaction = {
+  _account: string
+  date: string
+  description: string
+  amount: number
+  updated_at?: string
+}
+
 export type AkahuTransaction = {
   _id: string
   _account: string
@@ -90,6 +99,14 @@ export function akahuApi(tokens: AkahuTokens) {
   return {
     async accounts() {
       return (await get<{ items: AkahuAccount[] }>("/accounts")).items
+    },
+    /** Pending transactions: authorised, not yet posted. They change or vanish once they post. */
+    async pending(accountId: string) {
+      return (
+        await get<{ items: AkahuPendingTransaction[] }>(
+          `/accounts/${encodeURIComponent(accountId)}/transactions/pending`
+        )
+      ).items
     },
     /** Settled transactions after `start` (exclusive) up to `end` (inclusive), every page. */
     async transactions(accountId: string, start?: string, end?: string) {

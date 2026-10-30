@@ -1,6 +1,8 @@
 import {
   CADENCE_DAYS,
-  seriesKeyOf,
+  overridesByAlias,
+  seriesIndex,
+  seriesOf,
   type RecurringOverride,
   type RecurringSeries,
   type RecurringTx,
@@ -189,6 +191,8 @@ export function analyzeIncome({
 }): IncomeAnalysis {
   const months = monthsBetween(start, end)
   const index = new Map(months.map((m, i) => [m, i]))
+  overrides = overridesByAlias(series, overrides)
+  const bySeriesKey = seriesIndex(series)
   const incomeSeries = series.filter((s) => s.direction > 0)
   const activeKeys = new Set(
     incomeSeries.filter((s) => !overrides.get(s.key)?.excluded).map((s) => s.key)
@@ -205,7 +209,7 @@ export function analyzeIncome({
   }
 
   for (const tx of txs) {
-    if (activeKeys.has(seriesKeyOf(tx) ?? "")) continue
+    if (activeKeys.has(seriesOf(bySeriesKey, tx)?.key ?? "")) continue
     addOneOff({
       date: tx.date,
       description: tx.description,

@@ -6,7 +6,10 @@ import { z } from "zod"
 
 import { bearerToken, tokenClient } from "@/lib/db"
 import { askCas } from "@/lib/cas/agent"
+import { withMoney } from "@/lib/cas/tool"
 import { TOOLS, type CasTool } from "@/lib/cas/tools"
+import { loadDataHealth } from "@/lib/data-health"
+import { getSettings } from "@/lib/queries"
 
 // Two MCP servers for clients such as claude.ai, each added as its own connector:
 // - Cascadale (/api/mcp): your data and the actions on it, as plain tools.
@@ -23,21 +26,30 @@ export const MCP_RESOURCES = {
 
 const ACTION_NAMES = TOOLS.filter((t) => t.access === "action").map((t) => t.name)
 
-const TOOLS_INSTRUCTIONS = `Cascadale is the user's budgeting app: bank accounts synced from Akahu, transactions, categories and budgets, recurring bills, a savings plan and check-ins. These tools read that data and act on it directly.
+const TOOLS_INSTRUCTIONS = `Cascadale is the user's budgeting app: bank accounts synced from Akahu, transactions, categories and budgets, recurring bills, a savings plan and check-ins. These tools read that data and act on it directly, through the same services and database as the website.
 
 - get_briefing is the best single overview; the other read tools answer specific questions.
-- These tools change the user's real finances: ${ACTION_NAMES.join(", ")}. Confirm with the user before calling one.
+- These tools change the user's real finances: ${ACTION_NAMES.join(", ")}. Confirm with the user before calling one, and tell them what changed from the tool's result.
+- Check data_health (on get_briefing, get_overview, get_plan and run_check_in) before relying on numbers: name stale accounts, drift from the bank and a plan built on balances that have since moved, rather than answering as if the data were current.
+- The plan is the one on the website's Plan page. To change it, use upsert_pot / remove_pot (pots and set-asides) and add_plan_adjustment / remove_plan_adjustment (one-off changes on a date). These record the change and mark the plan out of date; then call regenerate_plan to rebuild it, passing expectedPlanId from get_plan. When get_plan says out_of_date (unapplied changes or Cas decisions), offer to apply and rebuild. Pass a fresh operationId with every write; retrying with the same one is safe.
 - For advice (how am I doing, what should I do, can I afford X), use the Cas connector's ask_cas if it's connected; it recommends actions that you run here.
-- Amounts are in the currency get_overview reports. Transaction amounts are signed: negative is money out.`
+- Every response carries the household's currency and locale; amounts are in that currency. Transaction amounts are signed: negative is money out.`
 
 const CAS_INSTRUCTIONS = `Cas is the user's financial advisor and accountant for their budgeting app, Cascadale. It investigates their accounts, bank feed syncs, transactions, budgets, recurring bills and plan on its own, remembers earlier conversations through its notes, and answers with what's going on and what can or should be done.
 
 - Call ask_cas for open questions: how am I doing, what needs attention, can I afford X, explain my spending, plan for a goal. Pass what you know from the conversation as context, and tell it about decisions the user makes.
-- Cas doesn't change the user's data. The actions it recommends (e.g. categorize_merchant, set_category_budgets) are tools on Cascadale connector: offer them to the user and run them there once confirmed, then resolve the matching to-do here with resolve_note.
+- Cas doesn't change the user's data. The actions it recommends (e.g. upsert_pot, add_plan_adjustment, categorize_merchant) are tools on the Cascadale connector: offer them to the user and run them there once confirmed, then resolve the matching to-do here with resolve_note.
+- When the user decides something that changes the plan, tell Cas; it records the decision and the plan shows as out of date until a plan change carries it out (pass the decision's id as decisionIds).
+- ask_cas returns data_health alongside the answer; mention stale or drifted data to the user.
 - get_notes shows its open to-dos, decisions and observations without running the agent.`
 
 function json(value: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(value) }] }
+}
+
+/** Every response carries the household's currency and locale, so amounts are never read as the wrong one. */
+async function withHouseholdMoney(value: unknown) {
+  return withMoney(value, await getSettings())
 }
 
 function failure(err: unknown) {
@@ -52,11 +64,16 @@ function register(server: McpServer, t: CasTool, name = t.name) {
       title: t.title,
       description: t.description,
       inputSchema: t.input,
-      annotations: { readOnlyHint: t.access === "read", destructiveHint: false, openWorldHint: false },
+      annotations: {
+        readOnlyHint: t.access === "read",
+        destructiveHint: t.access === "action",
+        idempotentHint: "operationId" in t.input,
+        openWorldHint: false,
+      },
     },
     async (args: object) => {
       try {
-        return json(await t.run(args as never))
+        return json(await withHouseholdMoney(await t.run(args as never)))
       } catch (err) {
         return failure(err)
       }
@@ -86,7 +103,7 @@ function createCasServer() {
     {
       title: "Ask Cas",
       description:
-        "Ask Cas, the user's financial advisor and accountant agent, anything about their finances. It looks through their accounts, bank feed syncs, transactions, budgets, recurring bills, plan and its notes from earlier conversations, then answers with what's going on and suggested actions. Takes up to a few minutes on a broad question.",
+        "Ask Cas, the user's financial advisor and accountant agent, anything about their finances. It looks through their accounts, bank feed syncs, transactions, budgets, recurring bills, plan and its notes from earlier conversations, then answers with what's going on and suggested actions. Data health is checked first and given to Cas, and returned with the answer (stale accounts, drift from the bank, plan basis). Takes up to a few minutes on a broad question.",
       inputSchema: {
         question: z.string().trim().min(1),
         context: z
@@ -98,11 +115,13 @@ function createCasServer() {
     },
     async ({ question, context }) => {
       try {
-        const { answer, toolsUsed } = await askCas(question, context)
+        const health = await loadDataHealth()
+        const { answer, toolsUsed } = await askCas(question, context, health)
         return {
           content: [
             { type: "text" as const, text: answer },
             { type: "text" as const, text: `(Cas checked: ${toolsUsed.join(", ") || "nothing"})` },
+            { type: "text" as const, text: JSON.stringify(await withHouseholdMoney({ data_health: health })) },
           ],
         }
       } catch (err) {

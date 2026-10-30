@@ -30,6 +30,14 @@ import {
   setAkahuIgnored,
 } from "@/lib/akahu"
 import { API_KEY_SETTING } from "@/lib/anthropic"
+import {
+  regeneratePlan,
+  removeAdjustment,
+  removePot,
+  withInstructions,
+} from "@/lib/plan-service"
+import { planDeps } from "@/lib/plan-repo"
+import { categorizeInternalTransfers } from "@/lib/transfers"
 import { runCheckIn } from "@/lib/checkin"
 import {
   COLUMNS,
@@ -583,12 +591,14 @@ export async function commitImport(input: {
       categorized,
     }
     if (result.inserted === 0) await deleteStored(input.storedName)
+    // Transfers between your accounts first, so the LLM doesn't read them as income or spending.
+    const transfers = result.inserted > 0 ? await categorizeInternalTransfers(await getDb()) : null
 
     // Rules already ran above; ask the LLM only about what's still left.
     // Best effort: the import itself has succeeded either way.
     let aiCategorized = 0
     let aiError: string | null = null
-    if (result.inserted > result.categorized) {
+    if (result.inserted > result.categorized + (transfers?.categorized ?? 0)) {
       try {
         aiCategorized = (await autoCategorize()).byAi
       } catch (err) {
@@ -596,7 +606,7 @@ export async function commitImport(input: {
           err instanceof Error ? err.message : "Auto-categorization failed"
       }
     }
-    return { ...result, aiCategorized, aiError }
+    return { ...result, transfersMatched: transfers?.categorized ?? 0, aiCategorized, aiError }
   })
 }
 
@@ -702,11 +712,13 @@ export async function syncAkahu() {
   return run(async () => {
     const db = await getDb()
     const { inserted, categorized, failed, created, matched } = await runAkahuSync(db)
+    // The edge function pairs transfers too; this also covers accounts imported by hand.
+    const transfers = await categorizeInternalTransfers(db)
 
     // Best effort, as with statement imports: the sync has succeeded either way.
     let aiCategorized = 0
     let aiError: string | null = null
-    if (inserted > categorized) {
+    if (inserted > categorized + transfers.categorized) {
       try {
         aiCategorized = (await autoCategorize()).byAi
       } catch (err) {
@@ -716,6 +728,7 @@ export async function syncAkahu() {
     return {
       inserted,
       categorized,
+      transfersMatched: transfers.categorized,
       aiCategorized,
       aiError,
       failedAccounts: failed.length,
@@ -941,12 +954,16 @@ async function saveTurn(db: Db, threadId: number, turn: NewTurn) {
 /** Start a new planning conversation from your current data. */
 export async function createPlan(goals: string, frequency: Frequency) {
   return run(async () => {
-    const snapshot = await loadSnapshot()
-    if (!snapshot) throw new Error("Import some transactions first")
+    const fresh = await loadSnapshot()
+    if (!fresh) throw new Error("Import some transactions first")
+    // your adjustments are frozen into the snapshot and your pots kept, as on a rebuild
+    const { repo } = await planDeps("website")
+    const { snapshot } = await withInstructions(repo, fresh, null)
     const turn = await startPlan(
       snapshot,
       z.string().trim().max(4000).parse(goals),
-      z.enum(FREQUENCIES).parse(frequency)
+      z.enum(FREQUENCIES).parse(frequency),
+      await repo.listPots()
     )
     const db = await await getDb()
     await saveTurn(db, await insertId(db, "plan_threads", { snapshot }), turn)
@@ -978,9 +995,48 @@ export async function askPlanner(threadId: number, message: string) {
         .eq("thread_id", threadId)
         .order("id")
     )
-    const turn = await continuePlan(thread.snapshot, messages, text)
+    const { repo } = await planDeps("website")
+    const turn = await continuePlan(thread.snapshot, messages, text, await repo.listPots())
     await saveTurn(db, threadId, turn)
     return { changed: turn.assistant.plan !== null }
+  })
+}
+
+/**
+ * Rebuild the plan with every pot and adjustment, as regenerate_plan does over MCP.
+ * expectedPlanId is the plan the page showed, so a rebuild never lands on a plan someone
+ * else changed in the meantime.
+ */
+export async function rebuildPlan(expectedPlanId: number | null) {
+  return run(async () => {
+    const out = await regeneratePlan(await planDeps("website"), {
+      operationId: crypto.randomUUID(),
+      reason: "Rebuilt from the Plan page",
+      expectedPlanId,
+    })
+    return { planId: out.planId }
+  })
+}
+
+export async function removePlanPot(name: string) {
+  return run(async () => {
+    await removePot(await planDeps("website"), {
+      operationId: crypto.randomUUID(),
+      name: z.string().trim().min(1).parse(name),
+      reason: "Removed on the Plan page",
+    })
+    return {}
+  })
+}
+
+export async function removePlanAdjustment(adjustmentId: number) {
+  return run(async () => {
+    await removeAdjustment(await planDeps("website"), {
+      operationId: crypto.randomUUID(),
+      adjustmentId: id.parse(adjustmentId),
+      reason: "Removed on the Plan page",
+    })
+    return {}
   })
 }
 

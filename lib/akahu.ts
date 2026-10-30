@@ -6,6 +6,7 @@ import { getDb, must, selectAll, type Db } from "@/lib/db"
 import {
   AKAHU_IGNORED_SETTING,
   akahuApi,
+  localDate,
   type AkahuAccount,
 } from "@/supabase/functions/_shared/akahu"
 
@@ -198,4 +199,30 @@ export async function getAkahuOverview(): Promise<AkahuOverview> {
         ...linkOf(a),
       })),
   }
+}
+
+/**
+ * Pending transactions on your linked accounts, mapped to the account of yours each syncs
+ * into. Akahu doesn't store them, so they're read live; an account that fails is skipped.
+ */
+export async function getAkahuPending() {
+  const db = await getDb()
+  if (!(await getTokens(db))) return []
+  const [linked, akahu] = await Promise.all([linkedAccounts(db), akahuClient(db)])
+  const lists = await Promise.all(
+    linked.map(async (l) => {
+      try {
+        return (await akahu.pending(l.akahuId)).map((t) => ({
+          accountId: l.id,
+          date: localDate(t.date),
+          description: t.description.trim(),
+          amount: Math.round(t.amount * 100) / 100,
+        }))
+      } catch (err) {
+        console.error(l.id, err)
+        return []
+      }
+    })
+  )
+  return lists.flat()
 }

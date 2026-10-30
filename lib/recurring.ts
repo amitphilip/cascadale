@@ -1,4 +1,4 @@
-import { merchantKey } from "@/lib/rules"
+import { merchantKey, similarity } from "@/lib/rules"
 
 /**
  * Recurring-item detection and budget projection. Pure functions: the query layer feeds in
@@ -139,6 +139,10 @@ export type RecurringSeries = {
   trend: number
   /** total over the window, as a positive amount */
   total: number
+  /** every seriesKeyOf key merged into this series (its own key first) */
+  aliases: string[]
+  /** the counterparty its descriptions normalise to */
+  counterparty: string
 }
 
 export type ProjectedSeries = RecurringSeries & {
@@ -185,6 +189,108 @@ export function seriesKeyOf(tx: RecurringTx) {
     ? `r${tx.ruleId}`
     : `m:${merchantKey(tx.description)}`
   return `${lineKey(tx.categoryId, direction)}:${merchant}`
+}
+
+// Channel words banks put before the counterparty: "D/C FROM Wood Partners", "A/P TO Rent",
+// "TFR TO Joint". Dropped from the front so both spellings of a payer agree.
+const LEADING =
+  /^(?:(?:d\/c|d\/d|a\/p|ap|dc|dd|tfr|trf|transfer|ft|bp|bill payment|automatic payment|direct credit|direct debit|online banking|internet banking|eftpos|visa purchase|debit card purchase|payment)\b[\s:#-]*)+(?:(?:from|to)\b\s*)?/i
+
+/**
+ * The counterparty a description names, normalised: channel prefixes and reference tokens
+ * dropped. "D/C FROM Wood Partners Consu" and "Wood Partners Consu WoodiPayroll41494-0579"
+ * both give "wood partners consu".
+ */
+export function counterpartyKey(description: string) {
+  const stripped = description.trim().replace(LEADING, "").replace(/^(?:from|to)\s+/i, "")
+  return merchantKey(stripped || description)
+}
+
+/** Amounts within this share of each other are the same payment. */
+const AMOUNT_BAND = 0.2
+/** Counterparty keys at least this similar are the same payer or payee. */
+const COUNTERPARTY_SIMILARITY = 0.85
+
+const withinBand = (a: number, b: number) =>
+  Math.abs(a - b) <= AMOUNT_BAND * Math.max(Math.abs(a), Math.abs(b))
+
+type RawGroup = {
+  key: string
+  line: string
+  counterparty: string
+  typical: number
+  txs: RecurringTx[]
+}
+
+/**
+ * Group transactions by seriesKeyOf, then merge groups in the same category and direction
+ * that name the same counterparty (after normalising) at a similar amount. A payer whose
+ * bank describes it two ways, or whose payments some rule categorizes and some not, is
+ * still one series.
+ */
+function groupSeries(txs: RecurringTx[]): RawGroup[][] {
+  const byKey = new Map<string, RecurringTx[]>()
+  for (const tx of txs) {
+    const key = seriesKeyOf(tx)
+    if (key) byKey.set(key, [...(byKey.get(key) ?? []), tx])
+  }
+  const raw: RawGroup[] = [...byKey].map(([key, g]) => {
+    const counts = Map.groupBy(g, (t) => counterpartyKey(t.description))
+    const counterparty = [...counts].sort((a, b) => b[1].length - a[1].length)[0][0]
+    return {
+      key,
+      line: key.split(":").slice(0, 2).join(":"),
+      counterparty,
+      typical: median(g.map((t) => Math.abs(t.amount))),
+      txs: g,
+    }
+  })
+
+  // union-find over groups that are the same counterparty at a similar amount
+  const parent = raw.map((_, i) => i)
+  const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])))
+  for (let i = 0; i < raw.length; i++)
+    for (let j = i + 1; j < raw.length; j++) {
+      const a = raw[i]
+      const b = raw[j]
+      if (a.line !== b.line || !withinBand(a.typical, b.typical)) continue
+      if (similarity(a.counterparty, b.counterparty) < COUNTERPARTY_SIMILARITY) continue
+      parent[find(j)] = find(i)
+    }
+  const merged = Map.groupBy(raw.map((g, i) => ({ g, i })), ({ i }) => find(i))
+  // the biggest group names the series, so its key (and any override on it) stays put
+  return [...merged.values()].map((m) =>
+    m.map(({ g }) => g).sort((a, b) => b.txs.length - a.txs.length || a.key.localeCompare(b.key))
+  )
+}
+
+/** Each alias key's series, for looking a transaction's series up by seriesKeyOf. */
+export function seriesIndex(series: RecurringSeries[]) {
+  const out = new Map<string, RecurringSeries>()
+  for (const s of series) for (const k of s.aliases ?? [s.key]) out.set(k, s)
+  return out
+}
+
+/** The series a transaction belongs to, if any. */
+export function seriesOf(index: Map<string, RecurringSeries>, tx: RecurringTx) {
+  return index.get(seriesKeyOf(tx) ?? "")
+}
+
+/**
+ * Overrides keyed by each series' own key: one saved on a key that has since been merged
+ * into another series (an alias) still applies.
+ */
+export function overridesByAlias(
+  series: RecurringSeries[],
+  overrides: Map<string, RecurringOverride>
+) {
+  const out = new Map(overrides)
+  for (const s of series) {
+    if (out.has(s.key)) continue
+    const alias = (s.aliases ?? []).find((k) => overrides.has(k))
+    if (alias) out.set(s.key, overrides.get(alias)!)
+  }
+  return out
 }
 
 function detectCadence(dates: string[]): Cadence | null {
@@ -252,14 +358,11 @@ export function detectRecurring(
   txs: RecurringTx[],
   dataEnd: string
 ): RecurringSeries[] {
-  const groups = new Map<string, RecurringTx[]>()
-  for (const tx of txs) {
-    const key = seriesKeyOf(tx)
-    if (key) groups.set(key, [...(groups.get(key) ?? []), tx])
-  }
-
   const out: RecurringSeries[] = []
-  for (const [key, g] of groups) {
+  for (const members of groupSeries(txs)) {
+    const g = members
+      .flatMap((m) => m.txs)
+      .sort((a, b) => a.date.localeCompare(b.date))
     // same-day charges (e.g. several loan repayments) are one occurrence
     const byDate = new Map<string, number>()
     for (const t of g)
@@ -286,11 +389,11 @@ export function detectRecurring(
     const accountId = [...byAccount].sort((a, b) => b[1].length - a[1].length)[0][0]
 
     out.push({
-      key,
+      key: members[0].key,
       categoryId: g[0].categoryId,
       accountId,
       example: g[g.length - 1].description,
-      note: g[0].ruleNote,
+      note: g.find((t) => t.ruleNote)?.ruleNote ?? null,
       direction: directionOf(g[0]),
       cadence,
       occurrences,
@@ -303,9 +406,82 @@ export function detectRecurring(
       averageMonthly: round2((total / span) * DAYS_PER_MONTH),
       trend: detectTrend(occurrences),
       total: round2(total),
+      aliases: members.map((m) => m.key),
+      counterparty: members[0].counterparty,
     })
   }
   return out.sort((a, b) => b.averageMonthly - a.averageMonthly)
+}
+
+/** A series that stopped and a new one that may have replaced it, for you to confirm. */
+export type SeriesBreak = {
+  ended: { key: string; example: string; lastDate: string; amount: number; cadence: Cadence }
+  candidate: { key: string; example: string; firstDate: string; amount: number; count: number }
+}
+
+/**
+ * Series that stopped while payments at a similar amount, on the same cadence and in the
+ * same direction, started from a different counterparty: likely the same bill or pay under
+ * a new name (a new employer code, a switched provider). Not merged automatically, since a
+ * different counterparty may really be something else.
+ */
+export function findSeriesBreaks(
+  txs: RecurringTx[],
+  series: RecurringSeries[],
+  dataEnd: string
+): SeriesBreak[] {
+  // candidates: series still running, and repeating payments too short to be a series yet
+  const index = seriesIndex(series)
+  const unmatched = new Map<string, RecurringTx[]>()
+  for (const tx of txs) {
+    const key = seriesKeyOf(tx)
+    if (key && !index.has(key)) unmatched.set(key, [...(unmatched.get(key) ?? []), tx])
+  }
+  const candidates = [
+    ...series
+      .filter((x) => !x.ended)
+      .map((x) => ({
+        key: x.key,
+        counterparty: x.counterparty,
+        example: x.example,
+        dates: x.occurrences.map((o) => o.date),
+        amount: x.latest,
+      })),
+    ...[...unmatched].map(([key, g]) => ({
+      key,
+      counterparty: counterpartyKey(g[0].description),
+      example: g.at(-1)!.description,
+      dates: [...new Set(g.map((t) => t.date))].sort(),
+      amount: median(g.map((t) => Math.abs(t.amount))),
+    })),
+  ].filter((c) => c.dates.length >= 2)
+
+  const out: SeriesBreak[] = []
+  for (const s of series.filter((x) => x.ended)) {
+    const { days, min, max } = CADENCE_DAYS[s.cadence]
+    const line = s.key.split(":").slice(0, 2).join(":")
+    for (const c of candidates) {
+      if (!c.key.startsWith(line + ":") || c.counterparty === s.counterparty) continue
+      if (!withinBand(c.amount, s.latest)) continue
+      // starts around when the old one would next have been due, and repeats on its cadence
+      const start = daysBetween(s.lastDate, c.dates[0])
+      if (start < min / 2 || start > days * 3) continue
+      const gaps = c.dates.slice(1).map((d, i) => daysBetween(c.dates[i], d))
+      if (gaps.some((x) => x < min || x > max)) continue
+      if (daysBetween(c.dates.at(-1)!, dataEnd) > days * 1.5 + 7) continue
+      out.push({
+        ended: { key: s.key, example: s.example, lastDate: s.lastDate, amount: s.latest, cadence: s.cadence },
+        candidate: {
+          key: c.key,
+          example: c.example,
+          firstDate: c.dates[0],
+          amount: round2(c.amount),
+          count: c.dates.length,
+        },
+      })
+    }
+  }
+  return out
 }
 
 /**
@@ -406,7 +582,8 @@ export function buildBudget({
   const full = fullMonths(window.start, window.last)
   const recentMonths = full.slice(-3)
 
-  const seriesByKey = new Map(series.map((s) => [s.key, s]))
+  overrides = overridesByAlias(series, overrides)
+  const index = seriesIndex(series)
   const groups = new Map<
     string,
     {
@@ -429,7 +606,7 @@ export function buildBudget({
     }
     groups.set(key, g)
     const amount = tx.amount * direction
-    const s = seriesByKey.get(seriesKeyOf(tx) ?? "")
+    const s = seriesOf(index, tx)
     const isOther = !s || (overrides.get(s.key)?.excluded && !s.ended)
     const isEnded = s?.ended && !overrides.get(s.key)?.excluded
     const month = tx.date.slice(0, 7)

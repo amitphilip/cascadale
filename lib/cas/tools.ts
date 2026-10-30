@@ -14,11 +14,16 @@ import {
   syncAkahu,
   type ActionResult,
 } from "@/app/actions"
-import { getAkahuOverview } from "@/lib/akahu"
+import { getAkahuOverview, type AkahuOverview } from "@/lib/akahu"
+import { healthReasons, planTools } from "@/lib/cas/plan-tools"
+import { tool, isoDate, type CasTool } from "@/lib/cas/tool"
+import { loadDataHealth } from "@/lib/data-health"
 import { buildStats } from "@/lib/checkin"
 import { COLUMNS, getDb, must } from "@/lib/db"
 import { NOTE_KINDS, type CasNote } from "@/lib/db/schema"
 import { describeSimulation, simulate } from "@/lib/plan"
+import { planStatus } from "@/lib/plan-service"
+import { planDeps } from "@/lib/plan-repo"
 import { latestPlan, loadSnapshot } from "@/lib/planner"
 import {
   getAccountsWithBalances,
@@ -40,44 +45,17 @@ import {
   PAGE_SIZE,
 } from "@/lib/queries"
 
+export type { CasTool }
+
 // Every tool over your finances, defined once. Cascadale's MCP server (lib/mcp.ts) offers the
 // read and action tools to clients such as claude.ai; the Cas agent (lib/cas/agent.ts)
 // gets the read and memory tools, so it never changes your finances itself. Changes go
 // through the MCP client, which asks you first.
 
-/**
- * - read: only reads; on Cascadale's MCP server and for the agent
- * - memory: reads or writes Cas's own notes; for the agent (the Cas MCP server
- *   shows them too)
- * - action: changes your data; only on Cascadale's MCP server, so you confirm each one
- */
-export type ToolAccess = "read" | "memory" | "action"
-
-export type CasTool = {
-  name: string
-  title: string
-  description: string
-  access: ToolAccess
-  input: z.ZodRawShape
-  run: (args: never) => Promise<unknown>
-}
-
-function tool<S extends z.ZodRawShape = Record<string, never>>(t: {
-  name: string
-  title: string
-  description: string
-  access: ToolAccess
-  input?: S
-  run: (args: z.infer<z.ZodObject<S>>) => Promise<unknown>
-}): CasTool {
-  return { ...t, input: t.input ?? {} }
-}
-
 const yearMonth = z.string().regex(/^\d{4}-\d{2}$/, "Use yyyy-MM")
 const month = yearMonth
   .optional()
   .describe("Month as yyyy-MM. Defaults to the month of the latest transaction.")
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use yyyy-MM-dd")
 
 /** Hours after which a linked account that hasn't synced is worth mentioning (it runs hourly). */
 const STALE_HOURS = 26
@@ -98,8 +76,8 @@ async function act<T extends object>(result: Promise<ActionResult<T>>) {
 }
 
 /** Bank feed health: each Akahu account, where it syncs, and whether that's working. */
-async function syncStatus() {
-  const overview = await getAkahuOverview()
+async function syncStatus(overview?: AkahuOverview) {
+  overview ??= await getAkahuOverview()
   if (!overview.connected) return { connected: false as const }
   const now = new Date()
   const accounts = overview.accounts.map((a) => {
@@ -142,25 +120,33 @@ async function notes(includeResolved = false) {
   return must<CasNote[]>(query)
 }
 
+/** The plan tools act as Claude (MCP); the Cas agent only gets their read tools. */
+const PLAN_TOOLS = planTools({ deps: () => planDeps("mcp"), health: () => loadDataHealth() })
+
 export const TOOLS: CasTool[] = [
   tool({
     name: "get_briefing",
     title: "Briefing",
     access: "read",
     description:
-      "Start here. Everything happening right now in one call: bank feed health, what came in and went out since the last check-in against the usual pattern, the projected low point of your balances over the next 60 days, upcoming bills and one-offs, what needs categorizing, the last check-in's verdict, and Cas's open notes and to-dos.",
+      "Start here. Everything happening right now in one call: bank feed health, what came in and went out since the last check-in against the usual pattern, the projected low point of your balances over the next 60 days, upcoming bills and one-offs, what needs categorizing, the last check-in's verdict, whether the plan is current, and Cas's open notes and to-dos. Includes data_health: check it before relying on the numbers.",
     run: async () => {
       const snap = await loadSnapshot()
-      const [sync, sinceLastCheckIn, categorization, merchants, lowRules, [last], open] =
+      const overview = await getAkahuOverview().catch(
+        (err: Error): AkahuOverview => ({ connected: true, error: err.message, accounts: [] })
+      )
+      const [sync, sinceLastCheckIn, categorization, merchants, lowRules, [last], open, health] =
         await Promise.all([
-          syncStatus().catch((err: Error) => ({ error: err.message })),
+          syncStatus(overview).catch((err: Error) => ({ error: err.message })),
           snap ? buildStats(snap) : null,
           getCategorizationStats(),
           getUncategorizedMerchants(),
           getRuleReview("low"),
           getCheckIns(1),
           notes(),
+          loadDataHealth(overview),
         ])
+      const plan = await planStatus(await planDeps("mcp"), undefined, healthReasons(health))
       return {
         today: today(),
         sync,
@@ -178,7 +164,9 @@ export const TOOLS: CasTool[] = [
               actions: last.result.actions,
             }
           : null,
+        plan: { status: plan.status, reasons: plan.reasons },
         openNotes: open,
+        data_health: health,
       }
     },
   }),
@@ -188,14 +176,26 @@ export const TOOLS: CasTool[] = [
     title: "Accounts",
     access: "read",
     description:
-      "The currency and every account with its current balance (credit cards and loans negative when owed), the latest month with transactions. Amounts are signed: negative is money out.",
+      "The currency and every account with its current balance (credit cards and loans negative when owed), the latest month with transactions. Each account also has its pending transactions (authorised by the bank, not posted yet, flagged pending) and balanceWithPending, so a payment made minutes ago shows; a pending one drops out once it posts, so nothing counts twice. Amounts are signed: negative is money out. Includes data_health (stale feeds, drift from the bank's balance).",
     run: async () => {
-      const [settings, accounts, latestMonth] = await Promise.all([
+      const [settings, accounts, latestMonth, health] = await Promise.all([
         getSettings(),
         getAccountsWithBalances(),
         getLatestMonth(),
+        loadDataHealth(),
       ])
-      return { ...settings, latestMonth, accounts }
+      const byId = new Map(health.accounts.map((a) => [a.accountId, a]))
+      return {
+        ...settings,
+        latestMonth,
+        accounts: accounts.map((a) => ({
+          ...a,
+          pending: health.pendingTransactions.filter((p) => p.accountId === a.id),
+          balanceWithPending: byId.get(a.id)?.balanceWithPending ?? a.balance,
+          bankBalance: byId.get(a.id)?.bankBalance ?? null,
+        })),
+        data_health: health,
+      }
     },
   }),
 
@@ -205,7 +205,7 @@ export const TOOLS: CasTool[] = [
     access: "read",
     description:
       "Each Akahu bank feed account: which account of yours it syncs into, when it last synced and how many transactions it added, Akahu's own refresh time, any problem, and the latest failed sync runs. Syncs run hourly.",
-    run: syncStatus,
+    run: () => syncStatus(),
   }),
 
   tool({
@@ -223,18 +223,7 @@ export const TOOLS: CasTool[] = [
     },
   }),
 
-  tool({
-    name: "get_plan",
-    title: "Current plan",
-    access: "read",
-    description:
-      "Your current savings plan from the Plan page: its summary, what to set aside into which pot and when, and its advice. Null if you haven't made one.",
-    run: async () => {
-      const thread = await getPlanThread()
-      const message = thread?.messages.findLast((m) => m.plan)
-      return message ? { madeAt: message.createdAt, plan: message.plan } : null
-    },
-  }),
+  ...PLAN_TOOLS.filter((t) => t.access === "read"),
 
   tool({
     name: "list_categories",
@@ -374,17 +363,18 @@ export const TOOLS: CasTool[] = [
     title: "Save a note",
     access: "memory",
     description:
-      "Remember something for later conversations: an observation worth tracking, a decision or preference you stated, or a to-do (with a due date if it has one). One fact per note; don't save what the data already shows.",
+      "Remember something for later conversations: an observation worth tracking, a decision or preference you stated, or a to-do (with a due date if it has one). One fact per note; don't save what the data already shows. Set affectsPlan on a decision that changes the plan (a pot, an amount, a skipped or extra payment): the plan then shows as out of date with it until a plan change carries it out.",
     input: {
       kind: z.enum(NOTE_KINDS),
       content: z.string().trim().min(1).max(1000),
       dueDate: isoDate.optional(),
+      affectsPlan: z.boolean().optional().describe("Only for decisions that change the plan"),
     },
-    run: async ({ kind, content, dueDate }) =>
+    run: async ({ kind, content, dueDate, affectsPlan }) =>
       must<CasNote>(
         (await getDb())
           .from("cas_notes")
-          .insert({ kind, content, due_date: dueDate ?? null })
+          .insert({ kind, content, due_date: dueDate ?? null, affects_plan: kind === "decision" && !!affectsPlan })
           .select(COLUMNS.casNotes)
           .single()
       ),
@@ -510,7 +500,13 @@ export const TOOLS: CasTool[] = [
     title: "Run a check-in",
     access: "action",
     description:
-      "Run a check-in like the one on the home page: analyse what was logged since the last one against the plan, save it, and return its status. Uses the Anthropic API key saved in Settings.",
-    run: () => act(checkIn()),
+      "Run a check-in like the one on the home page: analyse what was logged since the last one against the plan, save it, and return its status, with data_health (stale feeds or drift make the check-in less reliable). Uses the Anthropic API key saved in Settings.",
+    run: async () => {
+      // checked first, so a check-in on stale data says so
+      const health = await loadDataHealth()
+      return { ...(await act(checkIn())), data_health: health }
+    },
   }),
+
+  ...PLAN_TOOLS.filter((t) => t.access === "action"),
 ]

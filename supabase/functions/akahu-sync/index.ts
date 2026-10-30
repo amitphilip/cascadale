@@ -29,7 +29,10 @@ import {
   type AkahuTokens,
 } from "../_shared/akahu.ts"
 import { buildMatcher, type RuleLike } from "../_shared/rules.ts"
+import { pairTransfers } from "../_shared/transfers.ts"
 
+/** Days back that transfers between your accounts are paired after a sync. */
+const PAIR_DAYS = 120
 /** Re-read this many days before the last synced transaction, for ones the bank posts late. */
 const OVERLAP_DAYS = 7
 const DAY = 24 * 60 * 60 * 1000
@@ -379,7 +382,66 @@ async function syncUser(userId: string, runBy: RunBy, onlyAccountId?: number) {
       )
     }
   }
-  return { inserted, categorized, failed, ...adopted }
+  const transfers = inserted > 0 ? await categorizeTransfers(userId) : 0
+  return { inserted, categorized: categorized + transfers, failed, ...adopted }
+}
+
+/**
+ * Categorize both sides of transfers between the user's own accounts as Transfer (as
+ * lib/transfers.ts does in the app): uncategorized money out of one account matched to the
+ * same amount into another within a few days. Returns how many it categorized.
+ */
+async function categorizeTransfers(userId: string) {
+  const since = new Date(Date.now() - PAIR_DAYS * DAY).toISOString().slice(0, 10)
+  const rows = await selectAll<{
+    id: number
+    accountId: number
+    date: string
+    amount: number
+    description: string
+    categoryId: number | null
+    categorySource: string | null
+    categoryKind: string | null
+  }>((from, to) =>
+    db
+      .from("transactions")
+      .select(
+        "id, accountId:account_id, date, amount, description, categoryId:category_id, categorySource:category_source, ...categories(categoryKind:kind)"
+      )
+      .eq("user_id", userId)
+      .gte("date", since)
+      .order("id")
+      .range(from, to)
+  )
+  const candidates = rows
+    .map((r) => ({ ...r, amount: Number(r.amount) }))
+    .filter(
+      (r) => r.categoryKind === "transfer" || (r.categoryId === null && r.categorySource !== "manual")
+    )
+  const open = new Set(candidates.filter((r) => r.categoryId === null).map((r) => r.id))
+  const ids = pairTransfers(candidates)
+    .flatMap((p) => [p.outId, p.inId])
+    .filter((id) => open.has(id))
+  if (!ids.length) return 0
+  const cats = await must<{ id: number; name: string }[]>(
+    db.from("categories").select("id, name").eq("user_id", userId).eq("kind", "transfer").order("id")
+  )
+  const category =
+    cats.find((c) => c.name.toLowerCase() === "transfer") ??
+    cats[0] ??
+    (await must<{ id: number }>(
+      db.from("categories").insert({ user_id: userId, name: "Transfer", kind: "transfer" }).select("id").single()
+    ))
+  const updated = await must<{ id: number }[]>(
+    db
+      .from("transactions")
+      .update({ category_id: category.id, category_source: "rule", category_confidence: 100, rule_id: null })
+      .eq("user_id", userId)
+      .in("id", ids)
+      .is("category_id", null)
+      .select("id")
+  )
+  return updated.length
 }
 
 function json(body: unknown, status = 200) {

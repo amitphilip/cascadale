@@ -8,8 +8,8 @@ import { anthropicClient } from "@/lib/anthropic"
 import { describeError } from "@/lib/categorize"
 import type { PlanMessage } from "@/lib/db/schema"
 import {
-  buildSnapshot,
   describeSimulation,
+  planDataContext,
   FORTNIGHTLY,
   MONTHLY,
   PlannerTurnSchema,
@@ -24,17 +24,24 @@ import {
   getAccountsWithBalances,
   getAverageWindow,
   getCategories,
+  getPlanTransactions,
   getRecurringInputs,
   getSettings,
   getUpcomingExpenses,
 } from "@/lib/queries"
-import { buildBudget, detectRecurring, parseBasis } from "@/lib/recurring"
+import { applyPots, potSetAside, type PotInstruction } from "@/lib/plan-instructions"
+import { snapshotFromData } from "@/lib/snapshot"
 
 const MODEL = "claude-opus-5-5"
 const MAX_TOKENS = 64000
 
 /** Your finances as the planner sees them, or null before any transactions are imported. */
 export async function loadSnapshot(): Promise<PlanSnapshot | null> {
+  return (await loadPlanData())?.snapshot ?? null
+}
+
+/** The snapshot plus the recurring series and transactions it was built from. */
+export async function loadPlanData() {
   const [window, categories, accounts, fmt, upcoming] = await Promise.all([
     getAverageWindow(),
     getCategories(),
@@ -43,40 +50,20 @@ export async function loadSnapshot(): Promise<PlanSnapshot | null> {
     getUpcomingExpenses(),
   ])
   if (!window) return null
-  const { txs, overrides, projections } = await getRecurringInputs(window)
-  const overrideByKey = new Map(overrides.map((o) => [o.key, o]))
-  const series = detectRecurring(txs, window.last)
-  const lines = buildBudget({
-    txs,
-    series,
+  const [txs, { overrides, projections }] = await Promise.all([
+    getPlanTransactions(window),
+    getRecurringInputs(null),
+  ])
+  return snapshotFromData({
     window,
-    defaultBasis: parseBasis(undefined),
-    overrides: overrideByKey,
-    categories: new Map(projections.map((p) => [p.categoryId, p])),
-  })
-  const catById = new Map(categories.map((c) => [c.id, c]))
-  return buildSnapshot({
-    lines,
-    series,
+    accounts,
+    categories,
     txs,
-    overrides: overrideByKey,
-    accounts: accounts
-      .filter((a) => !a.archived)
-      .map((a) => ({ id: a.id, name: a.name, type: a.type, balance: a.balance })),
-    categoryName: (l) =>
-      l.categoryId === null
-        ? `Uncategorized ${l.direction > 0 ? "in" : "out"}`
-        : (catById.get(l.categoryId)?.name ?? "Unknown"),
-    dataEnd: window.last,
-    today: format(new Date(), "yyyy-MM-dd"),
+    overrides,
+    projections,
+    upcoming,
     currency: fmt.currency,
-    budgets: new Map(categories.map((c) => [c.id, c.monthlyBudget])),
-    upcoming: upcoming.map((u) => ({
-      name: u.note ? `${u.name} (${u.note})` : u.name,
-      date: u.dueDate,
-      amount: u.amount,
-      accountId: u.accountId,
-    })),
+    today: format(new Date(), "yyyy-MM-dd"),
   })
 }
 
@@ -160,19 +147,41 @@ const FREQUENCY_ASK: Record<Frequency, string> = {
   monthly: "I want to move money into pots once a month.",
 }
 
+/**
+ * Pots you set yourself (from the website, Claude or Cas), for the model: it plans around
+ * them, and applyPots puts them back exactly as set whatever it returns.
+ */
+function potsContext(pots: PotInstruction[], snapshot: PlanSnapshot) {
+  const live = pots.filter((p) => !p.removed)
+  const removed = pots.filter((p) => p.removed)
+  if (!live.length && !removed.length) return ""
+  const lines = live.flatMap((p) => {
+    const { entry } = potSetAside(p, snapshot)
+    return entry ? [`- ${JSON.stringify(entry)}`] : []
+  })
+  return [
+    "",
+    lines.length ? `My own pots, which stay exactly as set (plan the rest around them):\n${lines.join("\n")}` : "",
+    removed.length ? `Pots I removed, which must not come back: ${removed.map((p) => p.name).join(", ")}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n")
+}
+
 /** Start a conversation: the snapshot plus your goals, answered with a first plan. */
 export async function startPlan(
   snapshot: PlanSnapshot,
   goals: string,
-  frequency: Frequency
+  frequency: Frequency,
+  pots: PotInstruction[] = []
 ): Promise<NewTurn> {
   const user = {
     content: goals || "Make me a plan.",
-    context: `Here is my financial data:\n${fence("data", JSON.stringify(snapshot))}\n\n${FREQUENCY_ASK[frequency]}`,
+    context: `${planDataContext(snapshot)}\n\n${FREQUENCY_ASK[frequency]}${potsContext(pots, snapshot)}`,
   }
   const turn = await ask(history([{ role: "user", ...user, plan: null }]))
   if (!turn.plan) throw new Error("The model didn't return a plan")
-  const plan = sanitizePlan(turn.plan, snapshot)
+  const plan = applyPots(sanitizePlan(turn.plan, snapshot), pots, snapshot).plan
   return { user, assistant: { content: turn.reply, plan } }
 }
 
@@ -180,19 +189,24 @@ export async function startPlan(
 export async function continuePlan(
   snapshot: PlanSnapshot,
   messages: PlanMessage[],
-  text: string
+  text: string,
+  pots: PotInstruction[] = []
 ): Promise<NewTurn> {
   const current = latestPlan(messages)
   const user = {
     content: text,
-    context: current
-      ? fence("simulation_of_current_plan", describeSimulation(snapshot, simulate(snapshot, current)))
-      : "",
+    context:
+      (current
+        ? fence("simulation_of_current_plan", describeSimulation(snapshot, simulate(snapshot, current)))
+        : "") + potsContext(pots, snapshot),
   }
   const turn = await ask(history([...messages, { role: "user", ...user, plan: null }]))
   return {
     user,
-    assistant: { content: turn.reply, plan: turn.plan && sanitizePlan(turn.plan, snapshot) },
+    assistant: {
+      content: turn.reply,
+      plan: turn.plan && applyPots(sanitizePlan(turn.plan, snapshot), pots, snapshot).plan,
+    },
   }
 }
 

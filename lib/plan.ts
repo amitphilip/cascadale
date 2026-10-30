@@ -9,7 +9,9 @@ import { z } from "zod"
 
 import {
   CADENCE_DAYS,
-  seriesKeyOf,
+  overridesByAlias,
+  seriesIndex,
+  seriesOf,
   type BudgetLine,
   type Cadence,
   type RecurringOverride,
@@ -52,6 +54,8 @@ export type PlanAccount = {
 export type PlanFlow = {
   /** short id the model refers to: I1, I2… for income, B1, B2… for bills */
   id: string
+  /** the recurring series it comes from, stable across snapshots (missing on old ones) */
+  key?: string
   name: string
   category: string
   accountId: number
@@ -73,6 +77,34 @@ export type PlanOneOff = {
   /** null when you haven't said which account pays it */
   accountId: number | null
 }
+
+export const ADJUSTMENT_KINDS = ["skip", "add", "change_amount"] as const
+export type AdjustmentKind = (typeof ADJUSTMENT_KINDS)[number]
+export const ADJUSTMENT_TARGETS = ["bill", "pot", "transfer"] as const
+export type AdjustmentTarget = (typeof ADJUSTMENT_TARGETS)[number]
+
+/**
+ * A one-off change to the plan on one date, as frozen into a snapshot: skip or change one
+ * occurrence of a bill or a pot's set-aside, or add an extra payment, set-aside or
+ * transfer between your accounts.
+ */
+export type PlanAdjustmentEvent = {
+  /** "A" and the adjustment's id */
+  id: string
+  date: string
+  kind: AdjustmentKind
+  target: AdjustmentTarget
+  /** a bill's id in this snapshot (B1…) or a pot's name; null for a transfer */
+  ref: string | null
+  name: string
+  /** the new or added amount; null for a skip */
+  amount: number | null
+  fromAccountId: number | null
+  toAccountId: number | null
+}
+
+/** A skip or change applies to the occurrence of its bill or pot within this many days. */
+export const ADJUSTMENT_MATCH_DAYS = 3
 
 /** Money in or out that isn't on a schedule, per category and account. */
 export type PlanIrregular = {
@@ -97,6 +129,8 @@ export type PlanSnapshot = {
   budgets: { category: string; budget: number | null; projected: number }[]
   /** one-off expenses you expect; missing on plans made before they existed */
   upcoming?: PlanOneOff[]
+  /** one-off changes to the plan in effect when it was built */
+  adjustments?: PlanAdjustmentEvent[]
 }
 
 // ── The plan the model returns ───────────────────────────────────────────────
@@ -218,6 +252,11 @@ export function sanitizePlan(plan: Plan, snap: PlanSnapshot): Plan {
   }
 }
 
+/** The data a planning conversation starts from, as the model is given it. */
+export function planDataContext(snapshot: PlanSnapshot) {
+  return `Here is my financial data:\n<data>\n${JSON.stringify(snapshot)}\n</data>`
+}
+
 // ── Snapshot ─────────────────────────────────────────────────────────────────
 
 const toIso = (d: Date) => format(d, "yyyy-MM-dd")
@@ -307,6 +346,7 @@ export function buildSnapshot({
           s.nextDate
         return {
           id: `${prefix}${i + 1}`,
+          key: s.key,
           name: s.note ? `${s.example} (${s.note})` : s.example,
           category,
           accountId: s.accountId,
@@ -320,13 +360,12 @@ export function buildSnapshot({
       })
 
   // Split each category's unscheduled money across accounts by where it actually went.
-  const scheduled = new Set(
-    series.filter((s) => !overrides.get(s.key)?.excluded).map((s) => s.key)
-  )
+  overrides = overridesByAlias(series, overrides)
+  const index = seriesIndex(series)
   const otherByLine = new Map<string, Map<number, number>>()
   for (const tx of txs) {
-    const key = seriesKeyOf(tx)
-    if (key && scheduled.has(key)) continue
+    const s = seriesOf(index, tx)
+    if (s && !overrides.get(s.key)?.excluded) continue
     // same direction rule as the budget lines, so refunds net off their category
     const direction =
       tx.categoryKind === "income"
@@ -404,6 +443,10 @@ export type ScheduledEvent = {
   date: string
   kind: "income" | "bill" | "set-aside"
   name: string
+  /** the bill's or income's id, for matching adjustments */
+  ref?: string
+  /** the adjustment that added or changed it */
+  adjustment?: string
   amount: number
   accountId: number
   /** for set-asides: the account the money comes from */
@@ -486,6 +529,7 @@ export function simulate(
         date,
         kind: "income",
         name: inc.name,
+        ref: inc.id,
         amount: inc.amount,
         accountId: inc.accountId,
         pot: null,
@@ -515,6 +559,7 @@ export function simulate(
         date,
         kind: "bill",
         name: bill.name,
+        ref: bill.id,
         amount: bill.amount,
         accountId: bill.accountId,
         pot: billPot.get(bill.id) ?? null,
@@ -538,6 +583,7 @@ export function simulate(
       oneOff: true,
     })
   }
+  applyAdjustments(events, snap, setAsides, end)
   // income first, then set-asides, then bills on the same day
   const order = { income: 0, "set-aside": 1, bill: 2 }
   events.sort(
@@ -578,10 +624,10 @@ export function simulate(
         const from = e.fromAccountId!
         balance.set(from, (balance.get(from) ?? 0) - e.amount)
         balance.set(e.accountId, (balance.get(e.accountId) ?? 0) + e.amount)
-        pot.set(e.pot!, pot.get(e.pot!)! + e.amount)
+        if (e.pot && pot.has(e.pot)) pot.set(e.pot, pot.get(e.pot)! + e.amount)
       } else {
         balance.set(e.accountId, (balance.get(e.accountId) ?? 0) - e.amount)
-        if (e.pot) {
+        if (e.pot && pot.has(e.pot)) {
           const left = pot.get(e.pot)! - e.amount
           pot.set(e.pot, left)
           potMin.set(e.pot, Math.min(potMin.get(e.pot)!, left))
@@ -655,6 +701,88 @@ export function simulate(
       setAside: round2(setAside),
       free: round2(income - setAside - variable - sum(uncovered)),
     },
+  }
+}
+
+/**
+ * Apply the snapshot's one-off adjustments to the scheduled events, in place: skip or
+ * change the occurrence of a bill or pot set-aside nearest the adjustment's date, or add
+ * an extra bill payment, set-aside or transfer on that date.
+ */
+function applyAdjustments(
+  events: ScheduledEvent[],
+  snap: PlanSnapshot,
+  setAsides: Plan["set_asides"],
+  end: string
+) {
+  for (const a of snap.adjustments ?? []) {
+    if (a.date < snap.start || a.date > end) continue
+    if (a.kind === "add") {
+      const added = adjustmentEvent(a, snap, setAsides)
+      if (added) events.push(added)
+      continue
+    }
+    const matches = (e: ScheduledEvent) =>
+      a.target === "bill"
+        ? e.kind === "bill" && e.ref === a.ref
+        : a.target === "pot"
+          ? e.kind === "set-aside" && e.pot === a.ref && !e.adjustment
+          : false
+    const nearest = events
+      .map((e, i) => ({ e, i, gap: Math.abs(differenceInCalendarDays(parseISO(e.date), parseISO(a.date))) }))
+      .filter((x) => matches(x.e) && x.gap <= ADJUSTMENT_MATCH_DAYS)
+      .sort((x, y) => x.gap - y.gap)
+    // a pot funded from several incomes has one set-aside per income on the day
+    const hits = nearest.filter((x) => x.e.date === nearest[0]?.e.date)
+    if (a.kind === "skip") {
+      for (const h of hits.toSorted((x, y) => y.i - x.i)) events.splice(h.i, 1)
+    } else if (a.amount !== null && hits.length) {
+      // the new amount replaces the day's total, taken from the first entry
+      hits.forEach((h, j) => {
+        h.e.amount = j === 0 ? a.amount! : 0
+        h.e.adjustment = a.id
+      })
+    }
+  }
+}
+
+function adjustmentEvent(
+  a: PlanAdjustmentEvent,
+  snap: PlanSnapshot,
+  setAsides: Plan["set_asides"]
+): ScheduledEvent | null {
+  if (a.amount === null || a.amount <= 0) return null
+  if (a.target === "bill") {
+    const bill = snap.bills.find((b) => b.id === a.ref)
+    const accountId = a.fromAccountId ?? bill?.accountId
+    if (accountId == null) return null
+    return { date: a.date, kind: "bill", name: a.name, ref: a.ref ?? undefined, amount: a.amount, accountId, pot: null, adjustment: a.id, oneOff: true }
+  }
+  if (a.target === "pot") {
+    const entry = setAsides.find((s) => s.pot === a.ref)
+    const from = a.fromAccountId ?? entry?.from_account_id
+    if (from == null) return null
+    return {
+      date: a.date,
+      kind: "set-aside",
+      name: a.ref ?? a.name,
+      amount: a.amount,
+      accountId: a.toAccountId ?? entry?.to_account_id ?? from,
+      fromAccountId: from,
+      pot: a.ref,
+      adjustment: a.id,
+    }
+  }
+  if (a.fromAccountId === null || a.toAccountId === null) return null
+  return {
+    date: a.date,
+    kind: "set-aside",
+    name: a.name,
+    amount: a.amount,
+    accountId: a.toAccountId,
+    fromAccountId: a.fromAccountId,
+    pot: null,
+    adjustment: a.id,
   }
 }
 
