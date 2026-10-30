@@ -10,7 +10,7 @@ import {
   type CheckInResult,
   type CheckInStats,
 } from "@/lib/checkin-types"
-import { balanceChanges, sinceCheckIn } from "@/lib/checkin-window"
+import { balanceChanges, sinceCheckIn, withoutLoanAccounts } from "@/lib/checkin-window"
 import { getDb, must, selectAll } from "@/lib/db"
 import {
   combinedLow,
@@ -79,13 +79,14 @@ const isIncome = (r: Row) =>
 
 /** What happened since the last check-in, against what the usual pattern expects. */
 export async function buildStats(snap: PlanSnapshot): Promise<CheckInStats> {
-  const [{ rows, basis }, accountRows, thread] = await Promise.all([
+  const [{ rows: logged, basis }, accountRows, thread] = await Promise.all([
     newTransactions(),
     must<{ id: number; name: string; type: string }[]>(
       (await getDb()).from("accounts").select("id, name, type")
     ),
     getPlanThread(),
   ])
+  const rows = withoutLoanAccounts(logged, accountRows)
   const accountName = (id: number | null) =>
     accountRows.find((a) => a.id === id)?.name ?? "Unknown account"
 
