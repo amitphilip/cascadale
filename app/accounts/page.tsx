@@ -3,6 +3,7 @@ import { BankIcon, PlusIcon } from "@phosphor-icons/react/ssr"
 
 import { AccountActions } from "./account-actions"
 import { AccountDialog } from "@/components/account-dialog"
+import { AkahuSyncButton } from "@/components/akahu-sync-button"
 import { PageHeader } from "@/components/page-header"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -24,13 +25,18 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { getAkahuStatus } from "@/lib/akahu"
 import { ACCOUNT_TYPE_LABELS, formatDate, formatMoney } from "@/lib/format"
 import { getAccountsWithBalances, getSettings } from "@/lib/queries"
 
 export const metadata: Metadata = { title: "Accounts" }
 
 export default async function AccountsPage() {
-  const [accounts, fmt] = await Promise.all([getAccountsWithBalances(), getSettings()])
+  const [accounts, fmt, akahu] = await Promise.all([
+    getAccountsWithBalances(),
+    getSettings(),
+    getAkahuStatus(),
+  ])
   const active = accounts.filter((a) => !a.archived)
   const netWorth = active.reduce((s, a) => s + a.balance, 0)
 
@@ -47,6 +53,7 @@ export default async function AccountsPage() {
         title="Accounts"
         description="Balances are the opening balance plus every recorded transaction."
       >
+        {akahu && <AkahuSyncButton />}
         <AccountDialog trigger={addButton} />
       </PageHeader>
 

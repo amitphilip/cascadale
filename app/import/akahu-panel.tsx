@@ -1,12 +1,11 @@
 "use client"
 
 import Link from "next/link"
-import { ArrowsClockwiseIcon } from "@phosphor-icons/react"
 import { toast } from "sonner"
 
-import { linkAkahuAccount, syncAkahu } from "@/app/actions"
+import { linkAkahuAccount } from "@/app/actions"
+import { AkahuSyncButton } from "@/components/akahu-sync-button"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import {
   Card,
   CardAction,
@@ -102,36 +101,7 @@ export function AkahuPanel({
           only syncs newer ones.
         </CardDescription>
         <CardAction>
-          <Button
-            variant="outline"
-            disabled={pending || overview.accounts.length === 0}
-            onClick={() =>
-              execute(() => syncAkahu(), {
-                success: (r) =>
-                  (r.addedAccounts
-                    ? `Added ${r.addedAccounts} account${r.addedAccounts === 1 ? "" : "s"}. `
-                    : "") +
-                  `Synced ${r.inserted} new transactions` +
-                  (r.categorized ? `. ${r.categorized} matched by rules` : "") +
-                  (r.aiCategorized ? `, ${r.aiCategorized} categorized by AI` : "") +
-                  ".",
-                onSuccess: (r) => {
-                  if (r.failedAccounts) {
-                    toast.warning(
-                      `${r.failedAccounts} account${r.failedAccounts === 1 ? "" : "s"} didn't sync`,
-                      { description: "See the error under each account." }
-                    )
-                  }
-                  if (r.aiError) {
-                    toast.warning("AI categorization didn't run", { description: r.aiError })
-                  }
-                },
-              })
-            }
-          >
-            <ArrowsClockwiseIcon data-icon="inline-start" />
-            {pending ? "Syncing…" : "Sync now"}
-          </Button>
+          <AkahuSyncButton disabled={pending || overview.accounts.length === 0} />
         </CardAction>
       </CardHeader>
       <CardContent className="grid gap-3">
