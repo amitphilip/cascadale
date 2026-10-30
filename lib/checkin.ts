@@ -10,7 +10,8 @@ import {
   type CheckInResult,
   type CheckInStats,
 } from "@/lib/checkin-types"
-import { getDb, must } from "@/lib/db"
+import { balanceChanges, sinceCheckIn } from "@/lib/checkin-window"
+import { getDb, must, selectAll } from "@/lib/db"
 import {
   combinedLow,
   FORTNIGHTLY,
@@ -43,11 +44,18 @@ type Row = {
   categoryKind: string | null
 }
 
-/** Transactions logged since the last check-in, else the last 30 days; transfers excluded. */
+/**
+ * Transactions logged since the last check-in and dated from its last day on, else the last
+ * 30 days; transfers excluded.
+ */
 async function newTransactions() {
   const db = await (await getDb())
-  const [last] = await must<{ createdAt: string }[]>(
-    db.from("check_ins").select("createdAt:created_at").order("id", { ascending: false }).limit(1)
+  const [last] = await must<{ createdAt: string; periodEnd: string }[]>(
+    db
+      .from("check_ins")
+      .select("createdAt:created_at, periodEnd:period_end")
+      .order("id", { ascending: false })
+      .limit(1)
   )
   /** Logged after `since`, or with no `since`, in the last RECENT_DAYS days of data. */
   const query = async (since: string | null) =>
@@ -58,7 +66,7 @@ async function newTransactions() {
     ).map((x): Row => ({ ...x, amount: Number(x.amount) }))
 
   if (last) {
-    const rows = await query(last.createdAt)
+    const rows = sinceCheckIn(await query(last.createdAt), last.periodEnd)
     if (rows.length > 0) return { rows, basis: "new" as const }
   }
   const recent = await query(null)
@@ -116,9 +124,19 @@ export async function buildStats(snap: PlanSnapshot): Promise<CheckInStats> {
 
   const sum = (xs: { monthly: number }[]) =>
     xs.reduce((s, x) => s + x.monthly, 0)
-  const changeBy = new Map<number, number>()
-  for (const r of rows)
-    changeBy.set(r.accountId, (changeBy.get(r.accountId) ?? 0) + r.amount)
+  // what each balance actually did over these dates, so transfers count here
+  const db = await getDb()
+  const changeBy = balanceChanges(
+    await selectAll<{ accountId: number; amount: number }>((start, end) =>
+      db
+        .from("transactions")
+        .select("accountId:account_id, amount")
+        .gte("date", from)
+        .lte("date", to)
+        .order("id")
+        .range(start, end)
+    )
+  )
 
   // Project from today with no plan: what the accounts look like if nothing changes.
   const sim = simulate(snap, null, PROJECT_DAYS)
@@ -213,7 +231,7 @@ The data (amounts in the stated currency):
 - from/to/days: the dates the new transactions cover. basis "new" means logged since the last check-in; "recent" means nothing new was logged, so it is the last 30 days.
 - income/spending/net: totals over those days, transfers between their own accounts excluded. expectedIncome/expectedSpending: what their usual pattern predicts for the same number of days.
 - incomeItems, bigExpenses: the largest money in and out. categories: spending per category against its expectation for those days.
-- accounts: balances now (credit cards and loans negative when owed) and how much each changed in the new transactions. cashNow: total in cash accounts.
+- accounts: balances now (credit cards and loans negative when owed) and how much each balance moved between from and to, transfers included. cashNow: total in cash accounts.
 - upcomingBills: recurring bills in the next 30 days. upcomingOneOffs: one-off expenses they told the app about, in the next 90 days.
 - low: the lowest projected combined balance of all accounts except loans over the next 60 days if spending keeps its usual pace, with the date. Transfers between their own accounts aren't projected, so judge affordability on this combined figure. Below zero means they can't cover what's coming.
 - plan: their current plan's summary and set-asides (pot, amount, when, where the money goes), or null if they have none.

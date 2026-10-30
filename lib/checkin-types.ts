@@ -35,6 +35,7 @@ export type CheckInStats = {
   }[]
   /** spending per category against its projection for the same number of days */
   categories: { name: string; spent: number; expected: number }[]
+  /** change: how much the balance moved between from and to, transfers included */
   accounts: { name: string; type: string; balance: number; change: number }[]
   cashNow: number
   /** recurring bills due in the next 30 days */
