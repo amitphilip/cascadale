@@ -6,8 +6,10 @@ import { z } from "zod"
 import {
   categorizeMerchant,
   checkIn,
+  deleteAsset,
   reconcileAccount,
   runAutoCategorize,
+  saveAsset,
   saveUpcomingExpense,
   setCategoryBudgets,
   setTransactionCategory,
@@ -20,13 +22,15 @@ import { tool, isoDate, type CasTool } from "@/lib/cas/tool"
 import { loadDataHealth } from "@/lib/data-health"
 import { buildStats } from "@/lib/checkin"
 import { COLUMNS, getDb, must } from "@/lib/db"
-import { NOTE_KINDS, type CasNote } from "@/lib/db/schema"
+import { ASSET_KINDS, NOTE_KINDS, type CasNote } from "@/lib/db/schema"
+import { buildNetWorth } from "@/lib/net-worth"
 import { describeSimulation, simulate } from "@/lib/plan"
 import { planStatus } from "@/lib/plan-service"
 import { planDeps } from "@/lib/plan-repo"
 import { latestPlan, loadSnapshot } from "@/lib/planner"
 import {
   getAccountsWithBalances,
+  getAssets,
   getAverageWindow,
   getCategoriesWithUsage,
   getCategorizationStats,
@@ -195,6 +199,35 @@ export const TOOLS: CasTool[] = [
           bankBalance: byId.get(a.id)?.bankBalance ?? null,
         })),
         data_health: health,
+      }
+    },
+  }),
+
+  tool({
+    name: "get_net_worth",
+    title: "Net worth",
+    access: "read",
+    description:
+      "Net worth: what you own less what you owe. Adds account balances to the assets valued by hand (such as the house), with each asset's id, value and the date it was valued, and lists accounts as cash, investments and debts. An overdrawn account counts as a debt. Asset values are only as current as valuedOn.",
+    run: async () => {
+      const [accounts, assets] = await Promise.all([getAccountsWithBalances(), getAssets()])
+      const account = ({ id, name, type, institution, balance }: (typeof accounts)[number]) => ({
+        id,
+        name,
+        type,
+        institution,
+        balance,
+      })
+      const worth = buildNetWorth(accounts, assets)
+      return {
+        netWorth: worth.netWorth,
+        owned: worth.owned,
+        owed: worth.totals.debts,
+        totals: worth.totals,
+        assets: worth.assets,
+        investments: worth.investments.map(account),
+        cash: worth.cash.map(account),
+        debts: worth.debts.map(account),
       }
     },
   }),
@@ -469,6 +502,41 @@ export const TOOLS: CasTool[] = [
         .describe("The day the bank's balance is from, if it's older than the latest transactions"),
     },
     run: ({ accountId, balance, asOf }) => act(reconcileAccount(accountId, balance, asOf)),
+  }),
+
+  tool({
+    name: "upsert_asset",
+    title: "Add or update an asset",
+    access: "action",
+    description:
+      "Add something you own that no bank feed values, such as a house or a car, or update one by passing its assetId from get_net_worth. Its value counts towards net worth.",
+    input: {
+      assetId: z.number().int().positive().optional().describe("The asset to update; omit to add one"),
+      name: z.string().trim().min(1),
+      kind: z.enum(ASSET_KINDS),
+      value: z.number().nonnegative().describe("What it's worth, as a positive amount"),
+      valuedOn: isoDate.optional().describe("The date of that value. Defaults to today."),
+      note: z.string().optional().describe("Where the value came from. Omit to keep the current note."),
+    },
+    run: ({ assetId, name, kind, value, valuedOn, note }) => {
+      const form = new FormData()
+      if (assetId) form.set("id", String(assetId))
+      form.set("name", name)
+      form.set("kind", kind)
+      form.set("value", String(value))
+      form.set("valuedOn", valuedOn ?? today())
+      if (note !== undefined) form.set("note", note)
+      return act(saveAsset(form))
+    },
+  }),
+
+  tool({
+    name: "remove_asset",
+    title: "Remove an asset",
+    access: "action",
+    description: "Delete an asset by its assetId from get_net_worth, taking its value out of net worth.",
+    input: { assetId: z.number().int().positive() },
+    run: ({ assetId }) => act(deleteAsset(assetId)),
   }),
 
   tool({

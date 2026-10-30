@@ -128,7 +128,10 @@ export async function saveAsset(form: FormData) {
     const db = await getDb()
     const assetId = form.get("id") ? id.parse(form.get("id")) : null
     if (assetId) {
-      await must(db.from("assets").update(row).eq("id", assetId))
+      const updated = await must<{ id: number }[]>(
+        db.from("assets").update(row).eq("id", assetId).select("id")
+      )
+      if (updated.length === 0) throw new Error("Asset not found")
       return { id: assetId }
     }
     return { id: await insertId(db, "assets", row) }
@@ -137,7 +140,10 @@ export async function saveAsset(form: FormData) {
 
 export async function deleteAsset(assetId: number) {
   return run(async () => {
-    await must((await getDb()).from("assets").delete().eq("id", id.parse(assetId)))
+    const deleted = await must<{ id: number }[]>(
+      (await getDb()).from("assets").delete().eq("id", id.parse(assetId)).select("id")
+    )
+    if (deleted.length === 0) throw new Error("Asset not found")
     return {}
   })
 }
