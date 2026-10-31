@@ -18,6 +18,8 @@ import { NewPlanDialog } from "./new-plan-dialog"
 import {
   AllocationCard,
   NetWorthCard,
+  StandingCard,
+  type Stat,
   UpcomingCard,
   VerdictCard,
   type Allocation,
@@ -185,6 +187,33 @@ export default async function PlanPage() {
     money: (n) => formatMoney(n, fmt),
     date: (iso) => formatDate(iso, fmt.locale),
   })
+  const cashNow = snap.accounts.filter((a) => isCashAccount(a.type))
+  const lowestCash = Math.min(
+    ...sim.days.map((_, i) => cashNow.reduce((s, a) => s + (sim.balances[a.id]?.[i] ?? a.balance), 0))
+  )
+  const netNow = history[history.length - 1].netWorth
+  const stats: Stat[] = [
+    {
+      label: "Net worth",
+      value: money(netNow, fmt),
+      note: from ? `${formatMoney(netNow - from.netWorth, fmt, { signed: true })} in ${TREND_MONTHS} mo` : undefined,
+      tone: from ? (netNow >= from.netWorth ? "good" : "bad") : undefined,
+    },
+    { label: "Cash now", value: money(cashNow.reduce((s, a) => s + a.balance, 0), fmt), note: `${cashNow.length} accounts` },
+    { label: "Owed", value: money(-worth.totals.debts, fmt), note: `${worth.debts.length} cards and loans` },
+    {
+      label: "Lowest cash ahead",
+      value: money(lowestCash, fmt),
+      note: `next ${HORIZON_DAYS} days`,
+      tone: lowestCash < 0 ? "bad" : undefined,
+    },
+    {
+      label: "Left each month",
+      value: money(sim.monthly.free, fmt),
+      note: `of ${money(sim.monthly.income, fmt)} income`,
+      tone: sim.monthly.free < 0 ? "bad" : "good",
+    },
+  ]
   const messages: ChatMessage[] = thread.messages.map((m, i) => ({
     id: m.id,
     role: m.role,
@@ -238,6 +267,8 @@ export default async function PlanPage() {
 
       <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] items-start gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="grid min-w-0 gap-6">
+          <StandingCard stats={stats} />
+
           <VerdictCard verdict={verdict} />
 
           <AllocationCard

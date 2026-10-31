@@ -27,6 +27,33 @@ const TONE = {
   bad: { card: "border-destructive/40 bg-destructive/5", text: BAD, Icon: WarningCircleIcon },
 } as const
 
+export type Stat = { label: string; value: string; note?: string; tone?: "good" | "bad" }
+
+/** Where things stand today: the few numbers to check before reading the plan. */
+export function StandingCard({ stats }: { stats: Stat[] }) {
+  return (
+    <section aria-label="Where you stand now" className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+      {stats.map((s) => (
+        <Card key={s.label} size="sm">
+          <CardContent className="grid gap-0.5">
+            <div className="text-xs text-muted-foreground">{s.label}</div>
+            <div
+              className={cn(
+                "truncate font-heading text-xl font-semibold tabular-nums",
+                s.tone === "good" && GOOD,
+                s.tone === "bad" && BAD
+              )}
+            >
+              {s.value}
+            </div>
+            {s.note && <div className="truncate text-xs text-muted-foreground tabular-nums">{s.note}</div>}
+          </CardContent>
+        </Card>
+      ))}
+    </section>
+  )
+}
+
 /** The whole plan in one glance: how it stands, what's good and what isn't. */
 export function VerdictCard({ verdict }: { verdict: Verdict }) {
   const { card, text, Icon } = TONE[verdict.tone]
