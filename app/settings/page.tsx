@@ -3,6 +3,7 @@ import Link from "next/link"
 
 import { AkahuForm } from "./akahu-form"
 import { ApiKeyForm } from "./api-key-form"
+import { InstallApp } from "./install-card"
 import { SettingsForm } from "./settings-form"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
@@ -37,6 +38,17 @@ export default async function SettingsPage() {
         </CardHeader>
         <CardContent>
           <SettingsForm current={current} />
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>Install</CardTitle>
+          <CardDescription>
+            Add Cascadale to your home screen to open it like an app.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <InstallApp />
         </CardContent>
       </Card>
       <Card>

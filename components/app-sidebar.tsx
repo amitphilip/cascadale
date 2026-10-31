@@ -38,7 +38,7 @@ import { useServerAction } from "@/hooks/use-server-action"
 import { LogoMark } from "@/components/logo"
 
 const NAV = [
-  { href: "/", label: "Overview", icon: ChartPieSliceIcon },
+  { href: "/overview", label: "Overview", icon: ChartPieSliceIcon },
   { href: "/statement", label: "Statement", icon: ScalesIcon },
   { href: "/income", label: "Income", icon: TrendUpIcon },
   {
@@ -67,7 +67,7 @@ export function AppSidebar({
   const { setOpenMobile } = useSidebar()
   const { pending, execute } = useServerAction()
   const isActive = (href: string) =>
-    href === "/" ? pathname === "/" : pathname.startsWith(href)
+    pathname.startsWith(href)
 
   // close the mobile drawer after navigating
   useEffect(() => {

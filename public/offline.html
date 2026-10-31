@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Offline · Cascadale</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        margin: 0; min-height: 100dvh; display: grid; place-items: center;
+        padding: env(safe-area-inset-top) 1.5rem env(safe-area-inset-bottom);
+        font-family: system-ui, sans-serif; text-align: center;
+        background: #fff; color: #0a0a0a;
+      }
+      @media (prefers-color-scheme: dark) { body { background: #0a0a0a; color: #fafafa; } }
+      p { color: #737373; max-width: 22rem; margin: 0.5rem auto 1.5rem; }
+      button {
+        font: inherit; padding: 0.75rem 1.25rem; border-radius: 0.75rem; border: 0;
+        background: #171717; color: #fff; min-height: 44px;
+      }
+      @media (prefers-color-scheme: dark) { button { background: #fafafa; color: #0a0a0a; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>You're offline</h1>
+      <p>Cascadale needs a connection to show your finances. Nothing is stored on this device.</p>
+      <button onclick="location.reload()">Try again</button>
+    </main>
+  </body>
+</html>

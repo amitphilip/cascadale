@@ -3,6 +3,7 @@ import { Geist_Mono, IBM_Plex_Sans, Source_Sans_3 } from "next/font/google"
 
 import "./globals.css"
 import { AppSidebar } from "@/components/app-sidebar"
+import { ServiceWorker } from "@/components/service-worker"
 import { ThemeProvider } from "@/components/theme-provider"
 import {
   SidebarInset,
@@ -33,12 +34,23 @@ const fontMono = Geist_Mono({
 export const metadata: Metadata = {
   title: { default: "Cascadale", template: "%s · Cascadale" },
   description: "Personal finance analysis",
+  applicationName: "Cascadale",
+  appleWebApp: {
+    capable: true,
+    title: "Cascadale",
+    statusBarStyle: "black-translucent",
+  },
+  formatDetection: { telephone: false },
 }
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
+    { media: "(prefers-color-scheme: dark)", color: "#0a0a0a" },
+  ],
 }
 
 export default async function RootLayout({
@@ -86,6 +98,7 @@ export default async function RootLayout({
               children
             )}
             <Toaster richColors={false} />
+            <ServiceWorker />
           </TooltipProvider>
         </ThemeProvider>
       </body>
