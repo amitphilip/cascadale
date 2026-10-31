@@ -125,6 +125,11 @@
     }
   body {
     @apply overflow-x-clip bg-background text-foreground;
+    overscroll-behavior-y: none;
+    -webkit-tap-highlight-color: transparent;
+    }
+  button, a, [role="button"], select, summary {
+    touch-action: manipulation;
     }
   html {
     @apply font-sans;

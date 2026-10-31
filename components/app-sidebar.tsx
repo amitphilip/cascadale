@@ -3,21 +3,7 @@
 import { useEffect } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
-import {
-  ArrowsClockwiseIcon,
-  CoinsIcon,
-  BankIcon,
-  ChartPieSliceIcon,
-  ScalesIcon,
-  GearSixIcon,
-  SignOutIcon,
-  ListBulletsIcon,
-  PiggyBankIcon,
-  SparkleIcon,
-  TagIcon,
-  TrendUpIcon,
-  UploadSimpleIcon,
-} from "@phosphor-icons/react"
+import { GearSixIcon, SignOutIcon } from "@phosphor-icons/react"
 
 import {
   Sidebar,
@@ -36,24 +22,7 @@ import {
 import { signOut } from "@/app/actions"
 import { useServerAction } from "@/hooks/use-server-action"
 import { LogoMark } from "@/components/logo"
-
-const NAV = [
-  { href: "/overview", label: "Overview", icon: ChartPieSliceIcon },
-  { href: "/statement", label: "Statement", icon: ScalesIcon },
-  { href: "/income", label: "Income", icon: TrendUpIcon },
-  {
-    href: "/recurring",
-    label: "Recurring & budget",
-    icon: ArrowsClockwiseIcon,
-  },
-  { href: "/plan", label: "Plan", icon: PiggyBankIcon },
-  { href: "/transactions", label: "Transactions", icon: ListBulletsIcon },
-  { href: "/accounts", label: "Accounts", icon: BankIcon },
-  { href: "/net-worth", label: "Net worth", icon: CoinsIcon },
-  { href: "/import", label: "Import statements", icon: UploadSimpleIcon },
-  { href: "/categories", label: "Categories & rules", icon: TagIcon },
-  { href: "/review", label: "Review categories", icon: SparkleIcon },
-]
+import { NAV } from "@/lib/nav"
 
 export function AppSidebar({
   uncategorized,

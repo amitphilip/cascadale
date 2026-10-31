@@ -3,13 +3,10 @@ import { Geist_Mono, IBM_Plex_Sans, Source_Sans_3 } from "next/font/google"
 
 import "./globals.css"
 import { AppSidebar } from "@/components/app-sidebar"
+import { MobileTabBar } from "@/components/mobile-tab-bar"
 import { ServiceWorker } from "@/components/service-worker"
 import { ThemeProvider } from "@/components/theme-provider"
-import {
-  SidebarInset,
-  SidebarProvider,
-  SidebarTrigger,
-} from "@/components/ui/sidebar"
+import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { getDb } from "@/lib/db"
@@ -85,19 +82,22 @@ export default async function RootLayout({
                   email={user.email ?? null}
                 />
                 <SidebarInset className="min-w-0">
-                  <header className="sticky top-0 z-20 flex min-h-12 shrink-0 items-center gap-2 border-b bg-background/95 px-2 pt-[env(safe-area-inset-top)] backdrop-blur supports-backdrop-filter:bg-background/80 md:hidden">
-                    <SidebarTrigger className="size-11" />
+                  <header className="sticky top-0 z-20 flex min-h-12 shrink-0 items-center gap-2 border-b bg-background/95 px-4 pt-[env(safe-area-inset-top)] backdrop-blur supports-backdrop-filter:bg-background/80 md:hidden">
                     <span className="font-heading font-semibold">Cascadale</span>
                   </header>
-                  <div className="mx-auto flex w-full max-w-7xl min-w-0 flex-1 flex-col gap-6 px-3 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:p-4 md:p-8">
+                  <div className="mx-auto flex w-full max-w-7xl min-w-0 flex-1 flex-col gap-6 px-3 py-4 pb-[calc(5rem+env(safe-area-inset-bottom))] sm:p-4 sm:pb-[calc(5rem+env(safe-area-inset-bottom))] md:p-8">
                     {children}
                   </div>
                 </SidebarInset>
+                <MobileTabBar
+                  uncategorized={uncategorized}
+                  email={user.email ?? null}
+                />
               </SidebarProvider>
             ) : (
               children
             )}
-            <Toaster richColors={false} />
+            <Toaster richColors={false} mobileOffset={{ bottom: "5rem" }} />
             <ServiceWorker />
           </TooltipProvider>
         </ThemeProvider>
