@@ -6,12 +6,15 @@ import { z } from "zod"
 import {
   categorizeMerchant,
   checkIn,
+  addPlanAction,
   deleteAsset,
+  deletePlanAction,
   reconcileAccount,
   runAutoCategorize,
   saveAsset,
   saveUpcomingExpense,
   setCategoryBudgets,
+  setPlanActionDone,
   setTransactionCategory,
   syncAkahu,
   type ActionResult,
@@ -22,7 +25,7 @@ import { tool, isoDate, type CasTool } from "@/lib/cas/tool"
 import { loadDataHealth } from "@/lib/data-health"
 import { buildStats } from "@/lib/checkin"
 import { COLUMNS, getDb, must } from "@/lib/db"
-import { ASSET_KINDS, NOTE_KINDS, type CasNote } from "@/lib/db/schema"
+import { ASSET_KINDS, NOTE_KINDS, type CasNote, type PlanAction } from "@/lib/db/schema"
 import { buildNetWorth } from "@/lib/net-worth"
 import { describeSimulation, simulate } from "@/lib/plan"
 import { planStatus } from "@/lib/plan-service"
@@ -537,6 +540,64 @@ export const TOOLS: CasTool[] = [
     description: "Delete an asset by its assetId from get_net_worth, taking its value out of net worth.",
     input: { assetId: z.number().int().positive() },
     run: ({ assetId }) => act(deleteAsset(assetId)),
+  }),
+
+  tool({
+    name: "list_plan_actions",
+    title: "Plan action items",
+    access: "read",
+    description:
+      "The action items on the Plan page: things to do about the plan, each with an actionId, title, optional detail and dueDate, whether it's done (doneAt) and who added it. Check it before suggesting an action, so you don't repeat one that's already there.",
+    input: { includeDone: z.boolean().optional().describe("Include finished items. Defaults to open ones only.") },
+    run: async ({ includeDone }) => {
+      let query = (await getDb())
+        .from("plan_actions")
+        .select(COLUMNS.planActions)
+        .order("id")
+        .limit(200)
+      if (!includeDone) query = query.is("done_at", null)
+      return { actions: await must<PlanAction[]>(query), today: todayLocal() }
+    },
+  }),
+
+  tool({
+    name: "add_plan_action",
+    title: "Add a plan action item",
+    access: "action",
+    description:
+      "Put an action item on the Plan page, e.g. 'Move $500 to the tax pot before 20 Nov'. Keep the title short and concrete, and put the numbers in the detail. Adding a title that's already open returns the existing item instead of a duplicate.",
+    input: {
+      title: z.string().trim().min(1).max(120),
+      detail: z.string().trim().optional().describe("One sentence of why or how, with the key number"),
+      dueDate: isoDate.optional(),
+    },
+    run: ({ title, detail, dueDate }) => {
+      const form = new FormData()
+      form.set("title", title)
+      if (detail) form.set("detail", detail)
+      if (dueDate) form.set("dueDate", dueDate)
+      form.set("createdBy", "mcp")
+      return act(addPlanAction(form))
+    },
+  }),
+
+  tool({
+    name: "set_plan_action_done",
+    title: "Mark a plan action item done or not done",
+    access: "action",
+    description:
+      "Tick off a plan action item by its actionId from list_plan_actions, or reopen it with done false.",
+    input: { actionId: z.number().int().positive(), done: z.boolean() },
+    run: ({ actionId, done }) => act(setPlanActionDone(actionId, done)),
+  }),
+
+  tool({
+    name: "remove_plan_action",
+    title: "Remove a plan action item",
+    access: "action",
+    description: "Delete a plan action item by its actionId from list_plan_actions.",
+    input: { actionId: z.number().int().positive() },
+    run: ({ actionId }) => act(deletePlanAction(actionId)),
   }),
 
   tool({

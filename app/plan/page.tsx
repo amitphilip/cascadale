@@ -25,6 +25,7 @@ import {
   type Allocation,
 } from "./plan-summary-cards"
 import { RebuildButton, RemoveAdjustmentButton, RemovePotButton } from "./plan-instructions"
+import { ActionItems, AddFocusAction } from "./plan-actions"
 import { PlanAsk } from "./plan-ask"
 import { type ChatMessage } from "./plan-chat"
 import { PageHeader } from "@/components/page-header"
@@ -62,13 +63,14 @@ import { latestPlan, loadSnapshot } from "@/lib/planner"
 import {
   getAccountsWithBalances,
   getAssets,
+  getPlanActions,
   getPlanThread,
   getSettings,
   getTransactionAmounts,
 } from "@/lib/queries"
 import { CADENCE_LABELS } from "@/lib/recurring"
 import { cn } from "@/lib/utils"
-import { localDate } from "@/supabase/functions/_shared/akahu"
+import { localDate, todayLocal } from "@/supabase/functions/_shared/akahu"
 
 export const metadata: Metadata = { title: "Plan" }
 
@@ -93,7 +95,7 @@ const PRIORITY_DOT = {
 } as const
 
 export default async function PlanPage() {
-  const [fmt, thread, current, deps, accounts, assets, txs] = await Promise.all([
+  const [fmt, thread, current, deps, accounts, assets, txs, actions] = await Promise.all([
     getSettings(),
     getPlanThread(),
     loadSnapshot(),
@@ -101,6 +103,7 @@ export default async function PlanPage() {
     getAccountsWithBalances(),
     getAssets(),
     getTransactionAmounts(),
+    getPlanActions(),
   ])
 
   if (!current) {
@@ -296,7 +299,27 @@ export default async function PlanPage() {
             fmt={fmt}
           />
 
-          {state.status !== "out_of_date" && <FocusCards plan={plan} fmt={fmt} />}
+          {state.status !== "out_of_date" && (
+            <FocusCards
+              plan={plan}
+              fmt={fmt}
+              added={new Set(actions.flatMap((a) => (a.focusTitle ? [a.focusTitle] : [])))}
+            />
+          )}
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <CheckCircleIcon /> Action items
+              </CardTitle>
+              <CardDescription>
+                {actions.filter((a) => !a.doneAt).length} to do · {actions.filter((a) => a.doneAt).length} done
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ActionItems actions={actions} today={todayLocal()} locale={fmt.locale} />
+            </CardContent>
+          </Card>
 
           <details className="group grid gap-6">
             <summary className="flex cursor-pointer list-none items-center gap-2 font-heading font-semibold">
@@ -493,7 +516,7 @@ function InstructionsCard({
 
 const FREQUENCY_TEXT = { payday: "every payday", fortnightly: "a fortnight", monthly: "a month" } as const
 
-function FocusCards({ plan, fmt }: { plan: Plan; fmt: MoneyFormat }) {
+function FocusCards({ plan, fmt, added }: { plan: Plan; fmt: MoneyFormat; added: Set<string> }) {
   if (plan.focus.length === 0) return null
   return (
     <section className="grid gap-3">
@@ -520,6 +543,7 @@ function FocusCards({ plan, fmt }: { plan: Plan; fmt: MoneyFormat }) {
               <p className="line-clamp-3 text-sm text-pretty text-muted-foreground" title={f.detail}>
                 {f.detail}
               </p>
+              <AddFocusAction title={f.title} detail={f.detail} added={added.has(f.title)} />
             </CardContent>
           </Card>
         ))}

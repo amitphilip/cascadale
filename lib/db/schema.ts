@@ -187,6 +187,21 @@ export type UpcomingExpense = {
   createdAt: string
 }
 
+/** Something to do about the plan, ticked off when done. */
+export type PlanAction = {
+  id: number
+  title: string
+  detail: string | null
+  dueDate: string | null
+  /** the plan's focus item it was added from */
+  focusTitle: string | null
+  /** website: you added it; mcp: Claude did, on your say-so */
+  createdBy: "website" | "mcp"
+  /** null while still to do */
+  doneAt: string | null
+  createdAt: string
+}
+
 /**
  * A check-in on the overview: analytics over what was logged since the last one, and the
  * model's read on what to do about it.

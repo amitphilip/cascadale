@@ -11,6 +11,7 @@ import type {
   CategoryProjectionRow,
   CategorySource,
   CheckIn,
+  PlanAction,
   PlanMessage,
   PlanThread,
   RecurringOverrideRow,
@@ -70,6 +71,16 @@ export async function getAssets() {
     (await db()).from("assets").select(COLUMNS.assets).order("id")
   )
   return rows.map((a) => ({ ...a, value: Number(a.value) }))
+}
+
+export async function getPlanActions() {
+  return must<PlanAction[]>(
+    (await db())
+      .from("plan_actions")
+      .select(COLUMNS.planActions)
+      .order("done_at", { nullsFirst: true })
+      .order("id")
+  )
 }
 
 /** Every transaction's account, date and amount, for rebuilding balances over time. */

@@ -1120,6 +1120,62 @@ export async function deleteUpcomingExpense(expenseId: number) {
   })
 }
 
+// ── Plan action items ───────────────────────────────────────────────────────
+
+const planActionSchema = z.object({
+  title: z.string().trim().min(1, "Describe the action").max(120),
+  detail: optionalText,
+  dueDate: z
+    .string()
+    .trim()
+    .transform((s) => s || null)
+    .pipe(isoDate.nullable()),
+  focusTitle: optionalText,
+  createdBy: z.enum(["website", "mcp"]).catch("website"),
+})
+
+export async function addPlanAction(form: FormData) {
+  return run(async () => {
+    const data = planActionSchema.parse(fields(form))
+    const db = await getDb()
+    // Adding what's already waiting to be done returns it, so a retry adds nothing twice.
+    const [same] = await must<{ id: number }[]>(
+      db.from("plan_actions").select("id").is("done_at", null).ilike("title", data.title.replace(/[\\%_]/g, "\\$&")).limit(1)
+    )
+    if (same) return { id: same.id }
+    return {
+      id: await insertId(db, "plan_actions", {
+        title: data.title,
+        detail: data.detail,
+        due_date: data.dueDate,
+        focus_title: data.focusTitle,
+        created_by: data.createdBy,
+      }),
+    }
+  })
+}
+
+export async function setPlanActionDone(actionId: number, done: boolean) {
+  return run(async () => {
+    await must(
+      (await getDb())
+        .from("plan_actions")
+        .update({ done_at: done ? new Date().toISOString() : null })
+        .eq("id", id.parse(actionId))
+    )
+    return {}
+  })
+}
+
+export async function deletePlanAction(actionId: number) {
+  return run(async () => {
+    await must(
+      (await getDb()).from("plan_actions").delete().eq("id", id.parse(actionId))
+    )
+    return {}
+  })
+}
+
 /** Analyse what was logged since the last check-in and ask the model what to do. */
 export async function checkIn() {
   return run(() => runCheckIn())
