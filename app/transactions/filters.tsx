@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
-import { MagnifyingGlassIcon, XIcon } from "@phosphor-icons/react"
+import { FunnelIcon, MagnifyingGlassIcon, XIcon } from "@phosphor-icons/react"
 
 import type { CategoryOption } from "@/components/category-picker"
 import { Button } from "@/components/ui/button"
@@ -18,6 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { CATEGORY_KIND_LABELS } from "@/lib/format"
+import { cn } from "@/lib/utils"
 
 const ALL = "all"
 
@@ -36,6 +37,7 @@ export function TransactionFilters({
   const pathname = usePathname()
   const params = useSearchParams()
   const [q, setQ] = useState(params.get("q") ?? "")
+  const [open, setOpen] = useState(false)
 
   function update(key: string, value: string | null) {
     const next = new URLSearchParams(params)
@@ -62,69 +64,92 @@ export function TransactionFilters({
     ...months.map((m) => ({ value: m, label: monthLabels[m] ?? m })),
   ]
   const category = params.get("category")
-  const hasFilters = ["account", "category", "month", "q"].some((k) => params.get(k))
+  const hasFilters = ["account", "category", "month", "q"].some((k) =>
+    params.get(k)
+  )
+  const active = ["account", "category", "month"].filter((k) =>
+    params.get(k)
+  ).length
 
   return (
     <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-      <div className="relative w-full sm:w-64">
-        <MagnifyingGlassIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search descriptions"
-          className="pl-8"
-          aria-label="Search descriptions"
-        />
-      </div>
-      <Select
-        items={accountItems}
-        value={params.get("account") ?? ALL}
-        onValueChange={(v) => update("account", v as string)}
-      >
-        <SelectTrigger aria-label="Account" className="w-full sm:w-fit">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent alignItemWithTrigger={false}>
-          {accountItems.map((a) => (
-            <SelectItem key={a.value} value={a.value}>
-              {a.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      <CategoryFilter
-        categories={categories}
-        value={category}
-        onChange={(v) => update("category", v)}
-      />
-      <Select
-        items={monthItems}
-        value={params.get("month") ?? ALL}
-        onValueChange={(v) => update("month", v as string)}
-      >
-        <SelectTrigger aria-label="Month" className="w-full sm:w-fit">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent alignItemWithTrigger={false} className="max-h-80">
-          {monthItems.map((m) => (
-            <SelectItem key={m.value} value={m.value}>
-              {m.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      {hasFilters && (
+      <div className="flex gap-2 sm:contents">
+        <div className="relative w-full sm:w-64">
+          <MagnifyingGlassIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search descriptions"
+            className="pl-8"
+            aria-label="Search descriptions"
+          />
+        </div>
         <Button
-          variant="ghost"
-          onClick={() => {
-            setQ("")
-            router.replace(pathname, { scroll: false })
-          }}
+          variant="outline"
+          className="h-9 shrink-0 sm:hidden"
+          aria-expanded={open}
+          onClick={() => setOpen((o) => !o)}
         >
-          <XIcon data-icon="inline-start" />
-          Clear
+          <FunnelIcon data-icon="inline-start" />
+          Filters{active > 0 ? ` (${active})` : ""}
         </Button>
-      )}
+      </div>
+      <div
+        className={cn(
+          "flex-col gap-2 sm:flex sm:flex-row sm:flex-wrap sm:items-center",
+          open || active > 0 ? "flex" : "hidden"
+        )}
+      >
+        <Select
+          items={accountItems}
+          value={params.get("account") ?? ALL}
+          onValueChange={(v) => update("account", v as string)}
+        >
+          <SelectTrigger aria-label="Account" className="w-full sm:w-fit">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent alignItemWithTrigger={false}>
+            {accountItems.map((a) => (
+              <SelectItem key={a.value} value={a.value}>
+                {a.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <CategoryFilter
+          categories={categories}
+          value={category}
+          onChange={(v) => update("category", v)}
+        />
+        <Select
+          items={monthItems}
+          value={params.get("month") ?? ALL}
+          onValueChange={(v) => update("month", v as string)}
+        >
+          <SelectTrigger aria-label="Month" className="w-full sm:w-fit">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent alignItemWithTrigger={false} className="max-h-80">
+            {monthItems.map((m) => (
+              <SelectItem key={m.value} value={m.value}>
+                {m.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {hasFilters && (
+          <Button
+            variant="ghost"
+            onClick={() => {
+              setQ("")
+              router.replace(pathname, { scroll: false })
+            }}
+          >
+            <XIcon data-icon="inline-start" />
+            Clear
+          </Button>
+        )}
+      </div>
     </div>
   )
 }
@@ -146,7 +171,11 @@ function CategoryFilter({
   ]
   const kinds = ["expense", "income", "transfer"] as const
   return (
-    <Select items={items} value={value ?? ALL} onValueChange={(v) => onChange(v as string)}>
+    <Select
+      items={items}
+      value={value ?? ALL}
+      onValueChange={(v) => onChange(v as string)}
+    >
       <SelectTrigger aria-label="Category" className="w-full sm:w-fit">
         <SelectValue />
       </SelectTrigger>

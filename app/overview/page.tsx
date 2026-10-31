@@ -218,7 +218,7 @@ export default async function OverviewPage({
             </p>
           )}
         </div>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3">
           <StatCard
             label="Net worth"
             value={formatMoney(netWorth, fmt)}
@@ -422,7 +422,7 @@ function StatCard({
         <CardDescription>{label}</CardDescription>
         <CardTitle
           className={cn(
-            "font-heading text-xl font-semibold break-words sm:text-2xl",
+            "font-heading text-lg font-semibold break-words sm:text-2xl",
             tone === "bad" && "text-destructive"
           )}
         >

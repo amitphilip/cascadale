@@ -67,7 +67,7 @@ export function TransactionRowActions({
     <>
       <DropdownMenu>
         <DropdownMenuTrigger
-          render={<Button variant="ghost" size="icon-sm" aria-label="Transaction actions" />}
+          render={<Button variant="ghost" size="icon-sm" aria-label="Transaction actions" className="max-sm:size-11" />}
         >
           <DotsThreeIcon weight="bold" />
         </DropdownMenuTrigger>
