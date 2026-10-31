@@ -56,20 +56,20 @@ export default async function ImportPage({
                 <TableRow>
                   <TableHead className="pl-4">File</TableHead>
                   <TableHead>Account</TableHead>
-                  <TableHead>Period</TableHead>
+                  <TableHead className="hidden md:table-cell">Period</TableHead>
                   <TableHead className="text-right">New / rows</TableHead>
-                  <TableHead>Imported</TableHead>
+                  <TableHead className="hidden sm:table-cell">Imported</TableHead>
                   <TableHead className="pr-4" />
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {statements.map((s) => (
                   <TableRow key={s.id}>
-                    <TableCell className="max-w-64 truncate pl-4 font-medium">
+                    <TableCell className="max-w-40 truncate pl-4 font-medium sm:max-w-64">
                       {s.fileName}
                     </TableCell>
                     <TableCell>{s.accountName}</TableCell>
-                    <TableCell className="text-muted-foreground">
+                    <TableCell className="hidden text-muted-foreground md:table-cell">
                       {s.periodStart && s.periodEnd
                         ? `${formatDate(s.periodStart, fmt.locale)} – ${formatDate(s.periodEnd, fmt.locale)}`
                         : "—"}
@@ -77,7 +77,7 @@ export default async function ImportPage({
                     <TableCell className="text-right tabular-nums">
                       {s.insertedCount} / {s.rowCount}
                     </TableCell>
-                    <TableCell className="text-muted-foreground">
+                    <TableCell className="hidden text-muted-foreground sm:table-cell">
                       {new Date(s.importedAt).toLocaleDateString(fmt.locale)}
                     </TableCell>
                     <TableCell className="pr-4 text-right">

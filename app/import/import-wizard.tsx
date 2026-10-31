@@ -302,8 +302,8 @@ export function ImportWizard({
                   <Table className="table-fixed">
                     <TableHeader>
                       <TableRow>
-                        <TableHead className="w-16">Line</TableHead>
-                        <TableHead className="w-32">Date</TableHead>
+                        <TableHead className="hidden w-16 sm:table-cell">Line</TableHead>
+                        <TableHead className="w-24 sm:w-32">Date</TableHead>
                         <TableHead>Description</TableHead>
                         <TableHead className="text-right">Amount</TableHead>
                       </TableRow>
@@ -311,7 +311,7 @@ export function ImportWizard({
                     <TableBody>
                       {preview.parsed.slice(0, PREVIEW_ROWS).map((r) => (
                         <TableRow key={r.line}>
-                          <TableCell className="text-muted-foreground tabular-nums">
+                          <TableCell className="hidden text-muted-foreground tabular-nums sm:table-cell">
                             {r.line}
                           </TableCell>
                           <TableCell className="tabular-nums">

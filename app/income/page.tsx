@@ -234,12 +234,12 @@ export default async function IncomePage({
                   No income on a regular schedule in this period.
                 </p>
               ) : (
-                <Table className="min-w-[40rem]">
+                <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead className="pl-(--card-spacing)">Source</TableHead>
-                      <TableHead className="text-right">First</TableHead>
-                      <TableHead className="text-right">Latest</TableHead>
+                      <TableHead className="hidden text-right sm:table-cell">First</TableHead>
+                      <TableHead className="hidden text-right sm:table-cell">Latest</TableHead>
                       <TableHead className="text-right">Change</TableHead>
                       <TableHead className="pr-(--card-spacing) text-right">Monthly</TableHead>
                     </TableRow>
@@ -249,7 +249,7 @@ export default async function IncomePage({
                       <TableRow key={s.key} className={cn((excluded || s.ended) && "text-muted-foreground")}>
                         <TableCell className="pl-(--card-spacing)">
                           <div className="flex items-center gap-2">
-                            <span className="max-w-72 truncate" title={s.note ? `${s.example} — ${s.note}` : s.example}>
+                            <span className="max-w-40 truncate sm:max-w-72" title={s.note ? `${s.example} — ${s.note}` : s.example}>
                               {s.example}
                             </span>
                             {s.ended && <Badge variant="outline">Stopped</Badge>}
@@ -261,8 +261,8 @@ export default async function IncomePage({
                             {formatDate(s.lastDate, fmt.locale)}
                           </div>
                         </TableCell>
-                        <TableCell className="text-right tabular-nums">{money(first)}</TableCell>
-                        <TableCell className="text-right tabular-nums">{money(latest)}</TableCell>
+                        <TableCell className="hidden text-right tabular-nums sm:table-cell">{money(first)}</TableCell>
+                        <TableCell className="hidden text-right tabular-nums sm:table-cell">{money(latest)}</TableCell>
                         <TableCell className="text-right">
                           <Pct rate={change} />
                         </TableCell>
@@ -291,7 +291,7 @@ export default async function IncomePage({
                   No one-offs in this period.
                 </p>
               ) : (
-                <Table className="min-w-[36rem]">
+                <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead className="pl-(--card-spacing)">Date</TableHead>
@@ -307,7 +307,7 @@ export default async function IncomePage({
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2">
-                            <span className="max-w-80 truncate" title={o.description}>
+                            <span className="max-w-40 truncate sm:max-w-80" title={o.description}>
                               {o.description}
                             </span>
                             {o.kind === "bonus" && <Badge variant="secondary">Bonus</Badge>}
@@ -366,15 +366,15 @@ export default async function IncomePage({
 function MonthTable({ rows, fmt }: { rows: IncomeMonth[]; fmt: MoneyFormat }) {
   const money = (n: number) => formatMoney(n, fmt)
   return (
-    <Table className="min-w-[40rem]">
+    <Table>
       <TableHeader>
         <TableRow>
           <TableHead className="pl-(--card-spacing)">Month</TableHead>
           <TableHead className="text-right">Regular</TableHead>
           <TableHead className="text-right">One-offs</TableHead>
-          <TableHead className="text-right">Rate /mo</TableHead>
+          <TableHead className="hidden text-right sm:table-cell">Rate /mo</TableHead>
           <TableHead className="text-right">vs last month</TableHead>
-          <TableHead className="pr-(--card-spacing) text-right">vs last year</TableHead>
+          <TableHead className="hidden pr-(--card-spacing) text-right sm:table-cell">vs last year</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -392,11 +392,11 @@ function MonthTable({ rows, fmt }: { rows: IncomeMonth[]; fmt: MoneyFormat }) {
             <TableCell className="text-right text-muted-foreground tabular-nums">
               {r.oneOff ? money(r.oneOff) : "—"}
             </TableCell>
-            <TableCell className="text-right tabular-nums">{money(r.rate)}</TableCell>
+            <TableCell className="hidden text-right tabular-nums sm:table-cell">{money(r.rate)}</TableCell>
             <TableCell className="text-right">
               <Pct rate={r.mom} />
             </TableCell>
-            <TableCell className="pr-(--card-spacing) text-right">
+            <TableCell className="hidden pr-(--card-spacing) text-right sm:table-cell">
               <Pct rate={r.yoy} />
             </TableCell>
           </TableRow>
