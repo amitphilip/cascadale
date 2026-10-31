@@ -32,7 +32,7 @@ export function PlanAsk({ threadId, messages }: { threadId: number; messages: Ch
 
       <div className="xl:hidden">
         <Button
-          className="fixed right-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-30 shadow-lg"
+          className="fixed right-3 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] md:bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-30 shadow-lg"
           onClick={() => setOpen(true)}
         >
           <SparkleIcon data-icon="inline-start" />
