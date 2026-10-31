@@ -162,22 +162,42 @@ export function applyPots(plan: Plan, pots: PotInstruction[], snap: PlanSnapshot
   return { plan: { ...next, warnings: [...next.warnings, ...warnings] }, warnings }
 }
 
+/** Each flow's id in the old snapshot to its id in the new one, where it can be found. */
+const flowIds = (fromFlows: PlanFlow[], toFlows: PlanFlow[]) =>
+  new Map(
+    fromFlows.flatMap((f) => {
+      const t = findFlow(toFlows, { key: f.key, name: f.name })
+      return t ? [[f.id, t.id] as const] : []
+    })
+  )
+
+/** The set-asides that carrying a plan over would lose: their income can't be found now. */
+export function strandedSetAsides(plan: Plan, from: PlanSnapshot, to: PlanSnapshot) {
+  const incomes = flowIds(from.incomes, to.incomes)
+  return plan.set_asides.flatMap((s) =>
+    s.income_id === MONTHLY || s.income_id === FORTNIGHTLY || incomes.has(s.income_id)
+      ? []
+      : [
+          {
+            pot: s.pot,
+            income: from.incomes.find((i) => i.id === s.income_id)?.name ?? s.income_id,
+          },
+        ]
+  )
+}
+
 /**
  * Carry a plan over to a newer snapshot: income and bill ids (I1, B2…) are positions, so
  * they're mapped through each flow's series key (or its name, on snapshots made before
- * keys). Set-asides whose income is gone are dropped and noted.
+ * keys). Set-asides whose income is gone are dropped and noted, as are bills that have left.
  */
 export function remapPlan(plan: Plan, from: PlanSnapshot, to: PlanSnapshot) {
-  const map = (fromFlows: PlanFlow[], toFlows: PlanFlow[]) =>
-    new Map(
-      fromFlows.flatMap((f) => {
-        const t = findFlow(toFlows, { key: f.key, name: f.name })
-        return t ? [[f.id, t.id] as const] : []
-      })
-    )
-  const incomes = map(from.incomes, to.incomes)
-  const bills = map(from.bills, to.bills)
+  const incomes = flowIds(from.incomes, to.incomes)
+  const bills = flowIds(from.bills, to.bills)
   const dropped: string[] = []
+  const goneBills = new Set(
+    plan.set_asides.flatMap((s) => s.covers).filter((b) => !bills.has(b))
+  )
   const setAsides = plan.set_asides.flatMap((s) => {
     const incomeId =
       s.income_id === MONTHLY || s.income_id === FORTNIGHTLY ? s.income_id : incomes.get(s.income_id)
@@ -191,9 +211,18 @@ export function remapPlan(plan: Plan, from: PlanSnapshot, to: PlanSnapshot) {
     ...plan,
     set_asides: setAsides,
     // carried-over warnings were about the old data
-    warnings: dropped.length
-      ? [`Dropped set-asides whose income stopped: ${[...new Set(dropped)].join(", ")}`]
-      : [],
+    warnings: [
+      ...(dropped.length
+        ? [`Dropped set-asides whose income stopped: ${[...new Set(dropped)].join(", ")}`]
+        : []),
+      ...(goneBills.size
+        ? [
+            `Pots no longer cover these bills, which aren't in the data now: ${[...goneBills]
+              .map((b) => from.bills.find((x) => x.id === b)?.name ?? b)
+              .join(", ")}`,
+          ]
+        : []),
+    ],
   }
 }
 

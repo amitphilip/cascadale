@@ -4,7 +4,7 @@ import { CHANGES_DATA, withMoney } from "@/lib/cas/tool"
 import { simulate } from "@/lib/plan"
 import { getPlanState } from "@/lib/plan-service"
 
-import { ACCOUNTS } from "./fixtures/october-2026"
+import { ACCOUNTS, currentSnapshot } from "./fixtures/october-2026"
 import { harness } from "./harness"
 
 describe("tool definitions", () => {
@@ -204,6 +204,37 @@ describe("regenerate_plan", () => {
     expect(page.status).toBe("current")
     expect(page.recentChanges.map((c) => c.action)).toEqual(["regenerate_plan", "upsert_pot"])
     expect(simulate(page.plan!.snapshot, page.plan!.plan).potSummaries.map((p) => p.name)).toContain("Sharesies")
+  })
+})
+
+describe("regenerate_plan when flows change", () => {
+  test("stops rather than lose set-asides whose income can't be found", async () => {
+    const h = harness({
+      snapshot: () => {
+        const snap = currentSnapshot()
+        return {
+          ...snap,
+          incomes: snap.incomes.map((i) => ({ ...i, key: `new-${i.id}`, name: `Renamed ${i.id}` })),
+        }
+      },
+    })
+    await expect(h.call("regenerate_plan", { operationId: "g" })).rejects.toThrow("Can't rebuild")
+    expect(h.plans).toHaveLength(1)
+  })
+
+  test("rebuilds without a bill that's gone, and says so", async () => {
+    const h = harness()
+    const covered = h.plans[0].snapshot.bills.find((b) =>
+      h.plans[0].plan.set_asides.some((s) => s.covers.includes(b.id))
+    )!
+    const h2 = harness({
+      snapshot: () => {
+        const snap = currentSnapshot()
+        return { ...snap, bills: snap.bills.filter((b) => b.key !== covered.key && b.name !== covered.name) }
+      },
+    })
+    const out = await h2.call("regenerate_plan", { operationId: "g" })
+    expect(out.plan.warnings.join(" ")).toContain("Pots no longer cover these bills")
   })
 })
 

@@ -16,6 +16,7 @@ import {
   findFlow,
   matchByName,
   remapPlan,
+  strandedSetAsides,
   type Actor,
   type AdjustmentInstruction,
   type PotInstruction,
@@ -118,6 +119,9 @@ const INSTRUCTION_ACTIONS = new Set([
 ])
 
 export class PlanConflictError extends Error {}
+
+/** A rebuild would lose set-asides, so it stopped and the plan is unchanged. */
+export class PlanRebuildError extends Error {}
 
 /**
  * Run a write once per operation id: a repeat returns the stored result with replayed set.
@@ -484,7 +488,9 @@ export async function withInstructions(
  * Rebuild the plan from today's data with every pot and adjustment applied, keeping the
  * current plan's other set-asides. Doesn't ask the model, so it's quick and gives the
  * same plan for the same data. Pass expectedPlanId to rebuild only if nobody else has
- * changed the plan since you read it.
+ * changed the plan since you read it. Stops without saving if an income the plan relies on
+ * can't be found any more, as a new bank description would do, rather than lose its
+ * set-asides.
  */
 export async function regeneratePlan(
   deps: PlanDeps,
@@ -497,6 +503,14 @@ export async function regeneratePlan(
       throw new PlanConflictError(
         `The plan changed since you read it (now ${previous?.id ?? "none"}, expected ${input.expectedPlanId}). Read it again with get_plan.`
       )
+    const stranded = previous ? strandedSetAsides(previous.plan, previous.snapshot, fresh) : []
+    if (stranded.length > 0) {
+      const incomes = [...new Set(stranded.map((s) => s.income))].join(", ")
+      const pots = [...new Set(stranded.map((s) => s.pot))].join(", ")
+      throw new PlanRebuildError(
+        `Can't rebuild: ${incomes} isn't in your data now, so ${pots} would be lost. Nothing was changed. Create a new plan instead.`
+      )
+    }
     const statusBefore = await planStatus(deps, previous)
     const built = await withInstructions(deps.repo, fresh, previous)
     const potNames = built.pots.map((p) => p.name)
