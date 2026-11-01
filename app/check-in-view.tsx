@@ -50,7 +50,7 @@ export function CheckInView({
     .slice(0, 6)
 
   return (
-    <div className="grid gap-5">
+    <div className="grid grid-cols-[minmax(0,1fr)] gap-5">
       <div className="grid gap-2">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
           <StatusBadge status={result.status} />
@@ -159,7 +159,7 @@ export function CheckInView({
         <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
           Analytics behind this check-in
         </summary>
-        <div className="mt-3 grid gap-5 sm:grid-cols-2">
+        <div className="mt-3 grid grid-cols-[minmax(0,1fr)] gap-5 sm:grid-cols-2">
           {notable.length > 0 && (
             <Section title="Categories off their usual pace">
               {notable.map((c) => (
@@ -235,9 +235,9 @@ function Section({
   children: React.ReactNode
 }) {
   return (
-    <div className="grid content-start gap-1.5">
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] content-start gap-1.5">
       <h4 className="text-xs font-medium text-muted-foreground">{title}</h4>
-      <ul className="grid gap-1">{children}</ul>
+      <ul className="grid grid-cols-[minmax(0,1fr)] gap-1">{children}</ul>
     </div>
   )
 }

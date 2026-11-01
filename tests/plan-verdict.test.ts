@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest"
 
 import type { Simulation } from "@/lib/plan"
-import { planVerdict } from "@/lib/plan-verdict"
+import { planStanding, planVerdict, type Verdict } from "@/lib/plan-verdict"
 
 const sim = (over: Partial<Simulation> = {}, free = 500): Simulation =>
   ({
@@ -40,10 +40,13 @@ describe("planVerdict", () => {
     expect(planVerdict({ ...input, sim: sim({ overdrafts }) }).bad[0]).toBe(
       "Account 1 goes below zero on 2026-11-01, down to $-50"
     )
-    expect(planVerdict({ ...input, balanceOf: () => -10, sim: sim({ overdrafts }) }).bad[0]).toBe(
-      "Account 1 is overdrawn, down to $-50"
+    expect(
+      planVerdict({ ...input, balanceOf: () => -10, sim: sim({ overdrafts }) })
+        .bad[0]
+    ).toBe("Account 1 is overdrawn, down to $-50")
+    expect(planVerdict({ ...input, sim: sim({ overdrafts }) }).tone).toBe(
+      "watch"
     )
-    expect(planVerdict({ ...input, sim: sim({ overdrafts }) }).tone).toBe("watch")
   })
 
   test("net worth and debts over time go on the right side", () => {
@@ -55,5 +58,88 @@ describe("planVerdict", () => {
     const v = planVerdict({ ...input, sim: sim(), trend })
     expect(v.bad).toContain("Net worth down $50 over 3 months")
     expect(v.good).toContain("Debts down $100 over 3 months")
+  })
+})
+
+describe("planStanding", () => {
+  const good: Verdict = {
+    tone: "good",
+    headline: "You’re on track",
+    good: [],
+    bad: [],
+  }
+  const watch: Verdict = {
+    tone: "watch",
+    headline: "1 thing to look at",
+    good: [],
+    bad: ["x"],
+  }
+  const bad: Verdict = {
+    tone: "bad",
+    headline: "This plan doesn’t add up: 1 thing to fix",
+    good: [],
+    bad: ["x"],
+  }
+
+  test("no check-in: the verdict alone, marked stale", () => {
+    const s = planStanding({
+      verdict: watch,
+      checkIn: null,
+      dataEnd: "2026-11-01",
+    })
+    expect(s).toEqual({
+      status: "watch",
+      headline: "1 thing to look at",
+      unchecked: null,
+      stale: true,
+    })
+  })
+
+  test("a fresh check-in that's worse than the verdict sets the status and headline", () => {
+    const checkIn = {
+      status: "off_track",
+      headline: "Joint credit grew",
+      periodEnd: "2026-10-25",
+    } as const
+    const s = planStanding({ verdict: good, checkIn, dataEnd: "2026-11-01" })
+    expect(s.status).toBe("off_track")
+    expect(s.headline).toBe("Joint credit grew")
+    expect(s.unchecked).toBe(7)
+    expect(s.stale).toBe(false)
+  })
+
+  test("a stale check-in is reported but doesn't set the status", () => {
+    const checkIn = {
+      status: "off_track",
+      headline: "Joint credit grew",
+      periodEnd: "2026-10-02",
+    } as const
+    const s = planStanding({ verdict: watch, checkIn, dataEnd: "2026-10-31" })
+    expect(s.status).toBe("watch")
+    expect(s.headline).toBe("1 thing to look at")
+    expect(s.unchecked).toBe(29)
+    expect(s.stale).toBe(true)
+  })
+
+  test("the verdict wins when it's worse than a fresh check-in", () => {
+    const checkIn = {
+      status: "watch",
+      headline: "Spending a bit high",
+      periodEnd: "2026-10-30",
+    } as const
+    const s = planStanding({ verdict: bad, checkIn, dataEnd: "2026-11-01" })
+    expect(s.status).toBe("off_track")
+    expect(s.headline).toBe(bad.headline)
+  })
+
+  test("both fine is on track", () => {
+    const checkIn = {
+      status: "on_track",
+      headline: "All good",
+      periodEnd: "2026-10-30",
+    } as const
+    expect(
+      planStanding({ verdict: good, checkIn, dataEnd: "2026-11-01" }).headline
+    ).toBe("You’re on track")
   })
 })
