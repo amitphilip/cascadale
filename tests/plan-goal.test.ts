@@ -57,8 +57,44 @@ describe("planGoal", () => {
     ])
     expect(g.forecast).toBe(800)
     expect(g.gap).toBe(-200)
-    expect(g.latest).toEqual({ date: "2026-10-03", planned: 1000, actual: 800 })
+    expect(g.latest).toEqual({
+      date: "2026-10-03",
+      planned: 1000,
+      actual: 800,
+      cash: 800,
+      owed: 0,
+    })
     expect(g.tone).toBe("off_track")
+  })
+
+  test("a revolving credit below zero counts as owed, and paying it down leaves net unchanged", () => {
+    const accounts = [
+      { id: 1, name: "Everyday", type: "checking", balance: 3000 },
+      { id: 3, name: "Joint", type: "checking", balance: -20000 },
+    ]
+    const g = planGoal({
+      goal: { snapshot: snapshot({ accounts }), plan },
+      latest: plan,
+      current: snapshot({ start: "2026-10-03", dataEnd: "2026-10-02", accounts }),
+      balances: new Map([
+        [1, 2200],
+        [3, -19200],
+      ]),
+      txs: [
+        { accountId: 1, date: "2026-10-02", amount: -800 },
+        { accountId: 3, date: "2026-10-02", amount: 800 },
+      ],
+    })
+    expect(g.targetSplit).toEqual({ cash: 3000, owed: -20000 })
+    expect(g.latest).toEqual({
+      date: "2026-10-02",
+      planned: -17000,
+      actual: -17000,
+      cash: 2200,
+      owed: -19200,
+    })
+    expect(g.gap).toBe(0)
+    expect(g.tone).toBe("on_track")
   })
 
   test("the plan you started sets the goal until its horizon passes", () => {

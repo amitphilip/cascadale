@@ -58,14 +58,22 @@ export type CheckInStats = {
     summary: string
     setAsides: { pot: string; amount: number; when: string; to: string }[]
   } | null
-  /** the plan's end goal for everything but loans, and where today's plan lands; missing on old check-ins */
+  /** the plan's end goal as a net position (cash less cards and revolving credit, loans left out); missing on old check-ins */
   goal?: {
     endDate: string
     target: number
+    targetSplit: { cash: number; owed: number }
     forecast: number
+    forecastSplit: { cash: number; owed: number }
     gap: number
     /** the last day with data: where the plan expected you to be, and where you were */
-    latest: { date: string; planned: number; actual: number } | null
+    latest: {
+      date: string
+      planned: number
+      actual: number
+      cash: number
+      owed: number
+    } | null
   } | null
 }
 

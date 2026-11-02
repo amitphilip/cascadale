@@ -10,7 +10,7 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { formatDate, formatMoney, SERIES_COLORS, type MoneyFormat } from "@/lib/format"
-import type { GoalDay, PlanGoal } from "@/lib/plan-goal"
+import type { GoalDay, PlanGoal, Split } from "@/lib/plan-goal"
 import { cn } from "@/lib/utils"
 
 /** Days with data listed before the rest fold away. */
@@ -40,13 +40,13 @@ export function PlanGoalCard({
   const series: Series[] = [
     {
       key: "planned",
-      label: "Plan",
+      label: "Plan (net)",
       color: "var(--muted-foreground)",
       values: goal.days.map((d) => d.planned),
     },
     {
       key: "actual",
-      label: "Actual",
+      label: "Actual (net)",
       color: SERIES_COLORS[0],
       values: goal.days.map((d) => d.actual),
     },
@@ -77,8 +77,10 @@ export function PlanGoalCard({
           {summary}
         </CardTitle>
         <CardDescription className="text-pretty">
-          Everything you hold except loans. Days will drift from the plan; Cas
-          checks in against the goal and adjusts the plan to still land on it.
+          Tracked as your net position: cash less what you owe on cards and
+          revolving credit, home loans left out. Days will drift from the plan;
+          Cas checks in against the goal and adjusts the plan to still land on
+          it.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid grid-cols-[minmax(0,1fr)] gap-5">
@@ -90,12 +92,16 @@ export function PlanGoalCard({
               </>
             }
             value={money(goal.target)}
+            parts={goal.targetSplit}
+            money={money}
           />
           <Figure
             label="Heading for"
             value={money(goal.forecast)}
             note={`${money(Math.abs(goal.gap))} ${ahead ? "ahead" : "short"}`}
             tone={ahead ? GOOD : BAD}
+            parts={goal.forecastSplit}
+            money={money}
           />
           {goal.latest && (
             <Figure
@@ -104,6 +110,8 @@ export function PlanGoalCard({
               value={money(goal.latest.actual)}
               note={`${money(goal.latest.actual - goal.latest.planned, true)} against the plan`}
               tone={goal.latest.actual >= goal.latest.planned ? GOOD : BAD}
+              parts={goal.latest}
+              money={money}
             />
           )}
         </div>
@@ -147,12 +155,18 @@ function Figure({
   value,
   note,
   tone,
+  parts,
+  money,
   className,
 }: {
   label: React.ReactNode
+  /** the net position */
   value: string
   note?: string
   tone?: string
+  /** what makes it up: cash held and owed */
+  parts: Split
+  money: (n: number) => string
   className?: string
 }) {
   return (
@@ -160,6 +174,9 @@ function Figure({
       <div className="truncate text-xs text-muted-foreground">{label}</div>
       <div className="truncate font-heading text-xl font-semibold tabular-nums">
         {value}
+      </div>
+      <div className="truncate text-xs text-muted-foreground tabular-nums">
+        Cash {money(parts.cash)} · owed {money(-parts.owed)}
       </div>
       {note && (
         <div className={cn("truncate text-xs tabular-nums", tone)}>{note}</div>
@@ -184,7 +201,7 @@ function DayList({
       <li className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-x-4 border-b pb-1.5 text-xs text-muted-foreground sm:grid-cols-[minmax(0,1fr)_6rem_6rem_6rem]">
         <span>Day</span>
         <span className="hidden text-right sm:block">Moved</span>
-        <span className="text-right">Balance</span>
+        <span className="text-right">Net</span>
         <span className="text-right">vs plan</span>
       </li>
       {days.map((d) => {
