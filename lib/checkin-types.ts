@@ -58,6 +58,15 @@ export type CheckInStats = {
     summary: string
     setAsides: { pot: string; amount: number; when: string; to: string }[]
   } | null
+  /** the plan's end goal for everything but loans, and where today's plan lands; missing on old check-ins */
+  goal?: {
+    endDate: string
+    target: number
+    forecast: number
+    gap: number
+    /** the last day with data: where the plan expected you to be, and where you were */
+    latest: { date: string; planned: number; actual: number } | null
+  } | null
 }
 
 export const CHECK_IN_STATUSES = ["on_track", "watch", "off_track"] as const

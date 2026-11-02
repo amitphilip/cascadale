@@ -15,7 +15,15 @@ import {
 } from "@/components/ui/chart"
 import { formatMoney, type MoneyFormat } from "@/lib/format"
 
-export type Series = { key: string; label: string; color: string; values: number[] }
+export type Series = {
+  key: string
+  label: string
+  color: string
+  /** null where the series has no value, e.g. actuals after the last day with data */
+  values: (number | null)[]
+  /** a projection rather than a record */
+  dashed?: boolean
+}
 
 const shortDate = (iso: string, locale: string) => {
   const [y, m, d] = iso.split("-").map(Number)
@@ -91,6 +99,7 @@ export function TimelineChart({
             type={step ? "stepAfter" : "linear"}
             stroke={`var(--color-${s.key})`}
             strokeWidth={2}
+            strokeDasharray={s.dashed ? "5 4" : undefined}
             dot={false}
             activeDot={{ r: 4 }}
             isAnimationActive={false}

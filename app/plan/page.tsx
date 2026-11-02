@@ -7,6 +7,7 @@ import {
   CheckCircleIcon,
   ClockCounterClockwiseIcon,
   PiggyBankIcon,
+  PlusIcon,
   SparkleIcon,
   UploadSimpleIcon,
   WarningCircleIcon,
@@ -15,12 +16,11 @@ import {
 import { CategoryBreakdown, type CategoryCost } from "./category-breakdown"
 import { NewPlanDialog } from "./new-plan-dialog"
 import { PlanChangesCard } from "./plan-changes-card"
+import { PlanGoalCard } from "./plan-goal-card"
 import { PlanStatusCard } from "./plan-status-card"
 import {
   AllocationCard,
   NetWorthCard,
-  StandingCard,
-  type Stat,
   UpcomingCard,
   type Allocation,
 } from "./plan-summary-cards"
@@ -76,7 +76,8 @@ import {
   netWorthHistory,
   pointBack,
 } from "@/lib/net-worth"
-import { planStanding, planVerdict } from "@/lib/plan-verdict"
+import { goalPlan, planGoal } from "@/lib/plan-goal"
+import { planStanding, planVerdict, withGoal } from "@/lib/plan-verdict"
 import { ACTOR_LABELS } from "@/lib/plan-instructions"
 import { getPlanState } from "@/lib/plan-service"
 import { planDeps } from "@/lib/plan-repo"
@@ -85,6 +86,7 @@ import {
   getAccountsWithBalances,
   getAssets,
   getCheckIns,
+  getGoalThread,
   getOpenCasNotes,
   getPlanActions,
   getPlanThread,
@@ -127,6 +129,7 @@ export default async function PlanPage() {
     actions,
     checkIns,
     notes,
+    started,
   ] = await Promise.all([
     getSettings(),
     getPlanThread(),
@@ -138,6 +141,7 @@ export default async function PlanPage() {
     getPlanActions(),
     getCheckIns(1),
     getOpenCasNotes(),
+    getGoalThread(),
   ])
 
   if (!current) {
@@ -228,7 +232,19 @@ export default async function PlanPage() {
   )
   const from = pointBack(history, TREND_MONTHS)
   const outOfDate = state.status === "out_of_date"
-  const verdict = planVerdict({
+  const startedPlan = started && latestPlan(started.messages)
+  const goal = planGoal({
+    goal: goalPlan(
+      startedPlan && { snapshot: started.snapshot, plan: startedPlan },
+      { snapshot: thread.snapshot, plan },
+      today
+    ),
+    latest: plan,
+    current: snap,
+    balances: new Map(accounts.map((a) => [a.id, a.balance])),
+    txs,
+  })
+  const baseVerdict = planVerdict({
     sim,
     warnings: outOfDate ? [] : plan.warnings,
     balanceOf: (id) => snap.accounts.find((a) => a.id === id)?.balance ?? 0,
@@ -239,6 +255,12 @@ export default async function PlanPage() {
     money: (n) => formatMoney(n, fmt),
     date: (iso) => formatDate(iso, fmt.locale),
   })
+  const verdict = withGoal(
+    baseVerdict,
+    goal,
+    (n) => formatMoney(n, fmt),
+    (iso) => formatDate(iso, fmt.locale)
+  )
   const checkIn = checkIns[0] ?? null
   const standing = planStanding({
     verdict,
@@ -255,49 +277,6 @@ export default async function PlanPage() {
   const observations = notes
     .filter((n) => n.kind === "observation" || n.kind === "todo")
     .slice(0, MAX_NOTES)
-
-  const cashNow = snap.accounts.filter((a) => isCashAccount(a.type))
-  const lowestCash = Math.min(
-    ...sim.days.map((_, i) =>
-      cashNow.reduce((s, a) => s + (sim.balances[a.id]?.[i] ?? a.balance), 0)
-    )
-  )
-  const netNow = history[history.length - 1].netWorth
-  const stats: Stat[] = [
-    {
-      label: "Net worth",
-      value: money(netNow, fmt),
-      note: from
-        ? `${formatMoney(netNow - from.netWorth, fmt, { signed: true })} in ${TREND_MONTHS} mo`
-        : undefined,
-      tone: from ? (netNow >= from.netWorth ? "good" : "bad") : undefined,
-    },
-    {
-      label: "Cash now",
-      value: money(
-        cashNow.reduce((s, a) => s + a.balance, 0),
-        fmt
-      ),
-      note: `${cashNow.length} accounts`,
-    },
-    {
-      label: "Owed",
-      value: money(-worth.totals.debts, fmt),
-      note: `${worth.debts.length} cards and loans`,
-    },
-    {
-      label: "Lowest cash ahead",
-      value: money(lowestCash, fmt),
-      note: `next ${HORIZON_DAYS} days`,
-      tone: lowestCash < 0 ? "bad" : undefined,
-    },
-    {
-      label: "Left each month",
-      value: money(sim.monthly.free, fmt),
-      note: `of ${money(sim.monthly.income, fmt)} income`,
-      tone: sim.monthly.free < 0 ? "bad" : "good",
-    },
-  ]
 
   // what the plan and the last check-in suggest doing; an old check-in's dated advice only while it's still ahead
   const checkInLabel = checkIn
@@ -338,14 +317,20 @@ export default async function PlanPage() {
     <>
       <PageHeader
         title="Plan"
+        iconActions
         description={`Built ${formatDate(localDate(state.plan?.createdAt ?? thread.createdAt), fmt.locale)}${
           thread.madeBy ? ` by ${ACTOR_LABELS[thread.madeBy]}` : ""
         } · data to ${formatDate(snap.dataEnd, fmt.locale)} · ${HORIZON_DAYS}-day projection`}
       >
         <NewPlanDialog
           trigger={
-            <Button variant="outline" className="w-full sm:w-auto">
-              <ClockCounterClockwiseIcon /> New plan
+            <Button
+              variant="outline"
+              size="icon"
+              aria-label="New plan"
+              title="New plan"
+            >
+              <PlusIcon />
             </Button>
           }
         />
@@ -357,8 +342,7 @@ export default async function PlanPage() {
           <AlertTitle>This plan is out of date</AlertTitle>
           <AlertDescription className="sm:pr-24">
             {state.reasons.join(" · ")}.{" "}
-            <a href="#changes">See what’s waiting</a>, then rebuild to apply it
-            to today’s data, or start a new plan.
+            <a href="#changes">See what’s waiting</a>.
           </AlertDescription>
           <AlertAction>
             <RebuildButton planId={state.plan?.id ?? null} />
@@ -368,7 +352,7 @@ export default async function PlanPage() {
 
       <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] items-start gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="grid min-w-0 gap-6">
-          <StandingCard stats={stats} />
+          <PlanGoalCard summary={plan.summary} goal={goal} fmt={fmt} />
 
           <PlanStatusCard
             standing={standing}
@@ -385,60 +369,65 @@ export default async function PlanPage() {
             fmt={fmt}
           />
 
-          <PlanChangesCard
-            state={state}
-            snap={snap}
-            checkIn={checkIn}
-            today={today}
-            fmt={fmt}
-          />
+          <PaydayCards snap={snap} plan={plan} colors={colors} fmt={fmt} />
 
-          <section className="grid gap-6" aria-labelledby="the-plan">
-            <h2 id="the-plan" className="font-heading font-semibold">
-              The plan
-            </h2>
-
-            <AllocationCard
-              income={sim.monthly.income}
-              rows={allocation(sim, colors, snap)}
-              summary={outOfDate ? undefined : plan.summary}
+          {outOfDate && (
+            <PlanChangesCard
+              state={state}
+              snap={snap}
+              checkIn={checkIn}
+              today={today}
               fmt={fmt}
             />
-
-            <PaydayCards snap={snap} plan={plan} colors={colors} fmt={fmt} />
-
-            <CategoryBreakdown
-              threadId={thread.id}
-              costs={categoryCosts(snap)}
-              leftOver={sim.monthly.free}
-              fmt={fmt}
-            />
-
-            <UpcomingCard
-              events={sim.events.filter(
-                (e) =>
-                  e.date <=
-                  sim.days[Math.min(UPCOMING_DAYS, sim.days.length) - 1]
-              )}
-              days={UPCOMING_DAYS}
-              accountName={(id) => accountName(snap, id)}
-              fmt={fmt}
-            />
-
-            <NetWorthCard
-              history={history}
-              owned={worth.owned}
-              owed={worth.totals.debts}
-              fmt={fmt}
-            />
-          </section>
+          )}
 
           <details className="group grid gap-6">
             <summary className="flex cursor-pointer list-none items-center gap-2 font-heading font-semibold">
               <CaretRightIcon className="transition-transform group-open:rotate-90" />
-              Pots and balances, day by day
+              How the plan works
             </summary>
             <div className="mt-6 grid min-w-0 gap-6">
+              {!outOfDate && (
+                <PlanChangesCard
+                  state={state}
+                  snap={snap}
+                  checkIn={checkIn}
+                  today={today}
+                  fmt={fmt}
+                />
+              )}
+
+              <AllocationCard
+                income={sim.monthly.income}
+                rows={allocation(sim, colors, snap)}
+                fmt={fmt}
+              />
+
+              <CategoryBreakdown
+                threadId={thread.id}
+                costs={categoryCosts(snap)}
+                leftOver={sim.monthly.free}
+                fmt={fmt}
+              />
+
+              <UpcomingCard
+                events={sim.events.filter(
+                  (e) =>
+                    e.date <=
+                    sim.days[Math.min(UPCOMING_DAYS, sim.days.length) - 1]
+                )}
+                days={UPCOMING_DAYS}
+                accountName={(id) => accountName(snap, id)}
+                fmt={fmt}
+              />
+
+              <NetWorthCard
+                history={history}
+                owned={worth.owned}
+                owed={worth.totals.debts}
+                fmt={fmt}
+              />
+
               <PotsCard snap={snap} sim={sim} colors={colors} fmt={fmt} />
               <BalancesCard snap={snap} sim={sim} fmt={fmt} />
             </div>

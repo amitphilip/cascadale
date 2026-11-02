@@ -1,7 +1,12 @@
 import { describe, expect, test } from "vitest"
 
 import type { Simulation } from "@/lib/plan"
-import { planStanding, planVerdict, type Verdict } from "@/lib/plan-verdict"
+import {
+  planStanding,
+  planVerdict,
+  withGoal,
+  type Verdict,
+} from "@/lib/plan-verdict"
 
 const sim = (over: Partial<Simulation> = {}, free = 500): Simulation =>
   ({
@@ -141,5 +146,33 @@ describe("planStanding", () => {
     expect(
       planStanding({ verdict: good, checkIn, dataEnd: "2026-11-01" }).headline
     ).toBe("You’re on track")
+  })
+})
+
+describe("withGoal", () => {
+  const good: Verdict = { tone: "good", headline: "You’re on track", good: [], bad: [] }
+  const goal = { target: 5000, endDate: "2027-01-30" }
+  const money = (n: number) => `$${n}`
+  const date = (iso: string) => iso
+
+  test("heading for the goal adds a good line and keeps the tone", () => {
+    const v = withGoal(good, { ...goal, tone: "on_track", gap: 120 }, money, date)
+    expect(v.tone).toBe("good")
+    expect(v.good).toEqual(["Heading for the goal of $5000 by 2027-01-30"])
+  })
+
+  test("falling short sets the tone and headline when it's worse", () => {
+    const v = withGoal(good, { ...goal, tone: "off_track", gap: -900 }, money, date)
+    expect(v.tone).toBe("bad")
+    expect(v.headline).toBe("Heading $900 short of the goal")
+    expect(v.bad).toEqual(["Heading $900 short of the $5000 goal by 2027-01-30"])
+  })
+
+  test("a small shortfall doesn't hide a worse verdict", () => {
+    const bad: Verdict = { tone: "bad", headline: "Fix 1 thing", good: [], bad: ["x"] }
+    const v = withGoal(bad, { ...goal, tone: "watch", gap: -50 }, money, date)
+    expect(v.tone).toBe("bad")
+    expect(v.headline).toBe("Fix 1 thing")
+    expect(v.bad).toHaveLength(2)
   })
 })

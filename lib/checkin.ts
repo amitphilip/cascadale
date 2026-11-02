@@ -21,7 +21,13 @@ import {
   type PlanSnapshot,
 } from "@/lib/plan"
 import { latestPlan, loadSnapshot } from "@/lib/planner"
-import { getPlanThread } from "@/lib/queries"
+import { goalPlan, planGoal } from "@/lib/plan-goal"
+import {
+  getAccountsWithBalances,
+  getGoalThread,
+  getPlanThread,
+  getTransactionAmounts,
+} from "@/lib/queries"
 import { todayLocal } from "@/supabase/functions/_shared/akahu"
 
 const MODEL = "claude-opus-5-5"
@@ -80,12 +86,22 @@ const isIncome = (r: Row) =>
 
 /** What happened since the last check-in, against what the usual pattern expects. */
 export async function buildStats(snap: PlanSnapshot): Promise<CheckInStats> {
-  const [{ rows: logged, basis }, accountRows, thread] = await Promise.all([
+  const [
+    { rows: logged, basis },
+    accountRows,
+    thread,
+    started,
+    balances,
+    allTxs,
+  ] = await Promise.all([
     newTransactions(),
     must<{ id: number; name: string; type: string }[]>(
       (await getDb()).from("accounts").select("id, name, type")
     ),
     getPlanThread(),
+    getGoalThread(),
+    getAccountsWithBalances(),
+    getTransactionAmounts(),
   ])
   const rows = withoutLoanAccounts(logged, accountRows)
   const accountName = (id: number | null) =>
@@ -147,6 +163,21 @@ export async function buildStats(snap: PlanSnapshot): Promise<CheckInStats> {
   const low = combinedLow(snap, sim)
 
   const plan = thread && latestPlan(thread.messages)
+  const startedPlan = started && latestPlan(started.messages)
+  const goal =
+    thread && plan
+      ? planGoal({
+          goal: goalPlan(
+            startedPlan && { snapshot: started.snapshot, plan: startedPlan },
+            { snapshot: thread.snapshot, plan },
+            todayLocal()
+          ),
+          latest: plan,
+          current: snap,
+          balances: new Map(balances.map((a) => [a.id, a.balance])),
+          txs: allTxs,
+        })
+      : null
   const when = (incomeId: string) =>
     incomeId === MONTHLY
       ? "1st of each month"
@@ -224,6 +255,13 @@ export async function buildStats(snap: PlanSnapshot): Promise<CheckInStats> {
           })),
         }
       : null,
+    goal: goal && {
+      endDate: goal.endDate,
+      target: goal.target,
+      forecast: goal.forecast,
+      gap: goal.gap,
+      latest: goal.latest,
+    },
   }
 }
 
@@ -237,12 +275,14 @@ The data (amounts in the stated currency):
 - upcomingBills: recurring bills in the next 30 days. upcomingOneOffs: one-off expenses they told the app about, in the next 90 days.
 - low: the lowest projected combined balance of all accounts except loans over the next 60 days if spending keeps its usual pace, with the date. Transfers between their own accounts aren't projected, so judge affordability on this combined figure. Below zero means they can't cover what's coming.
 - plan: their current plan's summary and set-asides (pot, amount, when, where the money goes), or null if they have none.
+- goal: the plan's end goal: what the plan they started said everything but loans would add up to by endDate (target), where today's plan now lands (forecast) and the difference (gap, below zero means short). latest: where the plan expected that combined balance on the last day with data, and where it actually was. Null without a plan.
 
 How to answer:
 - paragraph: name what actually happened, e.g. "Your salary of 4,200 landed on 1 Oct, but spending ran 380 over the usual pace, mostly Dining." Then what is coming and whether the money is there for it.
 - actions: concrete moves for the next days: an amount to move, a category to slow down, a bill to check. Ground each in the numbers.
 - plan_changes: when an upcoming one-off, an annual bill or a projected low needs the plan to bend for a while, say on which date to change what and by how much (e.g. "From 15 Nov payday, add 150 to Annual bills for two paydays"). Leave it empty when the plan holds as is.
-- status: on_track when income and spending are near expectations and the low stays above zero; off_track when the low is below zero or spending is far over; watch in between.
+- The goal is the point of the plan; day-to-day deviations are expected. When the gap is below zero, the actions and plan_changes should between them win it back by endDate: say how much each one recovers. When the gap is zero or above, say so and don't invent cuts.
+- status: on_track when the goal's gap is zero or above, income and spending are near expectations and the low stays above zero; off_track when the low is below zero, spending is far over or the gap is more than a tenth of a month's income short; watch in between.
 - A partial period (a few days) naturally has less income or spending than a full month; judge pace, not totals, and don't alarm about a payday that simply hasn't come yet.
 Keep every text short and plain, lead with numbers, refer to accounts and bills by name. Don't invent facts the data doesn't show; when you assume something, say so.`
 

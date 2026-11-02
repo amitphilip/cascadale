@@ -1,4 +1,8 @@
-import { LightbulbIcon, ListChecksIcon } from "@phosphor-icons/react/ssr"
+import {
+  CaretRightIcon,
+  LightbulbIcon,
+  ListChecksIcon,
+} from "@phosphor-icons/react/ssr"
 
 import { ActionItems, AddSuggestedAction } from "./plan-actions"
 import { Badge } from "@/components/ui/badge"
@@ -79,11 +83,12 @@ export function PlanTodoCard({
         <ActionItems actions={actions} today={today} locale={fmt.locale} />
 
         {shown.length > 0 && (
-          <div className="grid gap-3 border-t pt-4">
-            <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-              <LightbulbIcon /> Suggested
-            </div>
-            <ul className="grid gap-3 sm:grid-cols-2">
+          <details className="group min-w-0 border-t pt-4">
+            <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-medium">
+              <CaretRightIcon className="transition-transform group-open:rotate-90" />
+              <LightbulbIcon /> Suggested · {shown.length}
+            </summary>
+            <ul className="mt-4 grid gap-3 sm:grid-cols-2">
               {shown.map((s) => (
                 <li
                   key={s.key}
@@ -137,7 +142,7 @@ export function PlanTodoCard({
                 </li>
               ))}
             </ul>
-          </div>
+          </details>
         )}
       </CardContent>
     </Card>

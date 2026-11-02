@@ -82,6 +82,46 @@ export function planVerdict({
   return { tone, headline, good, bad }
 }
 
+/**
+ * The verdict with the plan's end goal in it: a line on whether you're heading for it, and
+ * the tone no better than the goal's.
+ */
+export function withGoal(
+  verdict: Verdict,
+  goal: { tone: CheckInStatus; target: number; gap: number; endDate: string },
+  money: (n: number) => string,
+  date: (iso: string) => string
+): Verdict {
+  const tone = GOAL_TONE[goal.tone]
+  if (goal.gap >= 0)
+    return {
+      ...verdict,
+      good: [
+        `Heading for the goal of ${money(goal.target)} by ${date(goal.endDate)}`,
+        ...verdict.good,
+      ],
+    }
+  const worse = TONE_RANK[tone] > TONE_RANK[verdict.tone]
+  return {
+    tone: worse ? tone : verdict.tone,
+    headline: worse
+      ? `Heading ${money(-goal.gap)} short of the goal`
+      : verdict.headline,
+    good: verdict.good,
+    bad: [
+      `Heading ${money(-goal.gap)} short of the ${money(goal.target)} goal by ${date(goal.endDate)}`,
+      ...verdict.bad,
+    ],
+  }
+}
+
+const GOAL_TONE: Record<CheckInStatus, Verdict["tone"]> = {
+  on_track: "good",
+  watch: "watch",
+  off_track: "bad",
+}
+const TONE_RANK: Record<Verdict["tone"], number> = { good: 0, watch: 1, bad: 2 }
+
 // ── Overall standing ─────────────────────────────────────────────────────────
 
 /** A check-in whose period ended more than this many days of data ago no longer sets the status. */

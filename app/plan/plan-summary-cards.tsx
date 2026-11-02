@@ -24,49 +24,6 @@ import { cn } from "@/lib/utils"
 const GOOD = "text-positive"
 const BAD = "text-destructive"
 
-export type Stat = {
-  label: string
-  value: string
-  note?: string
-  tone?: "good" | "bad"
-}
-
-/** Where things stand today: the few numbers to check before reading the plan. */
-export function StandingCard({ stats }: { stats: Stat[] }) {
-  return (
-    <section
-      aria-label="Where you stand now"
-      className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5"
-    >
-      {stats.map((s) => (
-        <Card
-          key={s.label}
-          size="sm"
-          className="last:col-span-2 sm:last:col-span-1"
-        >
-          <CardContent className="grid gap-0.5">
-            <div className="text-xs text-muted-foreground">{s.label}</div>
-            <div
-              className={cn(
-                "truncate font-heading text-xl font-semibold tabular-nums",
-                s.tone === "good" && GOOD,
-                s.tone === "bad" && BAD
-              )}
-            >
-              {s.value}
-            </div>
-            {s.note && (
-              <div className="truncate text-xs text-muted-foreground tabular-nums">
-                {s.note}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      ))}
-    </section>
-  )
-}
-
 export type Allocation = {
   key: string
   label: string

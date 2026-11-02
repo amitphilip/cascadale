@@ -117,11 +117,12 @@ export function PlanStatusCard({
         </div>
 
         {notes.length > 0 && (
-          <div className="grid gap-2 border-t pt-4">
-            <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-              <ChatCircleTextIcon /> What Cas noticed
-            </div>
-            <ul className="grid gap-2 text-sm">
+          <details className="group min-w-0 border-t pt-4">
+            <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-medium">
+              <CaretRightIcon className="transition-transform group-open:rotate-90" />
+              <ChatCircleTextIcon /> What Cas noticed · {notes.length}
+            </summary>
+            <ul className="mt-4 grid gap-2 text-sm">
               {notes.map((n) => (
                 <li key={n.id} className="flex items-start gap-2 text-pretty">
                   <Badge
@@ -142,7 +143,7 @@ export function PlanStatusCard({
                 </li>
               ))}
             </ul>
-          </div>
+          </details>
         )}
 
         {checkIn && (

@@ -653,11 +653,22 @@ export async function getPlanTransactions(window: AverageWindow) {
 
 /** The latest planning conversation and its messages, oldest first. */
 export async function getPlanThread() {
+  return planThread(false)
+}
+
+/**
+ * The latest plan you started yourself (not a rebuild), whose plan sets the goal: rebuilds
+ * by you or Cas change the path to it, not the target.
+ */
+export async function getGoalThread() {
+  return planThread(true)
+}
+
+async function planThread(startedOnly: boolean) {
   const d = await db()
+  const query = d.from("plan_threads").select(COLUMNS.planThreads)
   const [thread] = await must<PlanThread[]>(
-    d
-      .from("plan_threads")
-      .select(COLUMNS.planThreads)
+    (startedOnly ? query.is("made_by", null) : query)
       .order("id", { ascending: false })
       .limit(1)
   )
