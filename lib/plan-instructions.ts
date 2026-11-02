@@ -16,8 +16,8 @@ import { similarity } from "@/lib/rules"
 /**
  * Instructions you give the plan, from the website, Claude (MCP) or Cas: pots that must be
  * in it and one-off adjustments on given dates. They're stored on their own (plan_pots,
- * plan_adjustments) and applied every time the plan is built, whether by a rebuild or by
- * the planner chat, so neither can drop them. Pure functions.
+ * plan_adjustments) and applied every time the plan is read, so nothing can drop them.
+ * Pure functions.
  */
 
 /** Who changed the plan. */
@@ -171,21 +171,6 @@ const flowIds = (fromFlows: PlanFlow[], toFlows: PlanFlow[]) =>
     })
   )
 
-/** The set-asides that carrying a plan over would lose: their income can't be found now. */
-export function strandedSetAsides(plan: Plan, from: PlanSnapshot, to: PlanSnapshot) {
-  const incomes = flowIds(from.incomes, to.incomes)
-  return plan.set_asides.flatMap((s) =>
-    s.income_id === MONTHLY || s.income_id === FORTNIGHTLY || incomes.has(s.income_id)
-      ? []
-      : [
-          {
-            pot: s.pot,
-            income: from.incomes.find((i) => i.id === s.income_id)?.name ?? s.income_id,
-          },
-        ]
-  )
-}
-
 /**
  * Carry a plan over to a newer snapshot: income and bill ids (I1, B2…) are positions, so
  * they're mapped through each flow's series key (or its name, on snapshots made before
@@ -271,7 +256,7 @@ export type PlanDiff = {
 }
 type Monthly = ReturnType<typeof simulate>["monthly"]
 
-/** What changed between two built plans. */
+/** What differs between two plans. */
 export function diffPlans(
   before: { plan: Plan; snapshot: PlanSnapshot } | null,
   after: { plan: Plan; snapshot: PlanSnapshot }

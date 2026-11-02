@@ -25,15 +25,7 @@ export function harness(opts: { seedPlan?: boolean; decisions?: string[]; snapsh
   }
   const tools = planTools({
     deps: async () => deps,
-    health: async () => {
-      const latest = await store.repo.latestPlan()
-      return buildDataHealth({
-        ...healthInput(),
-        plan: latest
-          ? { createdAt: latest.createdAt, dataEnd: latest.snapshot.dataEnd, accounts: latest.snapshot.accounts }
-          : null,
-      })
-    },
+    health: async () => buildDataHealth(healthInput()),
   })
   // results are checked as JSON, the way an MCP client reads them
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

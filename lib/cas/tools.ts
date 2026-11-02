@@ -20,7 +20,7 @@ import {
   type ActionResult,
 } from "@/app/actions"
 import { getAkahuOverview, type AkahuOverview } from "@/lib/akahu"
-import { healthReasons, planTools } from "@/lib/cas/plan-tools"
+import { planTools } from "@/lib/cas/plan-tools"
 import { tool, isoDate, type CasTool } from "@/lib/cas/tool"
 import { loadDataHealth } from "@/lib/data-health"
 import { buildStats } from "@/lib/checkin"
@@ -28,9 +28,9 @@ import { COLUMNS, getDb, must } from "@/lib/db"
 import { ASSET_KINDS, NOTE_KINDS, type CasNote, type PlanAction } from "@/lib/db/schema"
 import { buildNetWorth } from "@/lib/net-worth"
 import { describeSimulation, simulate } from "@/lib/plan"
-import { planStatus } from "@/lib/plan-service"
+import { livePlan, planStatus } from "@/lib/plan-service"
 import { planDeps } from "@/lib/plan-repo"
-import { latestPlan, loadSnapshot } from "@/lib/planner"
+import { loadSnapshot } from "@/lib/planner"
 import {
   getAccountsWithBalances,
   getAssets,
@@ -42,7 +42,6 @@ import {
   getIncomeStatement,
   getLatestMonth,
   getMonthlyCashflow,
-  getPlanThread,
   getRuleReview,
   getSettings,
   getStatements,
@@ -57,8 +56,9 @@ export type { CasTool }
 
 // Every tool over your finances, defined once. Cascadale's MCP server (lib/mcp.ts) offers the
 // read and action tools to clients such as claude.ai; the Cas agent (lib/cas/agent.ts)
-// gets the read and memory tools, so it never changes your finances itself. Changes go
-// through the MCP client, which asks you first.
+// gets the read and memory tools, so it never changes your finances itself: changes go
+// through the MCP client, which asks you first. In the Plan page's chat, where you're
+// talking to it directly, it also gets the plan's own action tools.
 
 const yearMonth = z.string().regex(/^\d{4}-\d{2}$/, "Use yyyy-MM")
 const month = yearMonth
@@ -127,7 +127,7 @@ async function notes(includeResolved = false) {
   return must<CasNote[]>(query)
 }
 
-/** The plan tools act as Claude (MCP); the Cas agent only gets their read tools. */
+/** The plan tools act as Claude (MCP); the Cas agent makes its own for the Plan page's chat. */
 const PLAN_TOOLS = planTools({ deps: () => planDeps("mcp"), health: () => loadDataHealth() })
 
 export const TOOLS: CasTool[] = [
@@ -136,7 +136,7 @@ export const TOOLS: CasTool[] = [
     title: "Briefing",
     access: "read",
     description:
-      "Start here. Everything happening right now in one call: bank feed health, what came in and went out since the last check-in against the usual pattern, the projected low point of your balances over the next 60 days, upcoming bills and one-offs, what needs categorizing, the last check-in's verdict, whether the plan is current, and Cas's open notes and to-dos. Includes data_health: check it before relying on the numbers.",
+      "Start here. Everything happening right now in one call: bank feed health, what came in and went out since the last check-in against the usual pattern, the projected low point of your balances over the next 60 days, upcoming bills and one-offs, what needs categorizing, the last check-in's verdict and the plan's goal, Cas decisions still to carry out in the plan, and Cas's open notes and to-dos. Includes data_health: check it before relying on the numbers.",
     run: async () => {
       const snap = await loadSnapshot()
       const overview = await getAkahuOverview().catch(
@@ -153,7 +153,7 @@ export const TOOLS: CasTool[] = [
           notes(),
           loadDataHealth(overview),
         ])
-      const plan = await planStatus(await planDeps("mcp"), undefined, healthReasons(health))
+      const plan = await planStatus(await planDeps("mcp"))
       return {
         today: todayLocal(),
         sync,
@@ -171,7 +171,7 @@ export const TOOLS: CasTool[] = [
               actions: last.result.actions,
             }
           : null,
-        plan: { status: plan.status, reasons: plan.reasons },
+        plan,
         openNotes: open,
         data_health: health,
       }
@@ -253,9 +253,9 @@ export const TOOLS: CasTool[] = [
     run: async () => {
       const snap = await loadSnapshot()
       if (!snap) return { error: "Import some transactions first." }
-      const thread = await getPlanThread()
-      const plan = thread ? latestPlan(thread.messages) : null
-      return { snapshot: snap, simulation: describeSimulation(snap, simulate(snap, plan)) }
+      const live = await livePlan(await planDeps("mcp"))
+      const simulated = live?.snapshot ?? snap
+      return { snapshot: simulated, simulation: describeSimulation(simulated, simulate(simulated, live?.plan ?? null)) }
     },
   }),
 
@@ -399,7 +399,7 @@ export const TOOLS: CasTool[] = [
     title: "Save a note",
     access: "memory",
     description:
-      "Remember something for later conversations: an observation worth tracking, a decision or preference you stated, or a to-do (with a due date if it has one). One fact per note; don't save what the data already shows. Set affectsPlan on a decision that changes the plan (a pot, an amount, a skipped or extra payment): the plan then shows as out of date with it until a plan change carries it out.",
+      "Remember something for later conversations: an observation worth tracking, a decision or preference you stated, or a to-do (with a due date if it has one). One fact per note; don't save what the data already shows. Set affectsPlan on a decision that changes the plan (a pot, an amount, a skipped or extra payment): the Plan page then lists it as waiting until a plan change carries it out.",
     input: {
       kind: z.enum(NOTE_KINDS),
       content: z.string().trim().min(1).max(1000),

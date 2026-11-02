@@ -5,7 +5,6 @@ import {
   ArrowRightIcon,
   CaretRightIcon,
   CheckCircleIcon,
-  ClockCounterClockwiseIcon,
   PiggyBankIcon,
   PlusIcon,
   SparkleIcon,
@@ -24,18 +23,11 @@ import {
   UpcomingCard,
   type Allocation,
 } from "./plan-summary-cards"
-import { RebuildButton } from "./plan-instructions"
 import { PlanTodoCard, type Suggestion } from "./plan-todo-card"
 import { PlanAsk } from "./plan-ask"
 import { type ChatMessage } from "./plan-chat"
 import { PageHeader } from "@/components/page-header"
 import { TimelineChart, type Series } from "@/components/plan-charts"
-import {
-  Alert,
-  AlertAction,
-  AlertDescription,
-  AlertTitle,
-} from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -69,7 +61,6 @@ import {
   type PlanSnapshot,
   type Simulation,
 } from "@/lib/plan"
-import { isMaterialMove } from "@/lib/health"
 import {
   buildNetWorth,
   monthEnds,
@@ -78,10 +69,9 @@ import {
 } from "@/lib/net-worth"
 import { goalPlan, planGoal } from "@/lib/plan-goal"
 import { planStanding, planVerdict, withGoal } from "@/lib/plan-verdict"
-import { ACTOR_LABELS } from "@/lib/plan-instructions"
-import { getPlanState } from "@/lib/plan-service"
+import { getPlanState, withInstructions } from "@/lib/plan-service"
 import { planDeps } from "@/lib/plan-repo"
-import { latestPlan, loadSnapshot } from "@/lib/planner"
+import { chatMessages, latestPlan, loadSnapshot } from "@/lib/planner"
 import {
   getAccountsWithBalances,
   getAssets,
@@ -99,6 +89,9 @@ import { localDate, todayLocal } from "@/supabase/functions/_shared/akahu"
 
 export const metadata: Metadata = { title: "Plan" }
 
+/** Cas can take a few minutes over a question in the chat. */
+export const maxDuration = 300
+
 /** Days of upcoming bills and paydays listed. */
 const UPCOMING_DAYS = 14
 /** Regular income smaller than this, such as bank interest, isn't worth a payday card. */
@@ -107,6 +100,8 @@ const MIN_PAYDAY = 50
 const HISTORY_MONTHS = 12
 /** How far back the verdict compares net worth and debts. */
 const TREND_MONTHS = 3
+/** Chat messages shown; older ones stay stored. */
+const MAX_CHAT = 40
 /** Cas notes shown on the status card. */
 const MAX_NOTES = 4
 /** Pots and accounts beyond this many share a neutral color, never a sixth hue. */
@@ -168,28 +163,10 @@ export default async function PlanPage() {
     )
   }
 
-  const plan = thread && latestPlan(thread.messages)
-  // Out of date: instructions or Cas decisions not applied yet, new data, or balances that moved
-  const moved = thread
-    ? thread.snapshot.accounts.filter((a) => {
-        const now = current.accounts.find((c) => c.id === a.id)
-        return now && isMaterialMove(a.balance, now.balance)
-      })
-    : []
-  const newData =
-    thread &&
-    (thread.snapshot.dataEnd !== current.dataEnd ||
-      thread.snapshot.bills.length !== current.bills.length)
-  const state = await getPlanState(deps, [
-    ...(newData ? ["New transactions since this plan was built"] : []),
-    ...(moved.length
-      ? [
-          `Balances moved since it was built: ${moved.map((a) => a.name).join(", ")}`,
-        ]
-      : []),
-  ])
+  const base = thread && latestPlan(thread.messages)
+  const state = await getPlanState(deps)
 
-  if (!thread || !plan) {
+  if (!thread || !base) {
     return (
       <>
         <PageHeader title="Plan" />
@@ -206,20 +183,18 @@ export default async function PlanPage() {
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
-            <div className="flex flex-wrap justify-center gap-2">
-              <NewPlanDialog trigger={<Button>Create a plan</Button>} />
-              {state.pots.length > 0 && (
-                <RebuildButton planId={null} size="default" />
-              )}
-            </div>
+            <NewPlanDialog trigger={<Button>Create a plan</Button>} />
           </EmptyContent>
         </Empty>
       </>
     )
   }
 
-  // today's data, not the snapshot the plan was built on, so nothing shown is in the past
-  const snap = current
+  // the plan as it stands: today's data, with every pot and adjustment in it
+  const { snapshot: snap, plan } = await withInstructions(deps.repo, current, {
+    snapshot: thread.snapshot,
+    plan: base,
+  })
   const today = todayLocal()
   const sim = simulate(snap, plan)
   const colors = potColors(sim)
@@ -231,12 +206,12 @@ export default async function PlanPage() {
     monthEnds(snap.dataEnd, HISTORY_MONTHS)
   )
   const from = pointBack(history, TREND_MONTHS)
-  const outOfDate = state.status === "out_of_date"
+  const waiting = state.unappliedDecisions.length > 0
   const startedPlan = started && latestPlan(started.messages)
   const goal = planGoal({
     goal: goalPlan(
       startedPlan && { snapshot: started.snapshot, plan: startedPlan },
-      { snapshot: thread.snapshot, plan },
+      { snapshot: thread.snapshot, plan: base },
       today
     ),
     latest: plan,
@@ -246,7 +221,7 @@ export default async function PlanPage() {
   })
   const baseVerdict = planVerdict({
     sim,
-    warnings: outOfDate ? [] : plan.warnings,
+    warnings: plan.warnings,
     balanceOf: (id) => snap.accounts.find((a) => a.id === id)?.balance ?? 0,
     accountName: (id) => accountName(snap, id),
     trend: from
@@ -287,9 +262,7 @@ export default async function PlanPage() {
       key: `focus-${i}`,
       title: f.title,
       detail: f.detail,
-      source: outOfDate
-        ? `From the plan of ${formatDate(localDate(thread.createdAt), fmt.locale)}`
-        : "From the plan",
+      source: "From the plan",
       priority: f.priority,
       impact: f.monthly_impact,
     })),
@@ -305,22 +278,22 @@ export default async function PlanPage() {
       })),
   ]
 
-  const messages: ChatMessage[] = thread.messages.map((m, i) => ({
-    id: m.id,
-    role: m.role,
-    content: m.content,
-    // the first reply is the plan itself, not a change to it
-    changed: m.role === "assistant" && m.plan !== null && i > 1,
-  }))
+  const messages: ChatMessage[] = chatMessages(thread, thread.messages)
+    .slice(-MAX_CHAT)
+    .map((m) => ({
+      id: m.id,
+      role: m.role,
+      content: m.content,
+      // a thread's first reply is the plan itself, not a change to it
+      changed: m.role === "assistant" && m.plan !== null && m !== thread.messages[1],
+    }))
 
   return (
     <>
       <PageHeader
         title="Plan"
         iconActions
-        description={`Built ${formatDate(localDate(state.plan?.createdAt ?? thread.createdAt), fmt.locale)}${
-          thread.madeBy ? ` by ${ACTOR_LABELS[thread.madeBy]}` : ""
-        } · data to ${formatDate(snap.dataEnd, fmt.locale)} · ${HORIZON_DAYS}-day projection`}
+        description={`Data to ${formatDate(snap.dataEnd, fmt.locale)} · ${HORIZON_DAYS}-day projection`}
       >
         <NewPlanDialog
           trigger={
@@ -335,20 +308,6 @@ export default async function PlanPage() {
           }
         />
       </PageHeader>
-
-      {outOfDate && (
-        <Alert>
-          <ClockCounterClockwiseIcon />
-          <AlertTitle>This plan is out of date</AlertTitle>
-          <AlertDescription className="sm:pr-24">
-            {state.reasons.join(" · ")}.{" "}
-            <a href="#changes">See what’s waiting</a>.
-          </AlertDescription>
-          <AlertAction>
-            <RebuildButton planId={state.plan?.id ?? null} />
-          </AlertAction>
-        </Alert>
-      )}
 
       <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] items-start gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="grid min-w-0 gap-6">
@@ -371,7 +330,7 @@ export default async function PlanPage() {
 
           <PaydayCards snap={snap} plan={plan} colors={colors} fmt={fmt} />
 
-          {outOfDate && (
+          {waiting && (
             <PlanChangesCard
               state={state}
               snap={snap}
@@ -387,7 +346,7 @@ export default async function PlanPage() {
               How the plan works
             </summary>
             <div className="mt-6 grid min-w-0 gap-6">
-              {!outOfDate && (
+              {!waiting && (
                 <PlanChangesCard
                   state={state}
                   snap={snap}

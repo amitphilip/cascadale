@@ -1,4 +1,3 @@
-import type { Plan, PlanSnapshot } from "@/lib/plan"
 import type { Actor, AdjustmentInstruction, PotInstruction } from "@/lib/plan-instructions"
 import type { PlanChange, PlanDecision, PlanRecord, PlanRepo } from "@/lib/plan-service"
 
@@ -91,18 +90,6 @@ export function memoryRepo(seed: { plan?: Omit<PlanRecord, "id" | "threadId">; d
     },
     async latestPlan() {
       return plans.at(-1) ? structuredClone(plans.at(-1)!) : null
-    },
-    async savePlan({ snapshot, plan, madeBy }) {
-      const record: PlanRecord = {
-        id: nextId(),
-        threadId: nextId(),
-        createdAt: now(),
-        madeBy,
-        snapshot: structuredClone(snapshot) as PlanSnapshot,
-        plan: structuredClone(plan) as Plan,
-      }
-      plans.push(record)
-      return structuredClone(record)
     },
     async openDecisions(): Promise<PlanDecision[]> {
       return decisions.filter((d) => d.appliedAt === null).map((d) => without(d, "appliedAt"))

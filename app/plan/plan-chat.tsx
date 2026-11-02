@@ -123,7 +123,7 @@ export function PlanChat({ threadId, messages }: { threadId: number; messages: C
           }}
           rows={2}
           placeholder="Ask a question or request a change…"
-          aria-label="Message the planner"
+          aria-label="Message Cas"
           className="min-h-0 resize-none"
           disabled={pending}
         />

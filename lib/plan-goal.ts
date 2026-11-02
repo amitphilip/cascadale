@@ -10,8 +10,8 @@ import { HORIZON_DAYS, simulate, type Plan, type PlanSnapshot } from "@/lib/plan
  * paying a card down from cash leaves it unchanged; cash and owed are kept alongside.
  *
  * The goal is what the plan you started said that net position would be by the end of its
- * horizon. Rebuilds, by you or by Cas, change the path to it but not the target; a new plan
- * sets a new one. Pure functions.
+ * horizon. Changes to the plan, by you or by Cas, change the path to it but not the target;
+ * a new plan sets a new one. Pure functions.
  */
 
 export type GoalDay = {
@@ -76,6 +76,13 @@ function simulated(snap: PlanSnapshot, plan: Plan, ids: number[]) {
   return { byDay, start, income: sim.monthly.income }
 }
 
+/** Where a plan leaves the net position on the last simulated day. */
+export function endPosition(snap: PlanSnapshot, plan: Plan) {
+  const { byDay } = simulated(snap, plan, goalAccounts(snap))
+  const [date, balances] = [...byDay].at(-1)!
+  return { date, net: sum(balances), ...splitOf(balances) }
+}
+
 /** The plan that sets the goal: the one you started, unless its horizon has passed. */
 export function goalPlan(
   started: BuiltPlan | null,
@@ -96,7 +103,7 @@ export function planGoal({
 }: {
   /** the plan that sets the target (see goalPlan) */
   goal: BuiltPlan
-  /** the plan as it is now, after any rebuilds */
+  /** the plan as it stands now */
   latest: Plan
   /** today's snapshot */
   current: PlanSnapshot

@@ -1,6 +1,5 @@
 import {
   FREQUENCIES,
-  planDataContext,
   simulate,
   type AdjustmentKind,
   type AdjustmentTarget,
@@ -8,6 +7,7 @@ import {
   type Plan,
   type PlanSnapshot,
 } from "@/lib/plan"
+import { endPosition } from "@/lib/plan-goal"
 import {
   adjustmentEvents,
   applyPots,
@@ -16,7 +16,6 @@ import {
   findFlow,
   matchByName,
   remapPlan,
-  strandedSetAsides,
   type Actor,
   type AdjustmentInstruction,
   type PotInstruction,
@@ -28,11 +27,10 @@ import {
  * a PlanRepo (lib/plan-repo.ts for the database, an in-memory one in the tests), so there
  * is a single copy of the logic.
  *
- * Writes record an instruction (a pot or an adjustment) and leave the built plan alone:
- * the plan is then out of date until it's rebuilt, from the website or with
- * regenerate_plan. That way several changes go in one rebuild with one diff, and nothing
- * rebuilds the plan behind the back of someone looking at it. Every write is logged with
- * who made it, when and why, and is idempotent on its operation id.
+ * There's nothing to rebuild: the plan is worked out when it's read, as the last plan made
+ * with the model carried over to today's data with your pots and adjustments on top
+ * (livePlan). A write records an instruction and the plan has it from then on. Every write
+ * is logged with who made it, when and why, and is idempotent on its operation id.
  */
 
 export type PlanChange = {
@@ -47,9 +45,9 @@ export type PlanChange = {
   completedAt: string | null
 }
 
-/** A built plan: the latest plan message and the snapshot it was built on. */
+/** The last plan made with the model: the latest plan message and the snapshot it was made on. */
 export type PlanRecord = {
-  /** the plan message's id; pass it as expectedPlanId to rebuild only this plan */
+  /** the plan message's id */
   id: number
   threadId: number
   createdAt: string
@@ -81,14 +79,6 @@ export interface PlanRepo {
   removeAdjustment(id: number, by: Actor, reason: string | null): Promise<AdjustmentInstruction | null>
 
   latestPlan(): Promise<PlanRecord | null>
-  savePlan(p: {
-    snapshot: PlanSnapshot
-    plan: Plan
-    madeBy: Actor
-    request: string
-    context: string
-    reply: string
-  }): Promise<PlanRecord>
 
   openDecisions(): Promise<PlanDecision[]>
   applyDecisions(ids: number[], changeId: number): Promise<PlanDecision[]>
@@ -109,19 +99,6 @@ export type WriteMeta = {
   /** Cas decisions this change carries out */
   decisionIds?: number[]
 }
-
-/** Actions that change an instruction (and so leave the built plan out of date). */
-const INSTRUCTION_ACTIONS = new Set([
-  "upsert_pot",
-  "remove_pot",
-  "add_plan_adjustment",
-  "remove_plan_adjustment",
-])
-
-export class PlanConflictError extends Error {}
-
-/** A rebuild would lose set-asides, so it stopped and the plan is unchanged. */
-export class PlanRebuildError extends Error {}
 
 /**
  * Run a write once per operation id: a repeat returns the stored result with replayed set.
@@ -153,7 +130,9 @@ async function once<T extends object>(
     const decisions = meta.decisionIds?.length
       ? await deps.repo.applyDecisions(meta.decisionIds, change.id)
       : []
-    const full = { ...result, appliedDecisions: decisions } as T
+    // the write is in by now, so failing to report on it shouldn't undo the log of it
+    const planNow = await planOutcome(deps).catch(() => null)
+    const full = { ...result, appliedDecisions: decisions, planNow } as T
     await deps.repo.complete(change.id, summary, full)
     return {
       ...full,
@@ -193,61 +172,91 @@ const incomeList = (snap: PlanSnapshot) =>
 const billList = (snap: PlanSnapshot) =>
   snap.bills.map((b) => `"${b.name}" (key ${b.key})`).join("; ") || "none"
 
-// ── Status ───────────────────────────────────────────────────────────────────
+// ── The plan as it stands ────────────────────────────────────────────────────
+
+/** A plan for a snapshot with these instructions applied, your adjustments in the snapshot. */
+function assemble(
+  snapshot: PlanSnapshot,
+  base: { plan: Plan; snapshot: PlanSnapshot } | null,
+  pots: PotInstruction[],
+  adjustments: AdjustmentInstruction[]
+) {
+  const { events, warnings: adjWarnings } = adjustmentEvents(adjustments, snapshot)
+  const snap: PlanSnapshot = { ...snapshot, adjustments: events }
+  const carried = !base ? emptyPlan() : base.snapshot === snapshot ? base.plan : remapPlan(base.plan, base.snapshot, snap)
+  const { plan } = applyPots(carried, pots, snap)
+  return {
+    snapshot: snap,
+    plan: { ...plan, warnings: [...plan.warnings, ...adjWarnings] },
+    pots: pots.filter((p) => !p.removed),
+  }
+}
+
+/**
+ * A plan for this snapshot with every instruction applied: the base plan's set-asides
+ * (carried over from another snapshot when needed), your pots on top, your adjustments in
+ * the snapshot.
+ */
+export async function withInstructions(
+  repo: PlanRepo,
+  snapshot: PlanSnapshot,
+  base: { plan: Plan; snapshot: PlanSnapshot } | null
+) {
+  const [pots, adjustments] = await Promise.all([repo.listPots(), repo.listAdjustments()])
+  return assemble(snapshot, base, pots, adjustments)
+}
+
+/**
+ * The plan as it stands: today's data with every instruction applied. Nothing is saved, so
+ * a set-aside whose income has gone is dropped with a warning and comes back if it returns.
+ */
+export async function livePlan(deps: Pick<PlanDeps, "repo" | "loadSnapshot">) {
+  const [base, snapshot] = await Promise.all([deps.repo.latestPlan(), deps.loadSnapshot()])
+  if (!base || !snapshot) return null
+  return { base, ...(await withInstructions(deps.repo, snapshot, base)) }
+}
+
+/** The bills no pot covers, by name. */
+export const uncoveredBills = (snap: PlanSnapshot, plan: Plan) =>
+  simulate(snap, plan).uncovered.map((id) => snap.bills.find((b) => b.id === id)?.name ?? id)
+
+/** What the plan now does, as a write reports it. */
+async function planOutcome(deps: PlanDeps) {
+  const live = await livePlan(deps)
+  if (!live) return null
+  const sim = simulate(live.snapshot, live.plan)
+  return {
+    monthly: sim.monthly,
+    overdrafts: sim.overdrafts,
+    uncoveredBills: uncoveredBills(live.snapshot, live.plan),
+    warnings: live.plan.warnings,
+    end: endPosition(live.snapshot, live.plan),
+  }
+}
 
 export type PlanStatus = {
-  status: "no_plan" | "current" | "out_of_date"
-  /** why it's out of date, in words */
-  reasons: string[]
-  /** instruction changes made since the plan was built */
-  pendingChanges: { id: number; actor: Actor; action: string; summary: string | null; at: string; reason: string | null }[]
-  /** Cas decisions that change the plan and aren't in it yet */
+  status: "no_plan" | "current"
+  /** Cas decisions that change the plan and haven't been carried out */
   unappliedDecisions: PlanDecision[]
 }
 
-/** Whether the built plan has every instruction and decision in it. */
+/** Whether there's a plan, and the decisions still to carry out in it. */
 export async function planStatus(
   deps: Pick<PlanDeps, "repo">,
-  latest?: PlanRecord | null,
-  extraReasons: string[] = []
+  latest?: PlanRecord | null
 ): Promise<PlanStatus> {
   latest ??= await deps.repo.latestPlan()
-  const [changes, decisions] = await Promise.all([
-    deps.repo.listChanges(100),
-    deps.repo.openDecisions(),
-  ])
-  // timestamps compared as times: Postgres trims trailing zeros off fractional seconds
-  const builtAt = latest ? Date.parse(latest.createdAt) : -Infinity
-  const pending = changes.filter(
-    (c) => INSTRUCTION_ACTIONS.has(c.action) && c.completedAt !== null && Date.parse(c.createdAt) > builtAt
-  )
-  const reasons = [
-    ...(pending.length ? [`${pending.length} plan ${pending.length === 1 ? "change" : "changes"} not applied`] : []),
-    ...(decisions.length
-      ? [`${decisions.length} ${decisions.length === 1 ? "decision" : "decisions"} not applied`]
-      : []),
-    ...extraReasons,
-  ]
   return {
-    status: !latest ? "no_plan" : reasons.length ? "out_of_date" : "current",
-    reasons,
-    pendingChanges: pending.map((c) => ({
-      id: c.id,
-      actor: c.actor,
-      action: c.action,
-      summary: c.summary,
-      at: c.createdAt,
-      reason: c.reason,
-    })),
-    unappliedDecisions: decisions,
+    status: latest ? "current" : "no_plan",
+    unappliedDecisions: await deps.repo.openDecisions(),
   }
 }
 
 /** Everything the Plan page and get_plan show about the plan's instructions. */
-export async function getPlanState(deps: Pick<PlanDeps, "repo">, extraReasons: string[] = []) {
+export async function getPlanState(deps: Pick<PlanDeps, "repo">) {
   const latest = await deps.repo.latestPlan()
   const [status, pots, adjustments, changes] = await Promise.all([
-    planStatus(deps, latest, extraReasons),
+    planStatus(deps, latest),
     deps.repo.listPots(),
     deps.repo.listAdjustments(),
     deps.repo.listChanges(20),
@@ -277,64 +286,68 @@ export type PotInput = {
   note?: string | null
 }
 
-/** Add a pot to the plan, or change the one with this name. Applied on the next rebuild. */
+/** A pot's fields from what was asked for, checked against the data. */
+function resolvePot(snap: PlanSnapshot, input: PotInput) {
+  const name = input.name.trim()
+  if (!name) throw new Error("Give the pot a name")
+  if (!(input.amount > 0)) throw new Error("The amount must be above zero")
+  if (!FREQUENCIES.includes(input.frequency)) throw new Error(`Frequency is one of ${FREQUENCIES.join(", ")}`)
+  accountOf(snap, input.fromAccountId, "From account")
+  accountOf(snap, input.toAccountId, "To account")
+
+  let income = null
+  if (input.income?.trim()) {
+    const ref = input.income.trim()
+    const byKey = snap.incomes.find((i) => i.key === ref)
+    const found = byKey ? [byKey] : matchByName(snap.incomes, ref, (i) => i.name)
+    if (found.length !== 1)
+      throw new Error(
+        `${found.length ? "Several incomes" : "No income"} match "${ref}". Pass one of these keys: ${incomeList(snap)}`
+      )
+    income = found[0]
+  }
+  if (input.fromAccountId == null && !income)
+    throw new Error("Say which account the money comes from (fromAccountId) or which income funds it")
+  const covers = (input.covers ?? []).map((ref) => {
+    const bill = snap.bills.find((b) => b.key === ref) ?? findFlow(snap.bills, { name: ref })
+    if (!bill?.key) throw new Error(`No single bill matches "${ref}". Bills: ${billList(snap)}`)
+    return bill.key
+  })
+  return {
+    name,
+    amount: Math.round(input.amount * 100) / 100,
+    frequency: input.frequency,
+    fromAccountId: input.fromAccountId ?? null,
+    toAccountId: input.toAccountId ?? null,
+    incomeKey: income?.key ?? null,
+    incomeName: income?.name ?? null,
+    covers,
+    note: input.note?.trim() || null,
+    removed: false,
+  }
+}
+
+/** Add a pot to the plan, or change the one with this name. */
 export async function upsertPot(deps: PlanDeps, input: PotInput & WriteMeta) {
   return once(deps, "upsert_pot", input, async () => {
-    const name = input.name.trim()
-    if (!name) throw new Error("Give the pot a name")
-    if (!(input.amount > 0)) throw new Error("The amount must be above zero")
-    if (!FREQUENCIES.includes(input.frequency)) throw new Error(`Frequency is one of ${FREQUENCIES.join(", ")}`)
-    const snap = await snapshotOrThrow(deps)
-    accountOf(snap, input.fromAccountId, "From account")
-    accountOf(snap, input.toAccountId, "To account")
-
-    let income = null
-    if (input.income?.trim()) {
-      const ref = input.income.trim()
-      const byKey = snap.incomes.find((i) => i.key === ref)
-      const found = byKey ? [byKey] : matchByName(snap.incomes, ref, (i) => i.name)
-      if (found.length !== 1)
-        throw new Error(
-          `${found.length ? "Several incomes" : "No income"} match "${ref}". Pass one of these keys: ${incomeList(snap)}`
-        )
-      income = found[0]
-    }
-    if (input.fromAccountId == null && !income)
-      throw new Error("Say which account the money comes from (fromAccountId) or which income funds it")
-    const covers = (input.covers ?? []).map((ref) => {
-      const bill = snap.bills.find((b) => b.key === ref) ?? findFlow(snap.bills, { name: ref })
-      if (!bill?.key) throw new Error(`No single bill matches "${ref}". Bills: ${billList(snap)}`)
-      return bill.key
-    })
-
+    const fields = resolvePot(await snapshotOrThrow(deps), input)
+    const { name } = fields
     const existing = (await deps.repo.listPots()).find((p) => p.name.toLowerCase() === name.toLowerCase())
     const after = await deps.repo.savePot({
       id: existing?.id,
-      name,
-      amount: Math.round(input.amount * 100) / 100,
-      frequency: input.frequency,
-      fromAccountId: input.fromAccountId ?? null,
-      toAccountId: input.toAccountId ?? null,
-      incomeKey: income?.key ?? null,
-      incomeName: income?.name ?? null,
-      covers,
-      note: input.note?.trim() || null,
-      removed: false,
+      ...fields,
       updatedBy: deps.actor,
       reason: input.reason?.trim() || null,
     })
     const before = existing && !existing.removed ? existing : null
     return {
       summary: `${before ? "Changed" : "Added"} pot ${name}: ${after.amount} ${after.frequency}`,
-      result: {
-        changed: { pot: { before, after } },
-        nextStep: "Rebuild the plan (regenerate_plan) to apply it.",
-      },
+      result: { changed: { pot: { before, after } } },
     }
   })
 }
 
-/** Take a pot out of the plan, yours or one the planner made. Applied on the next rebuild. */
+/** Take a pot out of the plan, yours or one the planner made. */
 export async function removePot(deps: PlanDeps, input: { name: string } & WriteMeta) {
   return once(deps, "remove_pot", input, async () => {
     const name = input.name.trim()
@@ -365,10 +378,7 @@ export async function removePot(deps: PlanDeps, input: { name: string } & WriteM
     })
     return {
       summary: `Removed pot ${after.name}`,
-      result: {
-        changed: { pot: { before: existing && !existing.removed ? existing : inPlan, after: null } },
-        nextStep: "Rebuild the plan (regenerate_plan) to apply it.",
-      },
+      result: { changed: { pot: { before: existing && !existing.removed ? existing : inPlan, after: null } } },
     }
   })
 }
@@ -386,62 +396,71 @@ export type AdjustmentInput = {
   toAccountId?: number | null
 }
 
+/** An adjustment's fields from what was asked for, checked against the data. */
+function resolveAdjustment(snap: PlanSnapshot, input: AdjustmentInput, potNames: string[]) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date)) throw new Error("Date is yyyy-MM-dd")
+  if (input.date < snap.start) throw new Error(`The plan starts on ${snap.start}; pick a date from then on`)
+  const amount = input.amount ?? null
+  if (input.kind === "skip" && amount !== null) throw new Error("A skip has no amount")
+  if (input.kind !== "skip" && !(amount !== null && amount > 0)) throw new Error("Give an amount above zero")
+  const from = accountOf(snap, input.fromAccountId, "From account")
+  const to = accountOf(snap, input.toAccountId, "To account")
+
+  let ref: string | null = null
+  let name = input.name?.trim() ?? ""
+  if (input.target === "bill") {
+    if (!name) throw new Error(`Name the bill. Bills: ${billList(snap)}`)
+    const bill = snap.bills.find((b) => b.key === name) ?? findFlow(snap.bills, { name })
+    if (!bill?.key) throw new Error(`No single bill matches "${name}". Bills: ${billList(snap)}`)
+    ref = bill.key
+    name = bill.name
+  } else if (input.target === "pot") {
+    const found = matchByName(potNames, name, (p) => p)
+    if (found.length !== 1)
+      throw new Error(`${found.length ? "Several pots" : "No pot"} match "${name}". Pots: ${potNames.join(", ") || "none"}`)
+    ref = found[0]
+    name = found[0]
+  } else {
+    if (input.kind !== "add") throw new Error("A transfer adjustment adds a transfer; use kind add")
+    if (!from || !to || from.id === to.id) throw new Error("A transfer needs two different accounts: fromAccountId and toAccountId")
+    name ||= `Transfer ${from.name} to ${to.name}`
+  }
+  return {
+    date: input.date,
+    kind: input.kind,
+    target: input.target,
+    ref,
+    name,
+    amount,
+    fromAccountId: from?.id ?? null,
+    toAccountId: to?.id ?? null,
+  }
+}
+
+/** The pots a pot adjustment can name: the plan's and yours. */
+async function potNames(repo: PlanRepo, latest: PlanRecord | null) {
+  return [
+    ...new Set([
+      ...(latest?.plan.set_asides.map((s) => s.pot) ?? []),
+      ...(await repo.listPots()).filter((p) => !p.removed).map((p) => p.name),
+    ]),
+  ]
+}
+
 export async function addAdjustment(deps: PlanDeps, input: AdjustmentInput & WriteMeta) {
   return once(deps, "add_plan_adjustment", input, async () => {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date)) throw new Error("Date is yyyy-MM-dd")
     const snap = await snapshotOrThrow(deps)
-    if (input.date < snap.start) throw new Error(`The plan starts on ${snap.start}; pick a date from then on`)
-    const amount = input.amount ?? null
-    if (input.kind === "skip" && amount !== null) throw new Error("A skip has no amount")
-    if (input.kind !== "skip" && !(amount !== null && amount > 0)) throw new Error("Give an amount above zero")
-    const from = accountOf(snap, input.fromAccountId, "From account")
-    const to = accountOf(snap, input.toAccountId, "To account")
-
-    let ref: string | null = null
-    let name = input.name?.trim() ?? ""
-    if (input.target === "bill") {
-      if (!name) throw new Error(`Name the bill. Bills: ${billList(snap)}`)
-      const bill = snap.bills.find((b) => b.key === name) ?? findFlow(snap.bills, { name })
-      if (!bill?.key) throw new Error(`No single bill matches "${name}". Bills: ${billList(snap)}`)
-      ref = bill.key
-      name = bill.name
-    } else if (input.target === "pot") {
-      const latest = await deps.repo.latestPlan()
-      const pots = [
-        ...new Set([
-          ...(latest?.plan.set_asides.map((s) => s.pot) ?? []),
-          ...(await deps.repo.listPots()).filter((p) => !p.removed).map((p) => p.name),
-        ]),
-      ]
-      const found = matchByName(pots, name, (p) => p)
-      if (found.length !== 1)
-        throw new Error(`${found.length ? "Several pots" : "No pot"} match "${name}". Pots: ${pots.join(", ") || "none"}`)
-      ref = found[0]
-      name = found[0]
-    } else {
-      if (input.kind !== "add") throw new Error("A transfer adjustment adds a transfer; use kind add")
-      if (!from || !to || from.id === to.id) throw new Error("A transfer needs two different accounts: fromAccountId and toAccountId")
-      name ||= `Transfer ${from.name} to ${to.name}`
-    }
+    const fields = resolveAdjustment(snap, input, await potNames(deps.repo, await deps.repo.latestPlan()))
     const after = await deps.repo.addAdjustment({
-      date: input.date,
-      kind: input.kind,
-      target: input.target,
-      ref,
-      name,
-      amount,
-      fromAccountId: from?.id ?? null,
-      toAccountId: to?.id ?? null,
+      ...fields,
       createdBy: deps.actor,
       reason: input.reason?.trim() || null,
     })
-    const what = input.kind === "skip" ? `Skip ${name}` : input.kind === "add" ? `Add ${amount} ${name}` : `${name} to ${amount}`
+    const { kind, name, amount, date } = fields
+    const what = kind === "skip" ? `Skip ${name}` : kind === "add" ? `Add ${amount} ${name}` : `${name} to ${amount}`
     return {
-      summary: `${what} on ${input.date}`,
-      result: {
-        changed: { adjustment: { before: null, after } },
-        nextStep: "Rebuild the plan (regenerate_plan) to apply it.",
-      },
+      summary: `${what} on ${date}`,
+      result: { changed: { adjustment: { before: null, after } } },
     }
   })
 }
@@ -452,95 +471,89 @@ export async function removeAdjustment(deps: PlanDeps, input: { adjustmentId: nu
     if (!before) throw new Error(`No adjustment ${input.adjustmentId} in effect; list_plan_adjustments shows them`)
     return {
       summary: `Removed adjustment: ${before.kind} ${before.name} on ${before.date}`,
-      result: {
-        changed: { adjustment: { before, after: null } },
-        nextStep: "Rebuild the plan (regenerate_plan) to apply it.",
-      },
+      result: { changed: { adjustment: { before, after: null } } },
     }
   })
 }
 
-// ── Building the plan ────────────────────────────────────────────────────────
+// ── Trying a change ──────────────────────────────────────────────────────────
 
-/**
- * A plan for this snapshot with every instruction applied: the base plan's set-asides
- * (carried over from another snapshot when needed), your pots on top, your adjustments
- * frozen into the snapshot.
- */
-export async function withInstructions(
-  repo: PlanRepo,
-  snapshot: PlanSnapshot,
-  base: { plan: Plan; snapshot: PlanSnapshot } | null
-) {
-  const [pots, adjustments] = await Promise.all([repo.listPots(), repo.listAdjustments()])
-  const { events, warnings: adjWarnings } = adjustmentEvents(adjustments, snapshot)
-  const snap: PlanSnapshot = { ...snapshot, adjustments: events }
-  const carried = !base ? emptyPlan() : base.snapshot === snapshot ? base.plan : remapPlan(base.plan, base.snapshot, snap)
-  const { plan } = applyPots(carried, pots, snap)
-  return {
-    snapshot: snap,
-    plan: { ...plan, warnings: [...plan.warnings, ...adjWarnings] },
-    pots: pots.filter((p) => !p.removed),
+export type PlanTrial = {
+  pots?: PotInput[]
+  removePots?: string[]
+  adjustments?: AdjustmentInput[]
+  /** what a bill would cost each time it's paid */
+  bills?: { name: string; amount: number }[]
+}
+
+/** What a change would do to the plan, run the same way as the real one. Saves nothing. */
+export async function tryPlanChange(deps: PlanDeps, trial: PlanTrial) {
+  const [base, snapshot, pots, adjustments] = await Promise.all([
+    deps.repo.latestPlan(),
+    snapshotOrThrow(deps),
+    deps.repo.listPots(),
+    deps.repo.listAdjustments(),
+  ])
+  const stamp = { updatedBy: deps.actor, updatedAt: "", reason: null }
+  const nextPots = new Map(pots.map((p) => [p.name.toLowerCase(), p]))
+  for (const input of trial.pots ?? []) {
+    const fields = resolvePot(snapshot, input)
+    nextPots.set(fields.name.toLowerCase(), { id: 0, ...fields, ...stamp })
   }
-}
-
-/**
- * Rebuild the plan from today's data with every pot and adjustment applied, keeping the
- * current plan's other set-asides. Doesn't ask the model, so it's quick and gives the
- * same plan for the same data. Pass expectedPlanId to rebuild only if nobody else has
- * changed the plan since you read it. Stops without saving if an income the plan relies on
- * can't be found any more, as a new bank description would do, rather than lose its
- * set-asides.
- */
-export async function regeneratePlan(
-  deps: PlanDeps,
-  input: WriteMeta & { expectedPlanId?: number | null }
-) {
-  return once(deps, "regenerate_plan", input, async () => {
-    const fresh = await snapshotOrThrow(deps)
-    const previous = await deps.repo.latestPlan()
-    if (input.expectedPlanId != null && previous?.id !== input.expectedPlanId)
-      throw new PlanConflictError(
-        `The plan changed since you read it (now ${previous?.id ?? "none"}, expected ${input.expectedPlanId}). Read it again with get_plan.`
-      )
-    const stranded = previous ? strandedSetAsides(previous.plan, previous.snapshot, fresh) : []
-    if (stranded.length > 0) {
-      const incomes = [...new Set(stranded.map((s) => s.income))].join(", ")
-      const pots = [...new Set(stranded.map((s) => s.pot))].join(", ")
-      throw new PlanRebuildError(
-        `Can't rebuild: ${incomes} isn't in your data now, so ${pots} would be lost. Nothing was changed. Create a new plan instead.`
-      )
-    }
-    const statusBefore = await planStatus(deps, previous)
-    const built = await withInstructions(deps.repo, fresh, previous)
-    const potNames = built.pots.map((p) => p.name)
-    const saved = await deps.repo.savePlan({
-      snapshot: built.snapshot,
-      plan: built.plan,
-      madeBy: deps.actor,
-      request: input.reason?.trim() || "Rebuild the plan from my latest data, pots and adjustments.",
-      context:
-        planDataContext(built.snapshot) +
-        (potNames.length ? `\n\nKeep my pots ${potNames.join(", ")} as they are unless I ask.` : ""),
-      reply: `Rebuilt from your data to ${built.snapshot.dataEnd}${
-        potNames.length ? `, with your pots (${potNames.join(", ")})` : ""
-      }${built.snapshot.adjustments?.length ? ` and ${built.snapshot.adjustments.length} one-off adjustments` : ""}.`,
+  const names = await potNames(deps.repo, base)
+  for (const raw of trial.removePots ?? []) {
+    const found = matchByName([...names, ...[...nextPots.values()].map((p) => p.name)], raw, (p) => p)
+    if (!found.length) throw new Error(`No pot named "${raw}". Pots: ${names.join(", ") || "none"}`)
+    nextPots.set(found[0].toLowerCase(), {
+      id: 0,
+      name: found[0],
+      amount: 0,
+      frequency: "payday",
+      fromAccountId: null,
+      toAccountId: null,
+      incomeKey: null,
+      incomeName: null,
+      covers: [],
+      note: null,
+      removed: true,
+      ...stamp,
     })
-    const diff = diffPlans(previous, { plan: saved.plan, snapshot: saved.snapshot })
-    const sim = simulate(saved.snapshot, saved.plan)
-    return {
-      summary: `Rebuilt the plan (${statusBefore.pendingChanges.length} changes applied)`,
-      result: {
-        planId: saved.id,
-        madeAt: saved.createdAt,
-        plan: saved.plan,
-        adjustments: saved.snapshot.adjustments ?? [],
-        monthly: sim.monthly,
-        overdrafts: sim.overdrafts,
-        uncoveredBills: sim.uncovered,
-        applied: statusBefore.pendingChanges,
-        diff,
-      },
-    }
-  })
+  }
+  const nextAdjustments = [
+    ...adjustments,
+    ...(trial.adjustments ?? []).map(
+      (a, i): AdjustmentInstruction => ({
+        id: -(i + 1),
+        ...resolveAdjustment(snapshot, a, names),
+        createdBy: deps.actor,
+        createdAt: "",
+        reason: null,
+      })
+    ),
+  ]
+  const costs = new Map(
+    (trial.bills ?? []).map(({ name, amount }) => {
+      const bill = snapshot.bills.find((b) => b.key === name) ?? findFlow(snapshot.bills, { name })
+      if (!bill) throw new Error(`No single bill matches "${name}". Bills: ${billList(snapshot)}`)
+      return [bill.id, amount]
+    })
+  )
+  const changed: PlanSnapshot = {
+    ...snapshot,
+    bills: snapshot.bills.map((b) => {
+      const amount = costs.get(b.id)
+      return amount === undefined ? b : { ...b, amount, monthly: (b.monthly * amount) / b.amount }
+    }),
+  }
+
+  const carried = base && { plan: base.plan, snapshot: base.snapshot }
+  const before = assemble(snapshot, carried, pots, adjustments)
+  const after = assemble(changed, carried, [...nextPots.values()], nextAdjustments)
+  return {
+    diff: diffPlans(before, after),
+    end: { before: endPosition(before.snapshot, before.plan), after: endPosition(after.snapshot, after.plan) },
+    overdrafts: simulate(after.snapshot, after.plan).overdrafts,
+    uncoveredBills: uncoveredBills(after.snapshot, after.plan),
+    warnings: after.plan.warnings,
+  }
 }

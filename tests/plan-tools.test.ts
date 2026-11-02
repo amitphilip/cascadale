@@ -1,8 +1,7 @@
 import { describe, expect, test } from "vitest"
 
 import { CHANGES_DATA, withMoney } from "@/lib/cas/tool"
-import { simulate } from "@/lib/plan"
-import { getPlanState } from "@/lib/plan-service"
+import { getPlanState, livePlan } from "@/lib/plan-service"
 
 import { ACCOUNTS, currentSnapshot } from "./fixtures/october-2026"
 import { harness } from "./harness"
@@ -13,7 +12,6 @@ describe("tool definitions", () => {
     const writes = tools.filter((t) => t.access === "action")
     expect(writes.map((t) => t.name).sort()).toEqual([
       "add_plan_adjustment",
-      "regenerate_plan",
       "remove_plan_adjustment",
       "remove_pot",
       "upsert_pot",
@@ -35,11 +33,10 @@ describe("get_plan", () => {
   test("returns the plan, its status and data_health", async () => {
     const h = harness()
     const out = await h.call("get_plan")
-    expect(out.planId).toBe(h.plans[0].id)
     expect(out.plan.set_asides.map((s: { pot: string }) => s.pot)).toEqual(["Visa", "Bills"])
-    // built on Joint at 18,825; it's 22,945 now
-    expect(out.status).toBe("out_of_date")
-    expect(out.reasons).toEqual(["balances moved since the plan was built (Joint)"])
+    // made on Joint at 18,825; today's plan runs on 22,945, so it's never behind the data
+    expect(out.status).toBe("current")
+    expect(out.dataEnd).toBe(currentSnapshot().dataEnd)
     expect(out.data_health.drift[0]).toMatchObject({ account: "Everyday", difference: -150 })
   })
 
@@ -51,7 +48,7 @@ describe("get_plan", () => {
 })
 
 describe("upsert_pot", () => {
-  test("records a pot that the Plan page's service shows straight away", async () => {
+  test("puts a pot in the plan straight away", async () => {
     const h = harness()
     const out = await h.call("upsert_pot", {
       operationId: "op-1",
@@ -78,10 +75,13 @@ describe("upsert_pot", () => {
     // the same service the Plan page renders from
     const page = await getPlanState({ repo: h.repo })
     expect(page.pots.map((p) => p.name)).toEqual(["Sharesies"])
-    expect(page.status).toBe("out_of_date")
-    expect(page.pendingChanges).toEqual([
+    expect(page.status).toBe("current")
+    expect(page.recentChanges).toEqual([
       expect.objectContaining({ actor: "mcp", action: "upsert_pot", summary: "Added pot Sharesies: 650 monthly" }),
     ])
+    expect(out.planNow.monthly).toBeDefined()
+    const live = await livePlan(h.deps)
+    expect(live?.plan.set_asides.map((s) => s.pot)).toEqual(["Visa", "Bills", "Sharesies"])
   })
 
   test("is idempotent on the operation id", async () => {
@@ -120,14 +120,13 @@ describe("upsert_pot", () => {
 })
 
 describe("remove_pot", () => {
-  test("takes a pot the planner made out of the plan on the next rebuild", async () => {
+  test("takes a pot the planner made out of the plan", async () => {
     const h = harness()
     const out = await h.call("remove_pot", { operationId: "r", name: "Visa", reason: "Card is closed" })
     expect(out.changed.pot.before).toMatchObject({ pot: "Visa", amount: 600 })
     expect(out.changed.pot.after).toBeNull()
-    const rebuilt = await h.call("regenerate_plan", { operationId: "g" })
-    expect(rebuilt.plan.set_asides.map((s: { pot: string }) => s.pot)).toEqual(["Bills"])
-    expect(rebuilt.diff.pots.removed).toEqual([expect.objectContaining({ pot: "Visa" })])
+    expect((await h.call("get_plan")).plan.set_asides.map((s: { pot: string }) => s.pot)).toEqual(["Bills"])
+    expect(h.plans).toHaveLength(1)
   })
 
   test("errors on a pot that doesn't exist", async () => {
@@ -181,34 +180,8 @@ describe("add_plan_adjustment, list_plan_adjustments and remove_plan_adjustment"
   })
 })
 
-describe("regenerate_plan", () => {
-  test("refuses to rebuild over a plan that changed since it was read", async () => {
-    const h = harness()
-    await expect(h.call("regenerate_plan", { operationId: "g", expectedPlanId: 999 })).rejects.toThrow(
-      "The plan changed since you read it"
-    )
-    expect(h.plans).toHaveLength(1)
-    const ok = await h.call("regenerate_plan", { operationId: "g", expectedPlanId: h.plans[0].id })
-    expect(ok.planId).toBe(h.plans[1].id)
-  })
-
-  test("is current afterwards, and the new plan is what the Plan page's service reads", async () => {
-    const h = harness()
-    await h.call("upsert_pot", { operationId: "p", name: "Sharesies", amount: 650, frequency: "monthly", income: "Wood Partners" })
-    const out = await h.call("regenerate_plan", { operationId: "g", reason: "Apply Sharesies" })
-    expect(out.applied).toHaveLength(1)
-    expect(out.diff.pots.added).toEqual([{ pot: "Sharesies", monthly: 650 }])
-    const page = await getPlanState({ repo: h.repo })
-    expect(page.plan?.id).toBe(out.planId)
-    expect(page.plan?.madeBy).toBe("mcp")
-    expect(page.status).toBe("current")
-    expect(page.recentChanges.map((c) => c.action)).toEqual(["regenerate_plan", "upsert_pot"])
-    expect(simulate(page.plan!.snapshot, page.plan!.plan).potSummaries.map((p) => p.name)).toContain("Sharesies")
-  })
-})
-
-describe("regenerate_plan when flows change", () => {
-  test("stops rather than lose set-asides whose income can't be found", async () => {
+describe("the plan as it stands", () => {
+  test("drops a set-aside whose income has gone, says so, and saves nothing", async () => {
     const h = harness({
       snapshot: () => {
         const snap = currentSnapshot()
@@ -218,11 +191,13 @@ describe("regenerate_plan when flows change", () => {
         }
       },
     })
-    await expect(h.call("regenerate_plan", { operationId: "g" })).rejects.toThrow("Can't rebuild")
-    expect(h.plans).toHaveLength(1)
+    const out = await h.call("get_plan")
+    expect(out.plan.warnings.join(" ")).toContain("Dropped set-asides whose income stopped")
+    // the stored plan still has them, so they return with the income
+    expect(h.plans[0].plan.set_asides).toHaveLength(2)
   })
 
-  test("rebuilds without a bill that's gone, and says so", async () => {
+  test("says when a bill a pot covered has gone", async () => {
     const h = harness()
     const covered = h.plans[0].snapshot.bills.find((b) =>
       h.plans[0].plan.set_asides.some((s) => s.covers.includes(b.id))
@@ -233,16 +208,46 @@ describe("regenerate_plan when flows change", () => {
         return { ...snap, bills: snap.bills.filter((b) => b.key !== covered.key && b.name !== covered.name) }
       },
     })
-    const out = await h2.call("regenerate_plan", { operationId: "g" })
+    const out = await h2.call("get_plan")
     expect(out.plan.warnings.join(" ")).toContain("Pots no longer cover these bills")
   })
 })
 
+describe("try_plan_change", () => {
+  test("shows a change's effect and saves nothing", async () => {
+    const h = harness()
+    const out = await h.call("try_plan_change", {
+      pots: [{ name: "Sharesies", amount: 650, frequency: "monthly", income: "Wood Partners" }],
+      removePots: ["visa"],
+    })
+    expect(out.diff.pots.added).toEqual([{ pot: "Sharesies", monthly: 650 }])
+    expect(out.diff.pots.removed).toEqual([expect.objectContaining({ pot: "Visa" })])
+    expect(h.pots).toHaveLength(0)
+    expect(h.changes).toHaveLength(0)
+  })
+
+  test("runs a skipped set-aside and a dearer bill through the simulation", async () => {
+    const h = harness()
+    const bill = h.plans[0].snapshot.bills[0]
+    const out = await h.call("try_plan_change", {
+      bills: [{ name: bill.key!, amount: bill.amount * 2 }],
+      adjustments: [{ date: "2026-11-11", kind: "skip", target: "pot", name: "Visa" }],
+    })
+    expect(out.diff.monthly.after.bills).toBeGreaterThan(out.diff.monthly.before.bills)
+    expect(out.diff.adjustments.added).toEqual([expect.stringContaining("skip Visa")])
+    expect(out.end.after.date).toBe(out.end.before.date)
+    expect(h.adjustments).toHaveLength(0)
+  })
+
+  test("rejects what a real change would reject", async () => {
+    await expect(harness().call("try_plan_change", { removePots: ["Holiday"] })).rejects.toThrow('No pot named "Holiday"')
+  })
+})
+
 describe("Cas decisions", () => {
-  test("show the plan out of date until a change carries them out", async () => {
+  test("wait on the plan until a change carries them out", async () => {
     const h = harness({ decisions: ["Make Sharesies a deliberate pot: 650 a month from Mary's pay"] })
     const before = await h.call("get_plan")
-    expect(before.reasons).toContain("1 decision not applied")
     expect(before.unappliedDecisions).toEqual([expect.objectContaining({ content: expect.stringContaining("Sharesies") })])
 
     const out = await h.call("upsert_pot", {
@@ -254,9 +259,7 @@ describe("Cas decisions", () => {
       decisionIds: [before.unappliedDecisions[0].id],
     })
     expect(out.appliedDecisions).toHaveLength(1)
-    await h.call("regenerate_plan", { operationId: "g" })
     const after = await getPlanState({ repo: h.repo })
     expect(after.unappliedDecisions).toEqual([])
-    expect(after.status).toBe("current")
   })
 })

@@ -657,8 +657,9 @@ export async function getPlanThread() {
 }
 
 /**
- * The latest plan you started yourself (not a rebuild), whose plan sets the goal: rebuilds
- * by you or Cas change the path to it, not the target.
+ * The latest plan you started yourself, whose plan sets the goal: threads with made_by are
+ * rebuilds from before the plan was worked out live, and changes since move the path, not
+ * the target.
  */
 export async function getGoalThread() {
   return planThread(true)

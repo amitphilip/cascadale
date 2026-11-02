@@ -18,7 +18,7 @@ describe("reconcilePending", () => {
 })
 
 describe("buildDataHealth", () => {
-  test("reports drift from the bank, pending transactions and a plan built on moved balances", () => {
+  test("reports drift from the bank and pending transactions", () => {
     const health = buildDataHealth(healthInput())
     expect(health.status).toBe("attention")
     expect(health.drift).toEqual([
@@ -28,13 +28,6 @@ describe("buildDataHealth", () => {
     expect(joint.pending).toEqual({ count: 1, total: -45 })
     expect(joint.balanceWithPending).toBe(22900)
     expect(health.pendingTransactions[0]).toMatchObject({ account: "Joint", pending: true, amount: -45 })
-    expect(health.plan?.movedMaterially).toBe(true)
-    expect(health.plan?.basis.find((b) => b.name === "Joint")).toMatchObject({
-      planBalance: 18825,
-      actualBalance: 22945,
-      moved: 4120,
-      material: true,
-    })
     expect(health.staleAccounts).toEqual([])
   })
 

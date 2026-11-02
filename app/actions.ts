@@ -32,7 +32,6 @@ import {
 } from "@/lib/akahu"
 import { API_KEY_SETTING } from "@/lib/anthropic"
 import {
-  regeneratePlan,
   removeAdjustment,
   removePot,
   withInstructions,
@@ -53,7 +52,8 @@ import { deleteStored, readStoredRows } from "@/lib/import/files"
 import { applyMapping, detectStatementInfo, type Mapping } from "@/lib/import/parse"
 import { FREQUENCIES, type Frequency } from "@/lib/plan"
 import {
-  continuePlan,
+  chatMessages,
+  latestPlan,
   loadSnapshot,
   startPlan,
   type NewTurn,
@@ -994,7 +994,7 @@ export async function createPlan(goals: string, frequency: Frequency) {
   return run(async () => {
     const fresh = await loadSnapshot()
     if (!fresh) throw new Error("Import some transactions first")
-    // your adjustments are frozen into the snapshot and your pots kept, as on a rebuild
+    // your pots and adjustments stay as they are; the model plans around them
     const { repo } = await planDeps("website")
     const { snapshot } = await withInstructions(repo, fresh, null)
     const turn = await startPlan(
@@ -1009,7 +1009,7 @@ export async function createPlan(goals: string, frequency: Frequency) {
   })
 }
 
-/** Ask the planner a question or for a change, in the latest conversation. */
+/** Ask Cas a question or for a change, in the chat on the latest plan. */
 export async function askPlanner(threadId: number, message: string) {
   return run(async () => {
     const text = z
@@ -1033,26 +1033,14 @@ export async function askPlanner(threadId: number, message: string) {
         .eq("thread_id", threadId)
         .order("id")
     )
-    const { repo } = await planDeps("website")
-    const turn = await continuePlan(thread.snapshot, messages, text, await repo.listPots())
-    await saveTurn(db, threadId, turn)
-    return { changed: turn.assistant.plan !== null }
-  })
-}
-
-/**
- * Rebuild the plan with every pot and adjustment, as regenerate_plan does over MCP.
- * expectedPlanId is the plan the page showed, so a rebuild never lands on a plan someone
- * else changed in the meantime.
- */
-export async function rebuildPlan(expectedPlanId: number | null) {
-  return run(async () => {
-    const out = await regeneratePlan(await planDeps("website"), {
-      operationId: crypto.randomUUID(),
-      reason: "Rebuilt from the Plan page",
-      expectedPlanId,
+    // loaded here because the agent's tools import this file
+    const { planChat } = await import("@/lib/cas/agent")
+    const turn = await planChat(text, chatMessages(thread, messages), latestPlan(messages))
+    await saveTurn(db, threadId, {
+      user: { content: text, context: "" },
+      assistant: { content: turn.reply, plan: turn.plan },
     })
-    return { planId: out.planId }
+    return { changed: turn.plan !== null }
   })
 }
 

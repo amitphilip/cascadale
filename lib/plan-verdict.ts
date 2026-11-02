@@ -25,7 +25,7 @@ export function planVerdict({
   date,
 }: {
   sim: Simulation
-  /** the plan's own warnings; leave out while it's out of date, as they describe old balances */
+  /** the plan's own warnings */
   warnings: string[]
   balanceOf: (accountId: number) => number
   accountName: (accountId: number) => string

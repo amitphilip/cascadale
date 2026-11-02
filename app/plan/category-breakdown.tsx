@@ -87,7 +87,7 @@ export function CategoryBreakdown({
     )
     const message = `Please update the plan for these changes to my monthly spending:\n${lines.join("\n")}\nResize any pots whose bills change, and tell me what the difference means for what's left over.`
     execute(() => askPlanner(threadId, message), {
-      success: (r) => (r.changed ? "Plan updated" : "Sent to the planner"),
+      success: (r) => (r.changed ? "Plan updated" : "Sent to Cas"),
       onSuccess: () => setTargets({}),
     })
   }

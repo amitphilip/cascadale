@@ -162,7 +162,7 @@ export function previousPlan() {
 }
 
 /** What the bank feeds report right now. */
-export function healthInput(planCreatedAt = "2026-10-02T08:00:00.000Z", planAccounts?: PlanSnapshot["accounts"]): HealthInput {
+export function healthInput(): HealthInput {
   const synced = { at: "2026-10-28T08:07:00Z", error: null }
   const bank: Record<number, number> = { [ACCOUNTS.everyday.id]: 1232.5 }
   return {
@@ -183,11 +183,6 @@ export function healthInput(planCreatedAt = "2026-10-02T08:00:00.000Z", planAcco
     // a grocery shop minutes ago, not posted yet
     pending: [{ accountId: ACCOUNTS.joint.id, date: TODAY, description: "PAK N SAVE", amount: -45 }],
     posted: [],
-    plan: {
-      createdAt: planCreatedAt,
-      dataEnd: "2026-10-27",
-      accounts: planAccounts ?? previousPlan().snapshot.accounts,
-    },
     seriesBreaks: [],
   }
 }

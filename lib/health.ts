@@ -3,8 +3,7 @@ import type { SeriesBreak } from "@/lib/recurring"
 /**
  * Data health: whether the numbers an answer is built from are current and agree with
  * the bank. Every MCP read that answers about money returns it as data_health, so an
- * answer is never silently built on stale feeds, drifted balances or a plan made on
- * balances that have since moved. Pure functions; lib/data-health.ts loads the inputs.
+ * answer is never silently built on stale feeds or drifted balances. Pure functions; lib/data-health.ts loads the inputs.
  */
 
 /** A linked account that hasn't synced in this long is stale (the sync runs hourly). */
@@ -38,7 +37,6 @@ export type HealthInput = {
   pending: PendingTx[]
   /** recently posted transactions, to drop pending ones that have since posted */
   posted: PostedTx[]
-  plan: { createdAt: string; dataEnd: string; accounts: { id: number; name: string; balance: number }[] } | null
   seriesBreaks: SeriesBreak[]
 }
 
@@ -74,11 +72,6 @@ export function reconcilePending(pending: PendingTx[], posted: PostedTx[]) {
     }
   }
   return { open, settled }
-}
-
-/** A plan's starting balance has moved materially when it's off by this much. */
-export function isMaterialMove(basis: number, actual: number) {
-  return Math.abs(actual - basis) >= Math.max(100, Math.abs(basis) * 0.05)
 }
 
 export function buildDataHealth(input: HealthInput) {
@@ -146,30 +139,6 @@ export function buildDataHealth(input: HealthInput) {
       `${a.name} is ${Math.abs(a.drift!).toFixed(2)} ${a.drift! < 0 ? "below" : "above"} the bank (${a.balance.toFixed(2)} vs ${a.bankBalance!.toFixed(2)})${a.driftExplainedByPending ? ", explained by pending transactions" : ""}`
     )
 
-  let plan = null
-  if (input.plan) {
-    const current = new Map(accounts.map((a) => [a.accountId, a]))
-    const basis = input.plan.accounts.flatMap((p) => {
-      const now = current.get(p.id)
-      if (!now) return []
-      return [
-        {
-          accountId: p.id,
-          name: p.name,
-          planBalance: p.balance,
-          actualBalance: now.balance,
-          moved: round2(now.balance - p.balance),
-          material: isMaterialMove(p.balance, now.balance),
-        },
-      ]
-    })
-    const moved = basis.filter((b) => b.material)
-    const ageDays = Math.floor((now.getTime() - Date.parse(input.plan.createdAt)) / 86_400_000)
-    for (const b of moved)
-      warnings.push(`The plan was built on ${b.name} at ${b.planBalance.toFixed(2)}; it's ${b.actualBalance.toFixed(2)} now`)
-    plan = { madeAt: input.plan.createdAt, ageDays, dataEnd: input.plan.dataEnd, basis, movedMaterially: moved.length > 0 }
-  }
-
   for (const b of input.seriesBreaks)
     warnings.push(
       `"${b.ended.example}" stopped after ${b.ended.lastDate} and "${b.candidate.example}" started at a similar amount: confirm whether it replaced it`
@@ -194,7 +163,6 @@ export function buildDataHealth(input: HealthInput) {
       account: input.accounts.find((a) => a.id === p.accountId)?.name ?? null,
       pending: true as const,
     })),
-    plan,
     seriesToConfirm: input.seriesBreaks,
   }
 }

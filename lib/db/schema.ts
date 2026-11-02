@@ -156,7 +156,7 @@ export type CategoryProjectionRow = {
 export type PlanThread = {
   id: number
   snapshot: PlanSnapshot
-  /** who rebuilt it (lib/plan-service.ts); null when made in the planner chat */
+  /** who rebuilt it, on threads from before the plan was worked out live; null otherwise */
   madeBy: "website" | "mcp" | "cas" | null
   createdAt: string
 }

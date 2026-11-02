@@ -119,18 +119,22 @@ Two MCP servers (Streamable HTTP), each added to claude.ai as its own connector:
 
 - **The plan** is the one on the Plan page, through the same service
   ([lib/plan-service.ts](lib/plan-service.ts)) the page and its actions use.
-  `get_plan` and `list_plan_adjustments` read it; `upsert_pot`, `remove_pot`,
-  `add_plan_adjustment` and `remove_plan_adjustment` record pots and one-off
-  changes (who, when and why, idempotent on an `operationId`) and mark the plan
-  out of date; `regenerate_plan` rebuilds it from today's data with all of them
-  applied and returns a diff. The Plan page shows the same pots, adjustments and
-  changes, and its Rebuild button does the same rebuild. Cas's decisions that
-  affect the plan also show it as out of date until they're applied.
+  It's worked out when it's read: the last plan made with the model, carried
+  over to today's data with your pots and adjustments on top, so there's nothing
+  to rebuild. `get_plan` and `list_plan_adjustments` read it; `try_plan_change`
+  runs a change through the simulation without saving it; `upsert_pot`,
+  `remove_pot`, `add_plan_adjustment` and `remove_plan_adjustment` take effect at
+  once (who, when and why, idempotent on an `operationId`) and return what the
+  plan now does. Cas's decisions that affect the plan wait on the Plan page until
+  a change carries them out. New plan is the one step that asks the model for a
+  whole plan, and it sets a new goal.
+- **Cas in the Plan page's chat** has the same read and memory tools plus the
+  plan's action tools, and changes the plan when you ask. It sees the last few
+  messages; its notes carry the rest.
 - **Data health:** `get_briefing`, `get_overview`, `get_plan`, `run_check_in`
   and `ask_cas` return `data_health`: each account's last sync and Akahu refresh
   time, drift between Cascadale's balance and the bank's, pending transactions
-  (included in balances, flagged, and dropped once they post), and how far the
-  plan's starting balances have moved.
+  (included in balances, flagged, and dropped once they post).
 - Every response carries the household's currency and locale (NZD and en-NZ
   unless Settings says otherwise).
 

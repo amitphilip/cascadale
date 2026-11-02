@@ -22,7 +22,7 @@ export function PlanAsk({ threadId, messages }: { threadId: number; messages: Ch
       <Card className="hidden min-h-0 xl:sticky xl:top-8 xl:flex xl:h-[calc(100svh-4rem)] xl:flex-col">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <SparkleIcon /> Ask the planner
+            <SparkleIcon /> Ask Cas
           </CardTitle>
         </CardHeader>
         <CardContent className="flex min-h-0 flex-1 flex-col">
@@ -36,7 +36,7 @@ export function PlanAsk({ threadId, messages }: { threadId: number; messages: Ch
           onClick={() => setOpen(true)}
         >
           <SparkleIcon data-icon="inline-start" />
-          Ask the planner
+          Ask Cas
         </Button>
         <Sheet open={open} onOpenChange={setOpen}>
           <SheetContent
@@ -45,7 +45,7 @@ export function PlanAsk({ threadId, messages }: { threadId: number; messages: Ch
           >
             <SheetHeader className="p-0 pr-8">
               <SheetTitle className="flex items-center gap-2">
-                <SparkleIcon /> Ask the planner
+                <SparkleIcon /> Ask Cas
               </SheetTitle>
             </SheetHeader>
             <PlanChat threadId={threadId} messages={messages} />

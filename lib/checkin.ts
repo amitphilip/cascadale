@@ -22,6 +22,8 @@ import {
 } from "@/lib/plan"
 import { latestPlan, loadSnapshot } from "@/lib/planner"
 import { goalPlan, planGoal } from "@/lib/plan-goal"
+import { supabasePlanRepo } from "@/lib/plan-repo"
+import { withInstructions } from "@/lib/plan-service"
 import {
   getAccountsWithBalances,
   getGoalThread,
@@ -162,18 +164,23 @@ export async function buildStats(snap: PlanSnapshot): Promise<CheckInStats> {
   const oneOffsUntil = toIso(addDays(parseISO(snap.start), ONE_OFFS_AHEAD))
   const low = combinedLow(snap, sim)
 
-  const plan = thread && latestPlan(thread.messages)
+  const base = thread && latestPlan(thread.messages)
   const startedPlan = started && latestPlan(started.messages)
+  const live =
+    thread && base
+      ? await withInstructions(supabasePlanRepo(db), snap, { snapshot: thread.snapshot, plan: base })
+      : null
+  const plan = live?.plan ?? null
   const goal =
-    thread && plan
+    thread && base && live
       ? planGoal({
           goal: goalPlan(
             startedPlan && { snapshot: started.snapshot, plan: startedPlan },
-            { snapshot: thread.snapshot, plan },
+            { snapshot: thread.snapshot, plan: base },
             todayLocal()
           ),
-          latest: plan,
-          current: snap,
+          latest: live.plan,
+          current: live.snapshot,
           balances: new Map(balances.map((a) => [a.id, a.balance])),
           txs: allTxs,
         })
@@ -183,7 +190,7 @@ export async function buildStats(snap: PlanSnapshot): Promise<CheckInStats> {
       ? "1st of each month"
       : incomeId === FORTNIGHTLY
         ? "every fortnight"
-        : `when ${thread?.snapshot.incomes.find((i) => i.id === incomeId)?.name ?? "pay"} lands`
+        : `when ${snap.incomes.find((i) => i.id === incomeId)?.name ?? "pay"} lands`
 
   return {
     from,

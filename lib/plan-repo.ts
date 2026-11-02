@@ -1,11 +1,10 @@
 import "server-only"
 
 import { DbError, getDb, must, type Db } from "@/lib/db"
-import type { PlanMessage } from "@/lib/db/schema"
-import type { Plan, PlanSnapshot } from "@/lib/plan"
+import type { PlanSnapshot } from "@/lib/plan"
 import type { Actor, AdjustmentInstruction, PotInstruction } from "@/lib/plan-instructions"
 import { getPlanThread } from "@/lib/queries"
-import type { PlanChange, PlanDeps, PlanRecord, PlanRepo } from "@/lib/plan-service"
+import type { PlanChange, PlanDeps, PlanRepo } from "@/lib/plan-service"
 import { loadSnapshot } from "@/lib/planner"
 
 // The plan service's tables (plan_pots, plan_adjustments, plan_changes, plan_threads and
@@ -146,29 +145,6 @@ export function supabasePlanRepo(db: Db): PlanRepo {
         snapshot: thread.snapshot,
         plan: message.plan,
       }
-    },
-    async savePlan({ snapshot, plan, madeBy, request, context, reply }) {
-      const thread = await must<{ id: number }>(
-        db.from("plan_threads").insert({ snapshot, made_by: madeBy }).select("id").single()
-      )
-      const rows = await must<Pick<PlanMessage, "id" | "role" | "createdAt">[]>(
-        db
-          .from("plan_messages")
-          .insert([
-            { thread_id: thread.id, role: "user", content: request, context },
-            { thread_id: thread.id, role: "assistant", content: reply, plan },
-          ])
-          .select("id, role, createdAt:created_at")
-      )
-      const message = rows.find((r) => r.role === "assistant")!
-      return {
-        id: message.id,
-        threadId: thread.id,
-        createdAt: message.createdAt,
-        madeBy,
-        snapshot,
-        plan: plan as Plan,
-      } satisfies PlanRecord
     },
 
     openDecisions() {

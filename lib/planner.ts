@@ -7,13 +7,11 @@ import { anthropicClient } from "@/lib/anthropic"
 import { describeError } from "@/lib/categorize"
 import type { PlanMessage } from "@/lib/db/schema"
 import {
-  describeSimulation,
   planDataContext,
   FORTNIGHTLY,
   MONTHLY,
   PlannerTurnSchema,
   sanitizePlan,
-  simulate,
   type Frequency,
   type Plan,
   type PlannerTurn,
@@ -67,7 +65,7 @@ export async function loadPlanData() {
   })
 }
 
-const SYSTEM = `You are a careful personal-finance planner inside a private budgeting app used by one person or household. You turn their analysed bank data into a practical cash plan and then refine it with them in conversation.
+const SYSTEM = `You are a careful personal-finance planner inside a private budgeting app used by one person or household. You turn their analysed bank data into a practical cash plan.
 
 The problem you solve: income arrives on paydays, but bills fall due on other days. Your plan says, for each payday, how much to move or earmark from the account the pay lands in into named pots, so that every bill is already funded when it is due and day-to-day spending money is what's left.
 
@@ -88,27 +86,14 @@ How to build the plan:
 - Size each entry so the pot's monthly inflow matches the monthly cost of the bills it covers: monthly cost divided by how often that income arrives per month, rounded up to a tidy amount. With several incomes, split sensibly (e.g. in proportion to income, or by which payday lands closest before the bill).
 - Group bills into a handful of clear pots (e.g. Housing, Utilities, Insurance, Subscriptions, Debt, Annual bills) rather than one pot per bill. Every bill should be in exactly one pot's covers.
 - If there's room after bills and day-to-day spending, add a buffer or savings pot. If income doesn't cover bills plus spending, say so plainly and prioritise essentials.
-- After each turn the app simulates the current plan for 90 days and tells you the result: each pot's inflow, outflow and the starting balance it needs, uncovered bills, and cash accounts that go below zero. Use it to check and correct your plan.
 
 Focus suggestions: three to six concrete things worth the person's attention, most important first, each grounded in specific numbers from the data (a growing bill, an expensive subscription, spending over budget, a thin buffer, an annual bill coming up). Give a monthly_impact estimate when you can.
 
-What the person sees: the app renders the plan's summary, set-asides, focus and warnings as a dashboard, and your reply as a chat message beside it. So every plan you return must carry its focus items and warnings in those fields, even when they haven't changed; don't put them only in your reply, and don't repeat the whole plan there.
+What the person sees: the app renders the plan's summary, set-asides, focus and warnings as a dashboard, and your reply as a chat message beside it. So the plan must carry its focus items and warnings in those fields; don't put them only in your reply, and don't repeat the whole plan there.
 
 Keep every text short and plain: the person wants to glance at the dashboard, not read it. Follow the word limits on each field, lead with the number, and skip explanations the numbers already show.
 
-In conversation: answer questions and make the changes asked for. For a first plan, reply with one or two sentences introducing it. Otherwise reply in a few short lines of plain text (short paragraphs or "- " lists, no headings or tables). When the plan changes, return the complete revised plan, not just the changed parts; when you only answer a question, return plan as null. Refer to accounts, incomes and bills by name in your reply, never by id. Use only ids that appear in the data. Don't invent facts the data doesn't show; when you assume something, say so.`
-
-const fence = (tag: string, body: string) => `<${tag}>\n${body}\n</${tag}>`
-
-/** Conversation replayed for the model, oldest first; the thread's first message carries the data. */
-function history(messages: Pick<PlanMessage, "role" | "content" | "context" | "plan">[]) {
-  return messages.map(
-    (m): Anthropic.Beta.BetaMessageParam =>
-      m.role === "user"
-        ? { role: "user", content: m.context ? `${m.context}\n\n${m.content}` : m.content }
-        : { role: "assistant", content: JSON.stringify({ reply: m.content, plan: m.plan }) }
-  )
-}
+Reply with one or two sentences introducing the plan, and always return the complete plan. Refer to accounts, incomes and bills by name in your reply, never by id. Use only ids that appear in the data. Don't invent facts the data doesn't show; when you assume something, say so.`
 
 async function ask(messages: Anthropic.Beta.BetaMessageParam[]): Promise<PlannerTurn> {
   const client = await anthropicClient()
@@ -120,8 +105,6 @@ async function ask(messages: Anthropic.Beta.BetaMessageParam[]): Promise<Planner
       fallbacks: "default",
       thinking: { type: "adaptive" },
       output_config: { effort: "high", format: betaZodOutputFormat(PlannerTurnSchema) },
-      // the conversation only ever grows, so cache up to its latest turn
-      cache_control: { type: "ephemeral" },
       system: SYSTEM,
       messages,
     })
@@ -168,7 +151,7 @@ function potsContext(pots: PotInstruction[], snapshot: PlanSnapshot) {
     .join("\n")
 }
 
-/** Start a conversation: the snapshot plus your goals, answered with a first plan. */
+/** Make a new plan: the snapshot plus your goals, answered with a whole plan. */
 export async function startPlan(
   snapshot: PlanSnapshot,
   goals: string,
@@ -179,35 +162,15 @@ export async function startPlan(
     content: goals || "Make me a plan.",
     context: `${planDataContext(snapshot)}\n\n${FREQUENCY_ASK[frequency]}${potsContext(pots, snapshot)}`,
   }
-  const turn = await ask(history([{ role: "user", ...user, plan: null }]))
+  const turn = await ask([{ role: "user", content: `${user.context}\n\n${user.content}` }])
   if (!turn.plan) throw new Error("The model didn't return a plan")
   const plan = applyPots(sanitizePlan(turn.plan, snapshot), pots, snapshot).plan
   return { user, assistant: { content: turn.reply, plan } }
 }
 
-/** Continue a conversation with a question or change request. */
-export async function continuePlan(
-  snapshot: PlanSnapshot,
-  messages: PlanMessage[],
-  text: string,
-  pots: PotInstruction[] = []
-): Promise<NewTurn> {
-  const current = latestPlan(messages)
-  const user = {
-    content: text,
-    context:
-      (current
-        ? fence("simulation_of_current_plan", describeSimulation(snapshot, simulate(snapshot, current)))
-        : "") + potsContext(pots, snapshot),
-  }
-  const turn = await ask(history([...messages, { role: "user", ...user, plan: null }]))
-  return {
-    user,
-    assistant: {
-      content: turn.reply,
-      plan: turn.plan && applyPots(sanitizePlan(turn.plan, snapshot), pots, snapshot).plan,
-    },
-  }
+/** A thread's chat: the turn that opened a thread made by an old rebuild was no one's words. */
+export function chatMessages<M>(thread: { madeBy: unknown }, messages: M[]) {
+  return thread.madeBy ? messages.slice(2) : messages
 }
 
 export function latestPlan(messages: Pick<PlanMessage, "plan">[]) {
