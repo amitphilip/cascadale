@@ -5,12 +5,14 @@ import type { CasNote } from "@/lib/db/schema"
 import type { PlanChange } from "@/lib/plan-service"
 import { getCategorizationStats } from "@/lib/queries"
 
-import type { CasSnapshot, CasStore, NewSnapshot, SyncMark } from "./store"
+import type { CasSnapshot, CasStore, NewSnapshot, Proposal, SyncMark } from "./store"
 
 const SNAPSHOT_COLUMNS =
   "id, status, headline, goalGap:goal_gap, lowPointDate:low_point_date, lowPointAmount:low_point_amount, topActions:top_actions, warnings, proposals, figures, basedOnSyncAt:based_on_sync_at, basedOnSyncRunId:based_on_sync_run_id, basedOnChangeId:based_on_change_id, model, escalationReason:escalation_reason, inputTokens:input_tokens, outputTokens:output_tokens, latencyMs:latency_ms, error, createdAt:created_at"
+const PROPOSAL_COLUMNS =
+  "id, tool, args, reason, source, status, basedOnChangeId:based_on_change_id, basedOnSyncAt:based_on_sync_at, createdAt:created_at, decidedAt:decided_at, decisionReason:decision_reason, changeId:change_id, result, error"
 const CHANGE_COLUMNS =
-  "id, operationId:operation_id, actor, action, reason, summary, createdAt:created_at, completedAt:completed_at, before, after, transactionId:transaction_id"
+  "id, operationId:operation_id, actor, action, reason, summary, createdAt:created_at, completedAt:completed_at, before, after, transactionId:transaction_id, proposalId:proposal_id"
 
 type SnapshotRow = Omit<CasSnapshot, "lowPoint"> & { lowPointDate: string | null; lowPointAmount: number | null }
 
@@ -115,6 +117,52 @@ export function supabaseCasStore(db: Db): CasStore {
     },
     async uncategorisedCount() {
       return Number((await getCategorizationStats())?.uncategorized ?? 0)
+    },
+
+    listProposals(statuses, limit = 50) {
+      return must<Proposal[]>(
+        db.from("cas_proposals").select(PROPOSAL_COLUMNS).in("status", statuses).order("id", { ascending: false }).limit(limit)
+      )
+    },
+    async getProposal(id) {
+      const [row] = await must<Proposal[]>(db.from("cas_proposals").select(PROPOSAL_COLUMNS).eq("id", id))
+      return row ?? null
+    },
+    async addProposals(rows) {
+      if (!rows.length) return []
+      return must<Proposal[]>(
+        db
+          .from("cas_proposals")
+          .insert(
+            rows.map((r) => ({
+              tool: r.tool,
+              args: r.args,
+              reason: r.reason,
+              source: r.source,
+              based_on_change_id: r.basedOnChangeId,
+              based_on_sync_at: r.basedOnSyncAt,
+            }))
+          )
+          .select(PROPOSAL_COLUMNS)
+      )
+    },
+    async settleProposal(id, patch) {
+      const [row] = await must<Proposal[]>(
+        db
+          .from("cas_proposals")
+          .update({
+            status: patch.status,
+            decision_reason: patch.reason ?? null,
+            change_id: patch.changeId ?? null,
+            result: patch.result ?? null,
+            error: patch.error ?? null,
+            ...(patch.status === "superseded" ? { decided_at: new Date().toISOString() } : {}),
+          })
+          .eq("id", id)
+          .eq("status", "pending")
+          .select(PROPOSAL_COLUMNS)
+      )
+      return row ?? null
     },
   }
 }

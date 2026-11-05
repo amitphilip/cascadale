@@ -1,7 +1,8 @@
 import "server-only"
 
 import { getApiKey } from "@/lib/anthropic"
-import { FIGURE_SOURCE } from "@/lib/cas/tools"
+import { proposalProblem } from "@/lib/cas/proposals"
+import { FIGURE_SOURCE, proposalTools } from "@/lib/cas/tools"
 import { loadDataHealth } from "@/lib/data-health"
 import { asHousehold } from "@/lib/db/household"
 import { planDeps } from "@/lib/plan-repo"
@@ -16,7 +17,9 @@ const SNAPSHOT_MODEL = "claude-haiku-5-5"
 
 /** Cas's background run for the signed-in user's household (or the one it's acting as). */
 export async function runCasNow() {
+  const tools = proposalTools()
   return runCas({
+    validate: (tool, args) => proposalProblem(tools, tool, args),
     plan: await planDeps("cas", { quiet: true }),
     store: await casStore(),
     source: { ...FIGURE_SOURCE, health: () => loadDataHealth() },

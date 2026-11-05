@@ -18,7 +18,7 @@ const POT_COLUMNS =
 const ADJUSTMENT_COLUMNS =
   "id, date, kind, target, ref, name, amount, fromAccountId:from_account_id, toAccountId:to_account_id, createdBy:created_by, createdAt:created_at, reason"
 const CHANGE_COLUMNS =
-  "id, operationId:operation_id, actor, action, reason, summary, result, createdAt:created_at, completedAt:completed_at, transactionId:transaction_id"
+  "id, operationId:operation_id, actor, action, reason, summary, result, createdAt:created_at, completedAt:completed_at, transactionId:transaction_id, proposalId:proposal_id"
 
 const pot = (r: PotInstruction): PotInstruction => ({ ...r, amount: Number(r.amount) })
 const adjustment = (r: AdjustmentInstruction): AdjustmentInstruction => ({
@@ -28,12 +28,19 @@ const adjustment = (r: AdjustmentInstruction): AdjustmentInstruction => ({
 
 export function supabasePlanRepo(db: Db): PlanRepo {
   return {
-    async claim({ operationId, actor, action, reason, transactionId }) {
+    async claim({ operationId, actor, action, reason, transactionId, proposalId }) {
       try {
         const change = await must<PlanChange>(
           db
             .from("plan_changes")
-            .insert({ operation_id: operationId, actor, action, reason, transaction_id: transactionId ?? null })
+            .insert({
+              operation_id: operationId,
+              actor,
+              action,
+              reason,
+              transaction_id: transactionId ?? null,
+              proposal_id: proposalId ?? null,
+            })
             .select(CHANGE_COLUMNS)
             .single()
         )

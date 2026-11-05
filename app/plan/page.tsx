@@ -27,6 +27,7 @@ import {
   type Allocation,
 } from "./plan-summary-cards"
 import { PlanTodoCard, type Suggestion } from "./plan-todo-card"
+import { PlanProposalsCard } from "./plan-proposals-card"
 import { PlanAsk } from "./plan-ask"
 import { type ChatMessage } from "./plan-chat"
 import { PageHeader } from "@/components/page-header"
@@ -96,6 +97,7 @@ import {
 } from "@/lib/queries"
 import { CADENCE_LABELS } from "@/lib/recurring"
 import { getUserId } from "@/lib/db"
+import { casStore } from "@/lib/cas/store-db"
 import { cn } from "@/lib/utils"
 import { parseView } from "@/lib/views"
 import { localDate, todayLocal } from "@/supabase/functions/_shared/akahu"
@@ -148,6 +150,7 @@ export default async function PlanPage({
     people,
     prefs,
     holders,
+    proposals,
     params,
   ] = await Promise.all([
     getSettings(),
@@ -166,6 +169,7 @@ export default async function PlanPage({
     getPeople(),
     getMyPrefs(userId),
     getAccountHolders(),
+    casStore().then((store) => store.listProposals(["pending"])),
     searchParams,
   ])
   // you open on your own view or the family's, as you chose in Settings
@@ -421,6 +425,7 @@ export default async function PlanPage({
         {view === "family" && (
           <div className="grid min-w-0 gap-6">
             <PlanGoalCard summary={plan.summary} goal={goal} fmt={fmt} />
+            <PlanProposalsCard proposals={proposals} locale={fmt.locale} />
             <PlanBudgetCard
               budget={month}
               spare={spareCash(snap, sim)}
@@ -449,6 +454,7 @@ export default async function PlanPage({
 
         {view === "accountant" && (
           <div className="grid min-w-0 gap-6">
+            <PlanProposalsCard proposals={proposals} locale={fmt.locale} />
             <PlanStatusCard
               standing={standing}
               verdict={verdict}

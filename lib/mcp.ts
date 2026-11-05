@@ -34,6 +34,7 @@ const TOOLS_INSTRUCTIONS = `Cascadale is the user's budgeting app: bank accounts
 - Check data_health (on get_briefing, get_overview, get_plan and run_check_in) before relying on numbers: name stale accounts and drift from the bank, rather than answering as if the data were current.
 - The plan is the one on the website's Plan page. To change it, use upsert_pot / remove_pot (pots and set-asides) and add_plan_adjustment / remove_plan_adjustment (one-off changes on a date). These take effect at once: the plan is always today's data with every pot and adjustment applied, and there is nothing to rebuild. try_plan_change runs a change through the simulation without saving it. When get_plan lists unappliedDecisions, offer to carry them out. Pass a fresh operationId with every write; retrying with the same one is safe.
 - The Plan page also has action items, things to do ticked off as done. Use list_plan_actions, add_plan_action, set_plan_action_done and remove_plan_action; when you do something the user confirmed that matches an open one, tick it off.
+- Cas proposes changes rather than making them. get_status lists them; list_proposals has the detail. Offer them to the user, and run approve_proposal or reject_proposal on their answer.
 - Use the Cas connector's ask_cas only for new judgement questions (can we afford X, what should we change, trade-offs) that get_status and the raw tools don't answer; it's slower because it runs a model.
 - Every response carries the household's currency and locale; amounts are in that currency. Transaction amounts are signed: negative is money out.`
 
@@ -88,7 +89,8 @@ function createToolsServer() {
   const server = new McpServer(
     // Version notes (existing responses only ever gain fields):
     // 0.2.0: get_status and refresh_cas; figures on get_plan and get_briefing; plan action
-    //   writes take an optional operationId and reason
+    //   writes take an optional operationId and reason; list_proposals, approve_proposal and
+    //   reject_proposal
     { name: "cascadale", title: "Cascadale", version: "0.2.0" },
     { instructions: TOOLS_INSTRUCTIONS }
   )

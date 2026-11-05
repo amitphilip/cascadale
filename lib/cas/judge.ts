@@ -68,6 +68,8 @@ export type JudgeInput = {
   recentChanges: { at: string; actor: string; action: string; summary: string | null }[]
   openNotes: Pick<CasNote, "id" | "kind" | "content">[]
   pendingProposals: { proposalId: number; tool: string; args: unknown; reason: string }[]
+  /** proposals a person turned down recently: don't propose them again */
+  rejectedProposals: { tool: string; args: unknown; reason: string; decisionReason: string | null }[]
   previous: { status: string; headline: string; goalGap: number | null } | null
 }
 
@@ -88,6 +90,7 @@ You're given the figures, already worked out: status, the goal's gap, the low po
 - topActions: the few things to do next, most important first. Link open plan action items by actionId. Overdue ones come first.
 - proposals: concrete changes worth making, each as a tool call with JSON args (no operationId): a pot or adjustment that fixes an overdraft or an uncovered bill, ticking off an action the data shows is done, a merchant to categorise. Only propose what the figures support. None is fine.
 - decisions lists changes people made. They are decisions: never propose undoing or reversing one. If you disagree, say so in a note (kind observation) instead.
+- rejectedProposals were turned down: don't propose them again.
 - keepProposalIds: pending proposals that still hold. Leave out ones the latest changes or data make stale.
 - notes: things to remember, e.g. a disagreement or a pattern. Don't repeat open notes.
 - uncertain: true when stale feeds, drift or missing data mean you can't give a confident read.

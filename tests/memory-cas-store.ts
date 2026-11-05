@@ -1,4 +1,4 @@
-import type { CasSnapshot, CasStore, SyncMark } from "@/lib/cas/store"
+import type { CasSnapshot, CasStore, Proposal, SyncMark } from "@/lib/cas/store"
 import type { CasNote } from "@/lib/db/schema"
 import type { PlanChange } from "@/lib/plan-service"
 
@@ -7,6 +7,7 @@ export function memoryCasStore(changes: PlanChange[], opts: { uncategorised?: nu
   const snapshots: CasSnapshot[] = []
   const notes: CasNote[] = []
   const syncs: SyncMark[] = []
+  const proposals: Proposal[] = []
   let ids = 1000
   const done = () => changes.filter((c) => c.completedAt !== null)
   const store: CasStore = {
@@ -55,6 +56,42 @@ export function memoryCasStore(changes: PlanChange[], opts: { uncategorised?: nu
     async uncategorisedCount() {
       return opts.uncategorised ?? 0
     },
+    async listProposals(statuses, limit = 50) {
+      return structuredClone(proposals.filter((p) => statuses.includes(p.status)).toReversed().slice(0, limit))
+    },
+    async getProposal(id) {
+      return structuredClone(proposals.find((p) => p.id === id) ?? null)
+    },
+    async addProposals(rows) {
+      const added = rows.map(
+        (r): Proposal => ({
+          ...structuredClone(r),
+          id: ++ids,
+          status: "pending",
+          createdAt: new Date().toISOString(),
+          decidedAt: null,
+          decisionReason: null,
+          changeId: null,
+          result: null,
+          error: null,
+        })
+      )
+      proposals.push(...added)
+      return structuredClone(added)
+    },
+    async settleProposal(id, patch) {
+      const p = proposals.find((x) => x.id === id && x.status === "pending")
+      if (!p) return null
+      Object.assign(p, {
+        status: patch.status,
+        decisionReason: patch.reason ?? null,
+        changeId: patch.changeId ?? null,
+        result: structuredClone(patch.result ?? null),
+        error: patch.error ?? null,
+        decidedAt: new Date().toISOString(),
+      })
+      return structuredClone(p)
+    },
   }
-  return { store, snapshots, notes, syncs }
+  return { store, snapshots, notes, syncs, proposals }
 }

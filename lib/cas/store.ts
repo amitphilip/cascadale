@@ -43,6 +43,28 @@ export type CasSnapshot = {
 
 export type NewSnapshot = Omit<CasSnapshot, "id" | "createdAt">
 
+export const PROPOSAL_STATUSES = ["pending", "approved", "rejected", "superseded", "failed"] as const
+export type ProposalStatus = (typeof PROPOSAL_STATUSES)[number]
+
+export type Proposal = {
+  id: number
+  tool: string
+  args: Record<string, unknown>
+  reason: string
+  source: "cas" | "system"
+  status: ProposalStatus
+  basedOnChangeId: number | null
+  basedOnSyncAt: string | null
+  createdAt: string
+  decidedAt: string | null
+  decisionReason: string | null
+  changeId: number | null
+  result: unknown
+  error: string | null
+}
+
+export type NewProposal = Pick<Proposal, "tool" | "args" | "reason" | "source" | "basedOnChangeId" | "basedOnSyncAt">
+
 export type SyncMark = { at: string; runId: string | null }
 
 export interface CasStore {
@@ -61,4 +83,13 @@ export interface CasStore {
   openNotes(): Promise<CasNote[]>
   saveNote(note: { kind: CasNote["kind"]; content: string }): Promise<CasNote>
   uncategorisedCount(): Promise<number>
+
+  listProposals(statuses: ProposalStatus[], limit?: number): Promise<Proposal[]>
+  getProposal(id: number): Promise<Proposal | null>
+  addProposals(rows: NewProposal[]): Promise<Proposal[]>
+  /** Settle a pending proposal; null if it isn't pending any more. */
+  settleProposal(
+    id: number,
+    patch: { status: Exclude<ProposalStatus, "pending">; reason?: string | null; changeId?: number | null; result?: unknown; error?: string | null }
+  ): Promise<Proposal | null>
 }

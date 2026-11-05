@@ -1303,3 +1303,27 @@ export async function setAccountHolder(accountId: number, holderId: string | nul
     return {}
   })
 }
+
+// ── Cas's proposals ─────────────────────────────────────────────────────────
+
+export async function approveProposal(proposalId: number) {
+  return run(async () => {
+    const { proposalContext } = await import("@/lib/cas/tools")
+    const { approveProposals } = await import("@/lib/cas/proposals")
+    const [result] = (await approveProposals(await proposalContext(), [id.parse(proposalId)])).results
+    if (result.status !== "approved") throw new Error(result.error ?? `The proposal is ${result.status}`)
+    return {}
+  })
+}
+
+export async function rejectProposal(proposalId: number) {
+  return run(async () => {
+    const { proposalContext } = await import("@/lib/cas/tools")
+    const { rejectProposals } = await import("@/lib/cas/proposals")
+    const [result] = (
+      await rejectProposals(await proposalContext(), [id.parse(proposalId)], "Rejected on the Plan page")
+    ).results
+    if (result.status !== "rejected") throw new Error(result.error ?? `The proposal is ${result.status}`)
+    return {}
+  })
+}

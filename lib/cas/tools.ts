@@ -18,9 +18,16 @@ import {
 } from "@/app/actions"
 import { getAkahuOverview, type AkahuOverview } from "@/lib/akahu"
 import { planTools, toolFigures, type PlanToolContext } from "@/lib/cas/plan-tools"
+import {
+  approveProposals,
+  describeProposal,
+  rejectProposals,
+  type ProposalContext,
+} from "@/lib/cas/proposals"
 import { loadStatus } from "@/lib/cas/status"
+import { PROPOSAL_STATUSES } from "@/lib/cas/store"
 import { casStore } from "@/lib/cas/store-db"
-import { tool, isoDate, type CasTool } from "@/lib/cas/tool"
+import { CHANGES_DATA, tool, isoDate, type CasTool } from "@/lib/cas/tool"
 import { emit, eventsConfigured } from "@/lib/events"
 import { loadDataHealth } from "@/lib/data-health"
 import { buildStats } from "@/lib/checkin"
@@ -162,6 +169,20 @@ export const planToolContext = (actor: Actor): PlanToolContext => ({
 /** The plan tools act as Claude (MCP); the Cas agent makes its own for the Plan page's chat. */
 const PLAN_CONTEXT = planToolContext("mcp")
 const PLAN_TOOLS = planTools(PLAN_CONTEXT)
+
+/** The action tools a proposal can run, as "user": the plan's own, then the rest. */
+export function proposalTools(): CasTool[] {
+  const plan = planTools(planToolContext("user")).filter((t) => t.access === "action")
+  const names = new Set(plan.map((t) => t.name))
+  return [...plan, ...TOOLS.filter((t) => t.access === "action" && !names.has(t.name))]
+}
+
+/** Approving or rejecting Cas's proposals as the signed-in person. */
+export async function proposalContext(): Promise<ProposalContext> {
+  return { store: await casStore(), deps: await planDeps("user"), tools: proposalTools() }
+}
+
+const proposalIds = z.array(z.number().int().positive()).min(1).max(20)
 
 export const TOOLS: CasTool[] = [
   tool({
@@ -625,6 +646,39 @@ export const TOOLS: CasTool[] = [
   }),
 
   ...PLAN_TOOLS.filter((t) => t.access === "action"),
+
+  tool({
+    name: "list_proposals",
+    title: "Cas's proposals",
+    access: "read",
+    description:
+      "Changes Cas proposes instead of making: each a tool call (tool, args) with its reason and a one-line summary, waiting for the user to approve or reject. Pending only unless status says otherwise. A proposal Cas made on data that has since changed is marked superseded on its next run.",
+    input: { status: z.array(z.enum(PROPOSAL_STATUSES)).optional().describe("Default: pending") },
+    run: async ({ status }) => ({
+      proposals: (await (await casStore()).listProposals(status ?? ["pending"])).map((p) => ({
+        ...p,
+        summary: describeProposal(p),
+      })),
+    }),
+  }),
+
+  tool({
+    name: "approve_proposal",
+    title: "Approve Cas's proposals",
+    access: "action",
+    description: `${CHANGES_DATA} Carry out one or more of Cas's proposals (ids from list_proposals or get_status), in order. Each runs its tool call through the same services as the website, recorded on the change log as the user approving it, linked to the proposal. Safe to retry: an approved proposal isn't run twice. Returns each one's status and result.`,
+    input: { proposalIds },
+    run: async ({ proposalIds }) => approveProposals(await proposalContext(), proposalIds),
+  }),
+
+  tool({
+    name: "reject_proposal",
+    title: "Reject Cas's proposals",
+    access: "action",
+    description: `${CHANGES_DATA} Turn down one or more of Cas's proposals. It's recorded as the user's decision, so Cas won't propose it again.`,
+    input: { proposalIds, reason: z.string().trim().max(300).optional().describe("Why, in a few words") },
+    run: async ({ proposalIds, reason }) => rejectProposals(await proposalContext(), proposalIds, reason),
+  }),
 
   tool({
     name: "refresh_cas",

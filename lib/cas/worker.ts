@@ -5,8 +5,8 @@ import type { PlanFigures } from "@/lib/plan-figures"
 import { PERSON_ACTORS } from "@/lib/plan-instructions"
 import { loadFigures, type FigureSource, type PlanChange, type PlanDeps } from "@/lib/plan-service"
 
-import type { Judge, JudgeInput, Judgement } from "./judge"
-import type { CasSnapshot, CasStore, SnapshotWarning, TopAction } from "./store"
+import type { Judge, Judgement } from "./judge"
+import type { CasSnapshot, CasStore, NewProposal, Proposal, SnapshotWarning, TopAction } from "./store"
 
 /**
  * Cas as a background worker: after a sync or a plan change it works out the figures,
@@ -26,6 +26,8 @@ export type WorkerDeps = {
   judge: Judge | null
   model: string
   today: string
+  /** why a proposed call couldn't run (lib/cas/proposals.ts), so it's dropped; none checks nothing */
+  validate?: (tool: string, args: Record<string, unknown>) => string | null
 }
 
 export type RawProposal = { tool: string; args: Record<string, unknown>; reason: string }
@@ -129,19 +131,24 @@ function parseArgs(json: string): Record<string, unknown> | null {
 
 const brief = (c: PlanChange) => ({ at: c.createdAt, actor: c.actor, action: c.action, summary: c.summary })
 
-export type RunResult = { snapshot: CasSnapshot; proposals: RawProposal[]; keepProposalIds: number[] }
+export type RunResult = { snapshot: CasSnapshot; added: Proposal[]; superseded: number[] }
+
+const sameCall = (a: { tool: string; args: unknown }, b: { tool: string; args: unknown }) =>
+  a.tool === b.tool && JSON.stringify(a.args) === JSON.stringify(b.args)
 
 /** One background run: figures, one judgement, one snapshot. */
-export async function runCas(deps: WorkerDeps, extra: { pendingProposals?: JudgeInput["pendingProposals"] } = {}) {
+export async function runCas(deps: WorkerDeps): Promise<RunResult> {
   const { store, today } = deps
   // what the snapshot is based on, read first: anything recorded while it works makes it stale
-  const [change, sync, previous, health, uncategorised, openNotes] = await Promise.all([
+  const [change, sync, previous, health, uncategorised, openNotes, pending, rejected] = await Promise.all([
     store.latestChange(),
     store.latestSync(),
     store.latestSnapshot(),
     deps.source.health(),
     store.uncategorisedCount(),
     store.openNotes(),
+    store.listProposals(["pending"]),
+    store.listProposals(["rejected"], 20),
   ])
   const figures = await loadFigures(deps.plan, { ...deps.source, health: async () => health }, today)
   const warnings = snapshotWarnings(health, figures, uncategorised)
@@ -164,7 +171,8 @@ export async function runCas(deps: WorkerDeps, extra: { pendingProposals?: Judge
           decisions: decisions.map((c) => ({ ...brief(c), reason: c.reason })),
           recentChanges: recent.map(brief),
           openNotes: openNotes.map(({ id, kind, content }) => ({ id, kind, content })),
-          pendingProposals: extra.pendingProposals ?? [],
+          pendingProposals: pending.map((p) => ({ proposalId: p.id, tool: p.tool, args: p.args, reason: p.reason })),
+          rejectedProposals: rejected.map((p) => ({ tool: p.tool, args: p.args, reason: p.reason, decisionReason: p.decisionReason })),
           previous: previous && { status: previous.status, headline: previous.headline, goalGap: previous.goalGap },
         },
         deps.model
@@ -180,9 +188,27 @@ export async function runCas(deps: WorkerDeps, extra: { pendingProposals?: Judge
 
   const proposed = (judgement?.proposals ?? []).flatMap((p) => {
     const args = parseArgs(p.args)
-    return args ? [{ tool: p.tool, args, reason: p.reason }] : []
+    return args && !deps.validate?.(p.tool, args) ? [{ tool: p.tool, args, reason: p.reason }] : []
   })
   const { kept, notes: disagreements } = respectDecisions(proposed, decisions)
+
+  // a pending proposal made on older data goes stale unless the judgement keeps it
+  const keep = new Set(judgement?.keepProposalIds ?? [])
+  const stale = (p: Proposal) =>
+    p.source === "cas" &&
+    judgement !== null &&
+    !keep.has(p.id) &&
+    (p.basedOnChangeId !== (change?.id ?? null) || p.basedOnSyncAt !== (sync?.at ?? null))
+  const superseded: number[] = []
+  for (const p of pending.filter(stale)) {
+    if (await store.settleProposal(p.id, { status: "superseded", reason: "The data it was based on changed" }))
+      superseded.push(p.id)
+  }
+  const stillPending = pending.filter((p) => !superseded.includes(p.id))
+  const fresh: NewProposal[] = kept
+    .filter((p) => !stillPending.some((q) => sameCall(p, q)) && !rejected.some((q) => sameCall(p, q)))
+    .map((p) => ({ ...p, source: "cas", basedOnChangeId: change?.id ?? null, basedOnSyncAt: sync?.at ?? null }))
+  const added = await store.addProposals(fresh)
 
   const openIds = new Set(figures?.actions.map((a) => a.actionId) ?? [])
   const topActions: TopAction[] = judgement
@@ -209,7 +235,7 @@ export async function runCas(deps: WorkerDeps, extra: { pendingProposals?: Judge
     lowPoint: figures?.lowPoint ?? null,
     topActions,
     warnings,
-    proposals: kept.map((p) => ({ proposalId: null, ...p })),
+    proposals: [...stillPending, ...added].map((p) => ({ proposalId: p.id, tool: p.tool, args: p.args, reason: p.reason })),
     figures,
     basedOnSyncAt: sync?.at ?? null,
     basedOnSyncRunId: sync?.runId ?? null,
@@ -221,5 +247,5 @@ export async function runCas(deps: WorkerDeps, extra: { pendingProposals?: Judge
     latencyMs: usage.latencyMs,
     error,
   })
-  return { snapshot, proposals: kept, keepProposalIds: judgement?.keepProposalIds ?? [] } satisfies RunResult
+  return { snapshot, added, superseded }
 }
