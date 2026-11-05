@@ -1,5 +1,8 @@
 import "server-only"
 
+import { modelFor } from "@/lib/cas/model-config"
+import { fallbackFor } from "@/lib/cas/models"
+
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod"
 import { addDays, differenceInCalendarDays, format, parseISO } from "date-fns"
 
@@ -32,7 +35,6 @@ import {
 } from "@/lib/queries"
 import { todayLocal } from "@/supabase/functions/_shared/akahu"
 
-const MODEL = "claude-opus-5-5"
 const MAX_TOKENS = 32000
 const DAYS_PER_MONTH = 365.25 / 12
 /** Looked at when nothing new was logged since the last check-in. */
@@ -294,12 +296,12 @@ Keep every text short and plain, lead with numbers, refer to accounts and bills 
 
 async function ask(stats: CheckInStats): Promise<CheckInResult> {
   const client = await anthropicClient()
+  const model = await modelFor("check_in")
   try {
     const stream = client.beta.messages.stream({
-      model: MODEL,
+      model,
       max_tokens: MAX_TOKENS,
-      betas: ["server-side-fallback-2026-07-01"],
-      fallbacks: "default",
+      ...fallbackFor(model),
       thinking: { type: "adaptive" },
       output_config: {
         effort: "high",

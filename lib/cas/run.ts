@@ -11,14 +11,12 @@ import { planDeps } from "@/lib/plan-repo"
 import { todayLocal } from "@/supabase/functions/_shared/akahu"
 
 import { claudeJudge } from "./judge-claude"
+import { loadModelConfig } from "./model-config"
 import { casStore } from "./store-db"
 import { runCas } from "./worker"
 
-/** The model for snapshot runs (lib/cas/models.ts makes this configurable). */
-const SNAPSHOT_MODEL = "claude-haiku-5-5"
-
 /** Cas's background run for the signed-in user's household (or the one it's acting as). */
-export async function runCasNow() {
+export async function runCasNow(opts: { deep?: boolean } = {}) {
   const tools = proposalTools()
   return runCas({
     validate: (tool, args) => proposalProblem(tools, tool, args),
@@ -26,7 +24,8 @@ export async function runCasNow() {
     store: await casStore(),
     source: { ...FIGURE_SOURCE, health: () => loadDataHealth() },
     judge: (await getApiKey()) ? claudeJudge : null,
-    model: SNAPSHOT_MODEL,
+    models: await loadModelConfig(),
+    deep: opts.deep,
     today: todayLocal(),
     system: await planDeps("system", { quiet: true }),
     transactions: async (since) =>
@@ -44,6 +43,6 @@ export async function runCasNow() {
 }
 
 /** Cas's background run for a household, signed in as its owner. */
-export function runCasFor(householdId: string) {
-  return asHousehold(householdId, runCasNow)
+export function runCasFor(householdId: string, opts: { deep?: boolean } = {}) {
+  return asHousehold(householdId, () => runCasNow(opts))
 }

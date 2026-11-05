@@ -16,7 +16,7 @@ export type CasEvents = {
     latestTransactionAt: string | null
     inserted: number
   }
-  "cas/refresh": { householdId: string; reason?: string }
+  "cas/refresh": { householdId: string; reason?: string; deep?: boolean }
 }
 
 export type CasEvent = { [K in keyof CasEvents]: { name: K; data: CasEvents[K] } }[keyof CasEvents]

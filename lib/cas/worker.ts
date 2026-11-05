@@ -13,6 +13,7 @@ import {
 } from "@/lib/plan-service"
 
 import type { Judge, Judgement } from "./judge"
+import { CHECK_IN_DAYS, chooseSnapshotTier, type ModelConfig } from "./models"
 import type { CasSnapshot, CasStore, NewProposal, Proposal, SnapshotWarning, TopAction } from "./store"
 
 /**
@@ -31,8 +32,10 @@ export type WorkerDeps = {
   source: FigureSource
   /** null when there's no Anthropic key: the figures speak alone */
   judge: Judge | null
-  model: string
+  models: ModelConfig
   today: string
+  /** a deep review: the deep model, whatever the rule says */
+  deep?: boolean
   /** why a proposed call couldn't run (lib/cas/proposals.ts), so it's dropped; none checks nothing */
   validate?: (tool: string, args: Record<string, unknown>) => string | null
   /** the plan service acting as system, quiet, and transactions from a date on: to tick off finished items */
@@ -210,7 +213,7 @@ export async function runCas(deps: WorkerDeps): Promise<RunResult> {
   const { store, today } = deps
   const matched = await autoComplete(deps)
   // what the snapshot is based on, read first: anything recorded while it works makes it stale
-  const [change, sync, previous, health, uncategorised, openNotes, pending, rejected] = await Promise.all([
+  const [change, sync, previous, health, uncategorised, openNotes, pending, rejected, lastCheckIn] = await Promise.all([
     store.latestChange(),
     store.latestSync(),
     store.latestSnapshot(),
@@ -219,6 +222,7 @@ export async function runCas(deps: WorkerDeps): Promise<RunResult> {
     store.openNotes(),
     store.listProposals(["pending"]),
     store.listProposals(["rejected"], 20),
+    store.lastCheckInAt(),
   ])
   const figures = await loadFigures(deps.plan, { ...deps.source, health: async () => health }, today)
   const warnings = snapshotWarnings(health, figures, uncategorised)
@@ -227,6 +231,17 @@ export async function runCas(deps: WorkerDeps): Promise<RunResult> {
     store.changesAfter(previous?.basedOnChangeId ?? null),
     store.changesSince(since).then((cs) => cs.filter((c) => PERSON_ACTORS.includes(c.actor))),
   ])
+
+  const checkInDue =
+    !lastCheckIn || parseISO(today).getTime() - Date.parse(lastCheckIn) > CHECK_IN_DAYS * 86_400_000
+  const { tier, reason: escalationReason } = chooseSnapshotTier({
+    previous,
+    figures,
+    checkInDue,
+    gapThreshold: deps.models.gapThreshold,
+    deep: deps.deep,
+  })
+  const model = deps.models[tier]
 
   let judgement: Judgement | null = null
   let usage = { model: null as string | null, inputTokens: null as number | null, outputTokens: null as number | null, latencyMs: null as number | null }
@@ -245,7 +260,7 @@ export async function runCas(deps: WorkerDeps): Promise<RunResult> {
           rejectedProposals: rejected.map((p) => ({ tool: p.tool, args: p.args, reason: p.reason, decisionReason: p.decisionReason })),
           previous: previous && { status: previous.status, headline: previous.headline, goalGap: previous.goalGap },
         },
-        deps.model
+        model
       )
       judgement = out.judgement
       usage = out
@@ -315,7 +330,9 @@ export async function runCas(deps: WorkerDeps): Promise<RunResult> {
     basedOnSyncRunId: sync?.runId ?? null,
     basedOnChangeId: change?.id ?? null,
     model: usage.model,
-    escalationReason: null,
+    tier: usage.model ? tier : null,
+    escalationReason: usage.model ? escalationReason : null,
+    uncertain: judgement?.uncertain ?? false,
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,
     latencyMs: usage.latencyMs,

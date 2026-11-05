@@ -1,5 +1,7 @@
 import { describe, expect, test } from "vitest"
 
+import { modelConfig } from "@/lib/cas/models"
+
 import type { Judge, Judgement } from "@/lib/cas/judge"
 import { approveProposals, proposalProblem, rejectProposals, type ProposalContext } from "@/lib/cas/proposals"
 import { planTools } from "@/lib/cas/plan-tools"
@@ -29,7 +31,7 @@ function setup() {
       store: cas.store,
       source: { ...h.ctx.figures, health: async () => buildDataHealth(healthInput()) },
       judge,
-      model: "claude-haiku-5-5",
+      models: modelConfig(new Map()),
       today: TODAY,
       validate: (tool, args) => proposalProblem(tools, tool, args),
     })

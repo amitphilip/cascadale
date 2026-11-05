@@ -33,7 +33,10 @@ export type CasSnapshot = {
   basedOnSyncRunId: string | null
   basedOnChangeId: number | null
   model: string | null
+  tier: "default" | "escalate" | "deep" | null
   escalationReason: string | null
+  /** the model said it couldn't give a confident read */
+  uncertain: boolean
   inputTokens: number | null
   outputTokens: number | null
   latencyMs: number | null
@@ -85,6 +88,8 @@ export interface CasStore {
   /** null when it's already resolved */
   resolveNote(id: number, resolution: string): Promise<CasNote | null>
   uncategorisedCount(): Promise<number>
+  /** when the last check-in was run */
+  lastCheckInAt(): Promise<string | null>
 
   listProposals(statuses: ProposalStatus[], limit?: number): Promise<Proposal[]>
   getProposal(id: number): Promise<Proposal | null>

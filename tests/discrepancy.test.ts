@@ -1,5 +1,7 @@
 import { describe, expect, test } from "vitest"
 
+import { modelConfig } from "@/lib/cas/models"
+
 import { reportDiscrepancy } from "@/lib/cas/discrepancy"
 import type { Judgement } from "@/lib/cas/judge"
 import { loadStatus } from "@/lib/cas/status"
@@ -37,7 +39,7 @@ describe("report_discrepancy", () => {
         outputTokens: 0,
         latencyMs: 0,
       }),
-      model: "claude-haiku-5-5",
+      models: modelConfig(new Map()),
       today: TODAY,
     })
     await runCas(deps(false))

@@ -8,7 +8,7 @@ import { getCategorizationStats } from "@/lib/queries"
 import type { CasSnapshot, CasStore, NewSnapshot, Proposal, SyncMark } from "./store"
 
 const SNAPSHOT_COLUMNS =
-  "id, status, headline, goalGap:goal_gap, lowPointDate:low_point_date, lowPointAmount:low_point_amount, topActions:top_actions, warnings, proposals, figures, basedOnSyncAt:based_on_sync_at, basedOnSyncRunId:based_on_sync_run_id, basedOnChangeId:based_on_change_id, model, escalationReason:escalation_reason, inputTokens:input_tokens, outputTokens:output_tokens, latencyMs:latency_ms, error, createdAt:created_at"
+  "id, status, headline, goalGap:goal_gap, lowPointDate:low_point_date, lowPointAmount:low_point_amount, topActions:top_actions, warnings, proposals, figures, basedOnSyncAt:based_on_sync_at, basedOnSyncRunId:based_on_sync_run_id, basedOnChangeId:based_on_change_id, model, tier, escalationReason:escalation_reason, uncertain, inputTokens:input_tokens, outputTokens:output_tokens, latencyMs:latency_ms, error, createdAt:created_at"
 const PROPOSAL_COLUMNS =
   "id, tool, args, reason, source, status, basedOnChangeId:based_on_change_id, basedOnSyncAt:based_on_sync_at, createdAt:created_at, decidedAt:decided_at, decisionReason:decision_reason, changeId:change_id, result, error"
 const CHANGE_COLUMNS =
@@ -53,7 +53,9 @@ export function supabaseCasStore(db: Db): CasStore {
             based_on_sync_run_id: s.basedOnSyncRunId,
             based_on_change_id: s.basedOnChangeId,
             model: s.model,
+            tier: s.tier,
             escalation_reason: s.escalationReason,
+            uncertain: s.uncertain,
             input_tokens: s.inputTokens,
             output_tokens: s.outputTokens,
             latency_ms: s.latencyMs,
@@ -125,6 +127,12 @@ export function supabaseCasStore(db: Db): CasStore {
           .select(COLUMNS.casNotes)
       )
       return row ?? null
+    },
+    async lastCheckInAt() {
+      const [row] = await must<{ createdAt: string }[]>(
+        db.from("check_ins").select("createdAt:created_at").order("id", { ascending: false }).limit(1)
+      )
+      return row?.createdAt ?? null
     },
     async uncategorisedCount() {
       return Number((await getCategorizationStats())?.uncategorized ?? 0)

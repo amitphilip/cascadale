@@ -1,5 +1,7 @@
 import { describe, expect, test } from "vitest"
 
+import { modelConfig } from "@/lib/cas/models"
+
 import type { Judge, Judgement } from "@/lib/cas/judge"
 import { CAS_TRIGGERS, DEBOUNCE } from "@/lib/cas/schedule"
 import { respectDecisions, runCas, type WorkerDeps } from "@/lib/cas/worker"
@@ -10,13 +12,13 @@ import { harness } from "./harness"
 import { memoryCasStore } from "./memory-cas-store"
 
 function worker(h: ReturnType<typeof harness>, judge: Judge | null = null) {
-  const cas = memoryCasStore(h.changes, { uncategorised: 3 })
+  const cas = memoryCasStore(h.changes, { uncategorised: 3, lastCheckInAt: "2026-10-27T00:00:00Z" })
   const deps: WorkerDeps = {
     plan: { ...h.deps, actor: "cas", onChange: undefined },
     store: cas.store,
     source: { ...h.ctx.figures, health: async () => buildDataHealth(healthInput()) },
     judge,
-    model: "claude-haiku-5-5",
+    models: modelConfig(new Map()),
     today: TODAY,
   }
   return { ...cas, deps, run: () => runCas(deps) }
@@ -77,6 +79,7 @@ describe("Cas's background run", () => {
     expect(snapshot).toMatchObject({
       headline: "Fine, $1,200 ahead",
       model: "claude-haiku-5-5",
+      tier: "default",
       inputTokens: 1200,
       outputTokens: 300,
       latencyMs: 900,

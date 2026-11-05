@@ -1,5 +1,8 @@
 import "server-only"
 
+import { modelFor } from "@/lib/cas/model-config"
+import { fallbackFor } from "@/lib/cas/models"
+
 import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod"
 import { z } from "zod"
 
@@ -13,7 +16,6 @@ import type { DataHealth } from "@/lib/health"
 import { PlanSchema, type Plan } from "@/lib/plan"
 import { todayLocal } from "@/supabase/functions/_shared/akahu"
 
-const MODEL = "claude-opus-5-5"
 const MAX_TOKENS = 16000
 /** Model turns per question; a thorough answer takes a handful of tool rounds. */
 const MAX_ITERATIONS = 20
@@ -65,17 +67,18 @@ function finalAnswer(message: Awaited<ReturnType<typeof runAgent>>) {
 }
 
 async function runAgent(
+  task: "ask" | "chat",
   system: string,
   tools: ReturnType<typeof runnable>,
   messages: { role: "user" | "assistant"; content: string }[]
 ) {
   const client = await anthropicClient()
+  const model = await modelFor(task)
   return client.beta.messages.toolRunner({
-    model: MODEL,
+    model,
     max_tokens: MAX_TOKENS,
     max_iterations: MAX_ITERATIONS,
-    betas: ["server-side-fallback-2026-07-01"],
-    fallbacks: "default",
+    ...fallbackFor(model),
     thinking: { type: "adaptive" },
     output_config: { effort: "medium" },
     cache_control: { type: "ephemeral" },
@@ -97,7 +100,7 @@ export async function askCas(question: string, context?: string, health?: DataHe
   )
 
   try {
-    const message = await runAgent(SYSTEM, tools, [
+    const message = await runAgent("ask", SYSTEM, tools, [
       {
         role: "user",
         content: [
@@ -192,7 +195,7 @@ export async function planChat(
 
   try {
     const health = await loadDataHealth()
-    const message = await runAgent(CHAT_SYSTEM, tools, [
+    const message = await runAgent("chat", CHAT_SYSTEM, tools, [
       ...recent,
       {
         role: "user",

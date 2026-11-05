@@ -6,14 +6,9 @@ import { anthropicClient } from "@/lib/anthropic"
 import { describeError } from "@/lib/categorize"
 
 import { JUDGE_SYSTEM, JudgementSchema, type Judge } from "./judge"
+import { fallbackFor } from "./models"
 
 const MAX_TOKENS = 16000
-
-/** Haiku has no server-side refusal fallback; the larger models fall back by default. */
-const fallbackFor = (model: string) =>
-  model.startsWith("claude-haiku")
-    ? {}
-    : { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const }
 
 /** The judge on Claude, through the household's Anthropic key. */
 export const claudeJudge: Judge = async (input, model) => {

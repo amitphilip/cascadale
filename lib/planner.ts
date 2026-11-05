@@ -1,5 +1,8 @@
 import "server-only"
 
+import { modelFor } from "@/lib/cas/model-config"
+import { fallbackFor } from "@/lib/cas/models"
+
 import Anthropic from "@anthropic-ai/sdk"
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod"
 
@@ -30,7 +33,6 @@ import { applyPots, potSetAside, type PotInstruction } from "@/lib/plan-instruct
 import { snapshotFromData } from "@/lib/snapshot"
 import { todayLocal } from "@/supabase/functions/_shared/akahu"
 
-const MODEL = "claude-opus-5-5"
 const MAX_TOKENS = 64000
 
 /** Your finances as the planner sees them, or null before any transactions are imported. */
@@ -97,12 +99,12 @@ Reply with one or two sentences introducing the plan, and always return the comp
 
 async function ask(messages: Anthropic.Beta.BetaMessageParam[]): Promise<PlannerTurn> {
   const client = await anthropicClient()
+  const model = await modelFor("plan")
   try {
     const stream = client.beta.messages.stream({
-      model: MODEL,
+      model,
       max_tokens: MAX_TOKENS,
-      betas: ["server-side-fallback-2026-07-01"],
-      fallbacks: "default",
+      ...fallbackFor(model),
       thinking: { type: "adaptive" },
       output_config: { effort: "high", format: betaZodOutputFormat(PlannerTurnSchema) },
       system: SYSTEM,

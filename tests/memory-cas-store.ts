@@ -3,7 +3,7 @@ import type { CasNote } from "@/lib/db/schema"
 import type { PlanChange } from "@/lib/plan-service"
 
 /** An in-memory CasStore over the plan's change log from memoryRepo. */
-export function memoryCasStore(changes: PlanChange[], opts: { uncategorised?: number } = {}) {
+export function memoryCasStore(changes: PlanChange[], opts: { uncategorised?: number; lastCheckInAt?: string } = {}) {
   const snapshots: CasSnapshot[] = []
   const notes: CasNote[] = []
   const syncs: SyncMark[] = []
@@ -58,6 +58,9 @@ export function memoryCasStore(changes: PlanChange[], opts: { uncategorised?: nu
       if (!n) return null
       Object.assign(n, { resolvedAt: new Date().toISOString(), resolution })
       return structuredClone(n)
+    },
+    async lastCheckInAt() {
+      return opts.lastCheckInAt ?? null
     },
     async uncategorisedCount() {
       return opts.uncategorised ?? 0

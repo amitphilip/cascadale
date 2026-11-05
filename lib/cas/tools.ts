@@ -716,15 +716,18 @@ export const TOOLS: CasTool[] = [
     access: "control",
     description:
       "Ask Cas to take a fresh snapshot now (get_status then shows it). Runs in the background, debounced like the automatic runs: several calls in a minute or so make one run, about 90 seconds after the last. Doesn't change your finances.",
-    input: { reason: z.string().trim().max(200).optional().describe("Why, e.g. 'the user just moved money'") },
-    run: async ({ reason }) => {
+    input: {
+      reason: z.string().trim().max(200).optional().describe("Why, e.g. 'the user just moved money'"),
+      deep: z.boolean().optional().describe("A deep review on the most capable model (slower, costs more)"),
+    },
+    run: async ({ reason, deep }) => {
       if (!eventsConfigured()) {
         // no background runner here (e.g. local development): run it now instead
         const { runCasNow } = await import("@/lib/cas/run")
-        const { snapshot } = await runCasNow()
-        return { queued: false, ranNow: true, snapshotId: snapshot.id, status: snapshot.status }
+        const { snapshot } = await runCasNow({ deep })
+        return { queued: false, ranNow: true, snapshotId: snapshot.id, status: snapshot.status, model: snapshot.model }
       }
-      const sent = await emit({ name: "cas/refresh", data: { householdId: await getOwnerId(), reason } })
+      const sent = await emit({ name: "cas/refresh", data: { householdId: await getOwnerId(), reason, deep } })
       return { queued: sent.sent, ...(sent.sent ? { debounce: "90s" } : { error: sent.reason }) }
     },
   }),

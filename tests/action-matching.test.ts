@@ -1,5 +1,7 @@
 import { describe, expect, test } from "vitest"
 
+import { modelConfig } from "@/lib/cas/models"
+
 import { matchActions, type MatchTx } from "@/lib/action-matching"
 import type { PlanAction } from "@/lib/db/schema"
 import { loadStatus } from "@/lib/cas/status"
@@ -78,7 +80,7 @@ describe("after a sync", () => {
       store: cas.store,
       source: { ...h.ctx.figures, health: async () => buildDataHealth(healthInput()) },
       judge: null,
-      model: "claude-haiku-5-5",
+      models: modelConfig(new Map()),
       today: TODAY,
     })
     expect(matched.ticked).toEqual([1])
@@ -101,7 +103,7 @@ describe("after a sync", () => {
       store: cas.store,
       source: { ...h.ctx.figures, health: async () => buildDataHealth(healthInput()) },
       judge: null,
-      model: "claude-haiku-5-5",
+      models: modelConfig(new Map()),
       today: TODAY,
     }
     await runCas(deps)

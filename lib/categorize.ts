@@ -4,11 +4,12 @@ import Anthropic from "@anthropic-ai/sdk"
 import { z } from "zod"
 
 import { anthropicClient } from "@/lib/anthropic"
+import { modelFor } from "@/lib/cas/model-config"
+import { fallbackFor } from "@/lib/cas/models"
 import { COLUMNS, DbError, getDb, must, selectAll, type Db } from "@/lib/db"
 import type { AccountType, Category, Rule } from "@/lib/db/schema"
 import { buildMatcher, merchantKey } from "@/lib/rules"
 
-const MODEL = "claude-opus-5-5"
 /**
  * Merchants per LLM request. Input size isn't the constraint (1M context);
  * output is: each answer with its reason is ~40 tokens, plus thinking and
@@ -221,7 +222,7 @@ When you're done, call submit_categories once with an entry for every merchant i
 
 const SUBMIT = "submit_categories"
 
-async function classifyBatch(client: Anthropic, ctx: Context, batch: Merchant[]) {
+async function classifyBatch(client: Anthropic, model: string, ctx: Context, batch: Merchant[]) {
   const names = [...ctx.categories.map((c) => c.name), UNKNOWN]
   const Result = z.object({
     results: z.array(
@@ -235,7 +236,8 @@ async function classifyBatch(client: Anthropic, ctx: Context, batch: Merchant[])
   })
   const tools: Anthropic.Beta.BetaToolUnion[] = [
     {
-      type: "web_search_20260209",
+      // the dynamic-filtering variant needs Opus or Sonnet; Haiku takes the basic one
+      type: model.startsWith("claude-haiku") ? "web_search_20250305" : "web_search_20260209",
       name: "web_search",
       max_uses: Math.min(50, Math.max(5, Math.ceil(batch.length / 4))),
       ...(ctx.country && { user_location: { type: "approximate" as const, country: ctx.country } }),
@@ -277,10 +279,9 @@ async function classifyBatch(client: Anthropic, ctx: Context, batch: Merchant[])
   // without the submit call. Resume a few times, appending only.
   for (let turn = 0; turn < 6; turn++) {
     const stream = client.beta.messages.stream({
-      model: MODEL,
+      model,
       max_tokens: MAX_TOKENS,
-      betas: ["server-side-fallback-2026-07-01"],
-      fallbacks: "default",
+      ...fallbackFor(model),
       thinking: { type: "adaptive" },
       output_config: { effort: "high" },
       system: [{ type: "text", text: systemPrompt(ctx), cache_control: { type: "ephemeral" } }],
@@ -427,12 +428,13 @@ export async function autoCategorize(): Promise<AutoCategorizeResult> {
   }
 
   const client = await anthropicClient()
+  const model = await modelFor("categorise")
   const list = [...merchants.values()]
   const batches: Merchant[][] = []
   for (let i = 0; i < list.length; i += BATCH_SIZE) batches.push(list.slice(i, i + BATCH_SIZE))
 
   // Batches run in parallel; a failed one doesn't discard the others.
-  const settled = await Promise.allSettled(batches.map((b) => classifyBatch(client, ctx, b)))
+  const settled = await Promise.allSettled(batches.map((b) => classifyBatch(client, model, ctx, b)))
   const errors: string[] = []
   for (const res of settled) {
     if (res.status === "rejected") {
