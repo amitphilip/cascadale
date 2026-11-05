@@ -120,3 +120,35 @@ describe("Cas's background run", () => {
     expect(kept).toHaveLength(1)
   })
 })
+
+describe("get_status", () => {
+  test("is stale until Cas runs after a new change or sync, and says what's newer", async () => {
+    const { loadStatus } = await import("@/lib/cas/status")
+    const h = harness()
+    const w = worker(h)
+    expect((await loadStatus(w.store)).is_stale).toBe(true)
+
+    await w.run()
+    expect((await loadStatus(w.store)).is_stale).toBe(false)
+
+    w.syncs.push({ at: "2099-01-01T00:00:00Z", runId: "run-2" })
+    const afterSync = await loadStatus(w.store)
+    expect(afterSync.is_stale).toBe(true)
+    expect(afterSync.newer.syncs).toEqual([{ at: "2099-01-01T00:00:00Z", syncRunId: "run-2" }])
+
+    await w.run()
+    await h.call("add_plan_action", { title: "Ring the bank" })
+    const afterChange = await loadStatus(w.store)
+    expect(afterChange.is_stale).toBe(true)
+    expect(afterChange.newer.changes.map((c) => c.action)).toEqual(["add_plan_action"])
+  })
+
+  test("answers from stored rows alone, well under a second", async () => {
+    const { loadStatus } = await import("@/lib/cas/status")
+    const w = worker(harness())
+    await w.run()
+    const started = performance.now()
+    await loadStatus(w.store)
+    expect(performance.now() - started).toBeLessThan(50)
+  })
+})

@@ -18,10 +18,13 @@ import {
 } from "@/app/actions"
 import { getAkahuOverview, type AkahuOverview } from "@/lib/akahu"
 import { planTools, toolFigures, type PlanToolContext } from "@/lib/cas/plan-tools"
+import { loadStatus } from "@/lib/cas/status"
+import { casStore } from "@/lib/cas/store-db"
 import { tool, isoDate, type CasTool } from "@/lib/cas/tool"
+import { emit, eventsConfigured } from "@/lib/events"
 import { loadDataHealth } from "@/lib/data-health"
 import { buildStats } from "@/lib/checkin"
-import { COLUMNS, getDb, must } from "@/lib/db"
+import { COLUMNS, getDb, getOwnerId, must } from "@/lib/db"
 import { ASSET_KINDS, NOTE_KINDS, type CasNote } from "@/lib/db/schema"
 import { buildNetWorth } from "@/lib/net-worth"
 import { describeSimulation, simulate } from "@/lib/plan"
@@ -161,6 +164,15 @@ const PLAN_CONTEXT = planToolContext("mcp")
 const PLAN_TOOLS = planTools(PLAN_CONTEXT)
 
 export const TOOLS: CasTool[] = [
+  tool({
+    name: "get_status",
+    title: "How we're going",
+    access: "read",
+    description:
+      "Fast: Cas's latest state of play, written in the background after every sync and plan change, without running a model. snapshot has status (on_track, watch, off_track), headline, goalGap, lowPoint, topActions (linked to plan action ids), warnings (drift, stale feeds, uncategorised), proposals and the figures it's built from, plus the model and when it ran. is_stale is true when a sync or change came after it, and newer lists them; Cas is already catching up, or call refresh_cas. Use this first for 'how are we going'.",
+    run: async () => loadStatus(await casStore()),
+  }),
+
   tool({
     name: "get_briefing",
     title: "Briefing",
@@ -613,4 +625,23 @@ export const TOOLS: CasTool[] = [
   }),
 
   ...PLAN_TOOLS.filter((t) => t.access === "action"),
+
+  tool({
+    name: "refresh_cas",
+    title: "Refresh Cas's snapshot",
+    access: "control",
+    description:
+      "Ask Cas to take a fresh snapshot now (get_status then shows it). Runs in the background, debounced like the automatic runs: several calls in a minute or so make one run, about 90 seconds after the last. Doesn't change your finances.",
+    input: { reason: z.string().trim().max(200).optional().describe("Why, e.g. 'the user just moved money'") },
+    run: async ({ reason }) => {
+      if (!eventsConfigured()) {
+        // no background runner here (e.g. local development): run it now instead
+        const { runCasNow } = await import("@/lib/cas/run")
+        const { snapshot } = await runCasNow()
+        return { queued: false, ranNow: true, snapshotId: snapshot.id, status: snapshot.status }
+      }
+      const sent = await emit({ name: "cas/refresh", data: { householdId: await getOwnerId(), reason } })
+      return { queued: sent.sent, ...(sent.sent ? { debounce: "90s" } : { error: sent.reason }) }
+    },
+  }),
 ]

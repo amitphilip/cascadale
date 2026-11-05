@@ -92,7 +92,7 @@ async function runAgent(
 export async function askCas(question: string, context?: string, health?: DataHealth) {
   const used: string[] = []
   const tools = runnable(
-    TOOLS.filter((t) => t.access !== "action"),
+    TOOLS.filter((t) => t.access === "read" || t.access === "memory"),
     (t) => used.push(t.name)
   )
 
@@ -179,7 +179,7 @@ export async function planChat(
   }
   const tools = runnable(
     [
-      ...TOOLS.filter((t) => t.access !== "action" || CHAT_ACTIONS.includes(t.name)),
+      ...TOOLS.filter((t) => t.access === "read" || t.access === "memory" || CHAT_ACTIONS.includes(t.name)),
       ...plan,
       ...(base ? [setText] : []),
     ],

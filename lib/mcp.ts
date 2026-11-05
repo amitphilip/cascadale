@@ -28,17 +28,18 @@ const ACTION_NAMES = TOOLS.filter((t) => t.access === "action").map((t) => t.nam
 
 const TOOLS_INSTRUCTIONS = `Cascadale is the user's budgeting app: bank accounts synced from Akahu, transactions, categories and budgets, recurring bills, a savings plan and check-ins. These tools read that data and act on it directly, through the same services and database as the website.
 
-- get_briefing is the best single overview; the other read tools answer specific questions.
+- For "how are we going" questions, call get_status first: Cas's latest state of play, written in the background after every sync and plan change, returned in well under a second. If is_stale is true, say what's newer and that Cas is catching up (or call refresh_cas).
+- Use the raw read tools for facts (balances, transactions, the plan). get_briefing is the fullest single overview. Their figures (goal gap, low point, drift) are the same numbers get_status is built from.
 - These tools change the user's real finances: ${ACTION_NAMES.join(", ")}. Confirm with the user before calling one, and tell them what changed from the tool's result.
 - Check data_health (on get_briefing, get_overview, get_plan and run_check_in) before relying on numbers: name stale accounts and drift from the bank, rather than answering as if the data were current.
 - The plan is the one on the website's Plan page. To change it, use upsert_pot / remove_pot (pots and set-asides) and add_plan_adjustment / remove_plan_adjustment (one-off changes on a date). These take effect at once: the plan is always today's data with every pot and adjustment applied, and there is nothing to rebuild. try_plan_change runs a change through the simulation without saving it. When get_plan lists unappliedDecisions, offer to carry them out. Pass a fresh operationId with every write; retrying with the same one is safe.
 - The Plan page also has action items, things to do ticked off as done. Use list_plan_actions, add_plan_action, set_plan_action_done and remove_plan_action; when you do something the user confirmed that matches an open one, tick it off.
-- For advice (how am I doing, what should I do, can I afford X), use the Cas connector's ask_cas if it's connected; it recommends actions that you run here.
+- Use the Cas connector's ask_cas only for new judgement questions (can we afford X, what should we change, trade-offs) that get_status and the raw tools don't answer; it's slower because it runs a model.
 - Every response carries the household's currency and locale; amounts are in that currency. Transaction amounts are signed: negative is money out.`
 
-const CAS_INSTRUCTIONS = `Cas is the user's financial advisor and accountant for their budgeting app, Cascadale. It investigates their accounts, bank feed syncs, transactions, budgets, recurring bills and plan on its own, remembers earlier conversations through its notes, and answers with what's going on and what can or should be done.
+const CAS_INSTRUCTIONS = `Cas is the user's financial advisor and accountant for their budgeting app, Cascadale. It runs in the background after every sync and plan change and writes a state of play, which the Cascadale connector's get_status returns instantly. ask_cas runs it live: it investigates their accounts, bank feed syncs, transactions, budgets, recurring bills and plan, remembers earlier conversations through its notes, and answers with what's going on and what can or should be done.
 
-- Call ask_cas for open questions: how am I doing, what needs attention, can I afford X, explain my spending, plan for a goal. Pass what you know from the conversation as context, and tell it about decisions the user makes.
+- For "how are we going", use get_status on the Cascadale connector first; it's instant and current. Call ask_cas for new judgement questions: can I afford X, what should we change, trade-offs, explain my spending, plan for a goal. Pass what you know from the conversation as context, and tell it about decisions the user makes.
 - Cas doesn't change the user's data. The actions it recommends (e.g. upsert_pot, add_plan_adjustment, categorize_merchant) are tools on the Cascadale connector: offer them to the user and run them there once confirmed, then resolve the matching to-do here with resolve_note.
 - When the user decides something that changes the plan, tell Cas; it records the decision and the Plan page lists it as waiting until a plan change carries it out (pass the decision's id as decisionIds).
 - ask_cas returns data_health alongside the answer; mention stale or drifted data to the user.
@@ -85,7 +86,10 @@ function register(server: McpServer, t: CasTool, name = t.name) {
 /** Cascadale: every read and action tool. */
 function createToolsServer() {
   const server = new McpServer(
-    { name: "cascadale", title: "Cascadale", version: "0.1.0" },
+    // Version notes (existing responses only ever gain fields):
+    // 0.2.0: get_status and refresh_cas; figures on get_plan and get_briefing; plan action
+    //   writes take an optional operationId and reason
+    { name: "cascadale", title: "Cascadale", version: "0.2.0" },
     { instructions: TOOLS_INSTRUCTIONS }
   )
   for (const t of TOOLS) if (t.access !== "memory") register(server, t)
