@@ -89,7 +89,10 @@ export function planFigures({
     /** the lowest everything but loans gets, combined, with the plan applied */
     lowPoint: low && { date: low.date, amount: low.balance },
     spareCash: spare && { amount: spare.amount, lowestOn: spare.date },
-    overdrafts: sim.overdrafts,
+    overdrafts: sim.overdrafts.map((o) => ({
+      ...o,
+      account: live.snapshot.accounts.find((a) => a.id === o.accountId)?.name ?? `#${o.accountId}`,
+    })),
     drift: health?.drift ?? [],
     staleAccounts: health?.staleAccounts ?? [],
     actions: actions
