@@ -13,7 +13,10 @@ import {
   spareCash,
   type CategorySpend,
 } from "@/lib/plan-budget"
+import type { PlanAction } from "@/lib/db/schema"
+import type { DataHealth } from "@/lib/health"
 import { endPosition } from "@/lib/plan-goal"
+import { goalFor, planFigures, type Tx } from "@/lib/plan-figures"
 import {
   adjustmentEvents,
   applyPots,
@@ -62,6 +65,8 @@ export type PlanRecord = {
   plan: Plan
 }
 
+export type NewPlanAction = Pick<PlanAction, "title" | "detail" | "dueDate" | "focusTitle" | "createdBy">
+
 /** A decision Cas noted that changes the plan, not yet applied to it. */
 export type PlanDecision = { id: number; content: string; createdAt: string }
 
@@ -85,6 +90,14 @@ export interface PlanRepo {
   removeAdjustment(id: number, by: Actor, reason: string | null): Promise<AdjustmentInstruction | null>
 
   latestPlan(): Promise<PlanRecord | null>
+  /** the latest plan you started yourself, which sets the goal */
+  goalPlan(): Promise<PlanRecord | null>
+
+  listActions(includeDone: boolean): Promise<PlanAction[]>
+  addAction(a: NewPlanAction): Promise<PlanAction>
+  /** null when there's no such action */
+  setActionDone(id: number, done: boolean): Promise<PlanAction | null>
+  removeAction(id: number): Promise<PlanAction | null>
 
   openDecisions(): Promise<PlanDecision[]>
   applyDecisions(ids: number[], changeId: number): Promise<PlanDecision[]>
@@ -666,4 +679,100 @@ export async function checkPurchase(
     end: { before: endPosition(snapshot, plan), after: endPosition(now.snap, plan) },
     newOverdrafts: newOverdrafts.map((o) => ({ account: name(o.accountId), date: o.date, lowest: o.lowest })),
   }
+}
+
+// ── Action items ─────────────────────────────────────────────────────────────
+
+export type PlanActionInput = {
+  title: string
+  detail?: string | null
+  dueDate?: string | null
+  /** the plan's focus item it came from */
+  focusTitle?: string | null
+}
+
+/** A write's meta where the operation id may be left out: one is made up, so it runs once. */
+export type OptionalMeta = Omit<WriteMeta, "operationId"> & { operationId?: string }
+const withId = <T extends OptionalMeta>(input: T): T & WriteMeta => ({
+  ...input,
+  operationId: input.operationId?.trim() || crypto.randomUUID(),
+})
+
+/** Put an action item on the Plan page. A title that's already open returns that item. */
+export async function addPlanAction(deps: PlanDeps, input: PlanActionInput & OptionalMeta) {
+  const title = input.title.trim()
+  if (!title) throw new Error("Describe the action")
+  if (input.dueDate && !/^\d{4}-\d{2}-\d{2}$/.test(input.dueDate)) throw new Error("Due date is yyyy-MM-dd")
+  const same = (await deps.repo.listActions(false)).find((a) => a.title.toLowerCase() === title.toLowerCase())
+  if (same) return { id: same.id, existing: true }
+  return once(deps, "add_plan_action", withId(input), async () => {
+    const after = await deps.repo.addAction({
+      title,
+      detail: input.detail?.trim() || null,
+      dueDate: input.dueDate || null,
+      focusTitle: input.focusTitle?.trim() || null,
+      createdBy: deps.actor,
+    })
+    return {
+      summary: `Added action: ${title}`,
+      result: { id: after.id, changed: { action: { before: null, after } } },
+    }
+  })
+}
+
+export async function setPlanActionDone(
+  deps: PlanDeps,
+  input: { actionId: number; done: boolean } & OptionalMeta
+) {
+  return once(deps, "set_plan_action_done", withId(input), async () => {
+    const before = (await deps.repo.listActions(true)).find((a) => a.id === input.actionId)
+    if (!before) throw new Error(`No action ${input.actionId}; list_plan_actions shows them`)
+    const after = await deps.repo.setActionDone(input.actionId, input.done)
+    return {
+      summary: `${input.done ? "Done" : "Reopened"}: ${before.title}`,
+      result: { changed: { action: { before, after } } },
+    }
+  })
+}
+
+export async function removePlanAction(deps: PlanDeps, input: { actionId: number } & OptionalMeta) {
+  return once(deps, "remove_plan_action", withId(input), async () => {
+    const before = await deps.repo.removeAction(input.actionId)
+    if (!before) throw new Error(`No action ${input.actionId}; list_plan_actions shows them`)
+    return {
+      summary: `Removed action: ${before.title}`,
+      result: { changed: { action: { before, after: null } } },
+    }
+  })
+}
+
+// ── Figures ──────────────────────────────────────────────────────────────────
+
+/** What the figures need beyond the plan: today's balances and every transaction. */
+export type FigureSource = {
+  balances: () => Promise<Map<number, number>>
+  txs: () => Promise<Tx[]>
+  health: () => Promise<DataHealth | null>
+}
+
+/** The plan's headline numbers as they stand today (see lib/plan-figures.ts). */
+export async function loadFigures(deps: Pick<PlanDeps, "repo" | "loadSnapshot">, source: FigureSource, today: string) {
+  const [live, started, balances, txs, health, actions] = await Promise.all([
+    livePlan(deps),
+    deps.repo.goalPlan(),
+    source.balances(),
+    source.txs(),
+    source.health(),
+    deps.repo.listActions(false),
+  ])
+  if (!live) return null
+  const goal = goalFor({
+    started: started && { snapshot: started.snapshot, plan: started.plan },
+    base: { snapshot: live.base.snapshot, plan: live.base.plan },
+    live,
+    balances,
+    txs,
+    today,
+  })
+  return planFigures({ live, goal, health, actions, today })
 }

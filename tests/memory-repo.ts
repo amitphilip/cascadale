@@ -1,3 +1,4 @@
+import type { PlanAction } from "@/lib/db/schema"
 import type { Actor, AdjustmentInstruction, PotInstruction } from "@/lib/plan-instructions"
 import type { PlanChange, PlanDecision, PlanRecord, PlanRepo } from "@/lib/plan-service"
 
@@ -13,7 +14,9 @@ function without<T extends object, K extends keyof T>(row: T, key: K): Omit<T, K
   return out
 }
 
-export function memoryRepo(seed: { plan?: Omit<PlanRecord, "id" | "threadId">; decisions?: string[] } = {}) {
+export function memoryRepo(
+  seed: { plan?: Omit<PlanRecord, "id" | "threadId">; decisions?: string[]; actions?: Partial<PlanAction>[] } = {}
+) {
   let clock = Date.parse("2026-10-28T09:00:00Z")
   const now = () => new Date((clock += 1000)).toISOString()
   let ids = 0
@@ -30,6 +33,17 @@ export function memoryRepo(seed: { plan?: Omit<PlanRecord, "id" | "threadId">; d
     appliedAt: null as string | null,
   }))
   if (seed.plan) plans.push({ ...seed.plan, id: nextId(), threadId: nextId() })
+  const actions: PlanAction[] = (seed.actions ?? []).map((a) => ({
+    id: nextId(),
+    title: "Action",
+    detail: null,
+    dueDate: null,
+    focusTitle: null,
+    createdBy: "website",
+    doneAt: null,
+    createdAt: now(),
+    ...a,
+  }))
 
   const repo: PlanRepo = {
     async claim({ operationId, actor, action, reason }) {
@@ -91,6 +105,27 @@ export function memoryRepo(seed: { plan?: Omit<PlanRecord, "id" | "threadId">; d
     async latestPlan() {
       return plans.at(-1) ? structuredClone(plans.at(-1)!) : null
     },
+    async goalPlan() {
+      return plans[0] ? structuredClone(plans[0]) : null
+    },
+    async listActions(includeDone) {
+      return structuredClone(actions.filter((a) => includeDone || a.doneAt === null))
+    },
+    async addAction(a) {
+      const row: PlanAction = { ...a, id: nextId(), doneAt: null, createdAt: now() }
+      actions.push(row)
+      return structuredClone(row)
+    },
+    async setActionDone(id, done) {
+      const a = actions.find((x) => x.id === id)
+      if (!a) return null
+      a.doneAt = done ? now() : null
+      return structuredClone(a)
+    },
+    async removeAction(id) {
+      const i = actions.findIndex((x) => x.id === id)
+      return i < 0 ? null : actions.splice(i, 1)[0]
+    },
     async openDecisions(): Promise<PlanDecision[]> {
       return decisions.filter((d) => d.appliedAt === null).map((d) => without(d, "appliedAt"))
     },
@@ -100,7 +135,7 @@ export function memoryRepo(seed: { plan?: Omit<PlanRecord, "id" | "threadId">; d
       return out.map((d) => without(d, "appliedAt"))
     },
   }
-  return { repo, changes, pots, adjustments, plans, decisions }
+  return { repo, changes, pots, adjustments, plans, decisions, actions }
 }
 
 export const ACTOR: Actor = "mcp"

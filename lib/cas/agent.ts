@@ -7,12 +7,10 @@ import { anthropicClient } from "@/lib/anthropic"
 import { describeError } from "@/lib/categorize"
 import { planTools } from "@/lib/cas/plan-tools"
 import type { CasTool } from "@/lib/cas/tool"
-import { addPlanActionTool, TOOLS } from "@/lib/cas/tools"
+import { planToolContext, TOOLS } from "@/lib/cas/tools"
 import { loadDataHealth } from "@/lib/data-health"
 import type { DataHealth } from "@/lib/health"
 import { PlanSchema, type Plan } from "@/lib/plan"
-import { planDeps } from "@/lib/plan-repo"
-import { getCategorySpend } from "@/lib/queries"
 import { todayLocal } from "@/supabase/functions/_shared/akahu"
 
 const MODEL = "claude-opus-5-5"
@@ -123,14 +121,8 @@ export async function askCas(question: string, context?: string, health?: DataHe
   }
 }
 
-/** What Cas can do from its chat: the plan, its to-do list, upcoming one-offs and category budgets. */
-const CHAT_ACTIONS = [
-  "add_plan_action",
-  "set_plan_action_done",
-  "remove_plan_action",
-  "add_upcoming_expense",
-  "set_category_budgets",
-]
+/** What Cas can do from its chat besides the plan and its to-do list (planTools, as cas). */
+const CHAT_ACTIONS = ["add_upcoming_expense", "set_category_budgets"]
 
 const CHAT_SYSTEM = `You are Cas, the financial accountant and manager for one person or household, talking with them directly in the chat beside their Plan page in their private budgeting app. You keep the books, you run the plan, and you're the one they check with before spending: say yes, wait or no, and keep the plan in line with what they decide.
 
@@ -172,11 +164,7 @@ export async function planChat(
 ) {
   let wrote = false
   let revised: Pick<Plan, "summary" | "focus"> | null = null
-  const plan = planTools({
-    deps: () => planDeps("cas"),
-    health: () => loadDataHealth(),
-    categorySpend: getCategorySpend,
-  }).filter((t) => t.access === "action")
+  const plan = planTools(planToolContext("cas")).filter((t) => t.access === "action")
   const setText: CasTool = {
     name: "set_plan_text",
     title: "Set the plan's headline",
@@ -191,9 +179,7 @@ export async function planChat(
   }
   const tools = runnable(
     [
-      ...TOOLS.filter((t) => t.access !== "action" || CHAT_ACTIONS.includes(t.name)).map((t) =>
-        t.name === "add_plan_action" ? addPlanActionTool("cas") : t
-      ),
+      ...TOOLS.filter((t) => t.access !== "action" || CHAT_ACTIONS.includes(t.name)),
       ...plan,
       ...(base ? [setText] : []),
     ],

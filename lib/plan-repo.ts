@@ -1,10 +1,11 @@
 import "server-only"
 
-import { DbError, getDb, must, type Db } from "@/lib/db"
+import { COLUMNS, DbError, getDb, must, type Db } from "@/lib/db"
+import type { PlanAction } from "@/lib/db/schema"
 import type { PlanSnapshot } from "@/lib/plan"
 import type { Actor, AdjustmentInstruction, PotInstruction } from "@/lib/plan-instructions"
-import { getPlanThread } from "@/lib/queries"
-import type { PlanChange, PlanDeps, PlanRepo } from "@/lib/plan-service"
+import { getGoalThread, getPlanThread } from "@/lib/queries"
+import type { PlanChange, PlanDeps, PlanRecord, PlanRepo } from "@/lib/plan-service"
 import { loadSnapshot } from "@/lib/planner"
 
 // The plan service's tables (plan_pots, plan_adjustments, plan_changes, plan_threads and
@@ -133,18 +134,44 @@ export function supabasePlanRepo(db: Db): PlanRepo {
       return row ? adjustment(row) : null
     },
 
-    async latestPlan() {
-      const thread = await getPlanThread()
-      const message = thread?.messages.findLast((m) => m.plan)
-      if (!thread || !message?.plan) return null
-      return {
-        id: message.id,
-        threadId: thread.id,
-        createdAt: message.createdAt,
-        madeBy: thread.madeBy,
-        snapshot: thread.snapshot,
-        plan: message.plan,
-      }
+    latestPlan: async () => planRecord(await getPlanThread()),
+    goalPlan: async () => planRecord(await getGoalThread()),
+
+    listActions(includeDone) {
+      let query = db.from("plan_actions").select(COLUMNS.planActions).order("id").limit(500)
+      if (!includeDone) query = query.is("done_at", null)
+      return must<PlanAction[]>(query)
+    },
+    addAction(a) {
+      return must<PlanAction>(
+        db
+          .from("plan_actions")
+          .insert({
+            title: a.title,
+            detail: a.detail,
+            due_date: a.dueDate,
+            focus_title: a.focusTitle,
+            created_by: a.createdBy,
+          })
+          .select(COLUMNS.planActions)
+          .single()
+      )
+    },
+    async setActionDone(id, done) {
+      const [row] = await must<PlanAction[]>(
+        db
+          .from("plan_actions")
+          .update({ done_at: done ? new Date().toISOString() : null })
+          .eq("id", id)
+          .select(COLUMNS.planActions)
+      )
+      return row ?? null
+    },
+    async removeAction(id) {
+      const [row] = await must<PlanAction[]>(
+        db.from("plan_actions").delete().eq("id", id).select(COLUMNS.planActions)
+      )
+      return row ?? null
     },
 
     openDecisions() {
@@ -171,6 +198,22 @@ export function supabasePlanRepo(db: Db): PlanRepo {
           .select("id, content, createdAt:created_at")
       )
     },
+  }
+}
+
+type Thread = Awaited<ReturnType<typeof getPlanThread>>
+
+/** A thread's latest plan message, with the snapshot it was made on. */
+function planRecord(thread: Thread): PlanRecord | null {
+  const message = thread?.messages.findLast((m) => m.plan)
+  if (!thread || !message?.plan) return null
+  return {
+    id: message.id,
+    threadId: thread.id,
+    createdAt: message.createdAt,
+    madeBy: thread.madeBy,
+    snapshot: thread.snapshot,
+    plan: message.plan,
   }
 }
 

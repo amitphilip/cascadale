@@ -1,33 +1,31 @@
 import "server-only"
 
-import { differenceInCalendarDays, differenceInHours, parseISO } from "date-fns"
+import { differenceInHours, parseISO } from "date-fns"
 import { z } from "zod"
 
 import {
   categorizeMerchant,
   checkIn,
-  addPlanAction,
   deleteAsset,
-  deletePlanAction,
   reconcileAccount,
   runAutoCategorize,
   saveAsset,
   saveUpcomingExpense,
   setCategoryBudgets,
-  setPlanActionDone,
   setTransactionCategory,
   syncAkahu,
   type ActionResult,
 } from "@/app/actions"
 import { getAkahuOverview, type AkahuOverview } from "@/lib/akahu"
-import { planTools } from "@/lib/cas/plan-tools"
+import { planTools, toolFigures, type PlanToolContext } from "@/lib/cas/plan-tools"
 import { tool, isoDate, type CasTool } from "@/lib/cas/tool"
 import { loadDataHealth } from "@/lib/data-health"
 import { buildStats } from "@/lib/checkin"
 import { COLUMNS, getDb, must } from "@/lib/db"
-import { ASSET_KINDS, NOTE_KINDS, type CasNote, type PlanAction } from "@/lib/db/schema"
+import { ASSET_KINDS, NOTE_KINDS, type CasNote } from "@/lib/db/schema"
 import { buildNetWorth } from "@/lib/net-worth"
 import { describeSimulation, simulate } from "@/lib/plan"
+import { actionStatus } from "@/lib/plan-figures"
 import { livePlan, planStatus } from "@/lib/plan-service"
 import { planDeps } from "@/lib/plan-repo"
 import { loadSnapshot } from "@/lib/planner"
@@ -45,12 +43,14 @@ import {
   getRuleReview,
   getSettings,
   getStatements,
+  getTransactionAmounts,
   getTransactions,
   getUncategorizedMerchants,
   getUpcomingExpenses,
   PAGE_SIZE,
 } from "@/lib/queries"
 import { localDate, todayLocal } from "@/supabase/functions/_shared/akahu"
+import type { Actor } from "@/lib/plan-instructions"
 
 export type { CasTool }
 
@@ -127,58 +127,38 @@ async function notes(includeResolved = false) {
   return must<CasNote[]>(query)
 }
 
-/** Days ahead a to-do counts as due soon. */
-const DUE_SOON_DAYS = 7
-
 /** The open plan action items, each flagged overdue or due soon against today. */
 async function openPlanActions() {
   const today = todayLocal()
-  const actions = await must<PlanAction[]>(
-    (await getDb()).from("plan_actions").select(COLUMNS.planActions).is("done_at", null).order("id").limit(200)
-  )
-  return actions.map(({ id, title, detail, dueDate, createdBy, createdAt }) => {
-    const days = dueDate ? differenceInCalendarDays(parseISO(dueDate), parseISO(today)) : null
-    return {
-      actionId: id,
-      title,
-      detail,
-      dueDate,
-      status: days === null ? "no_due_date" : days < 0 ? "overdue" : days <= DUE_SOON_DAYS ? "due_soon" : "later",
-      addedBy: createdBy,
-      addedOn: localDate(createdAt),
-    }
-  })
+  const actions = await (await planDeps("mcp")).repo.listActions(false)
+  return actions.map(({ id, title, detail, dueDate, createdBy, createdAt }) => ({
+    actionId: id,
+    title,
+    detail,
+    dueDate,
+    status: actionStatus(dueDate, today),
+    addedBy: createdBy,
+    addedOn: localDate(createdAt),
+  }))
 }
 
-/** add_plan_action, recording who added the item: Claude (mcp) or Cas in its chat. */
-export const addPlanActionTool = (by: "mcp" | "cas") =>
-  tool({
-    name: "add_plan_action",
-    title: "Add a plan action item",
-    access: "action",
-    description:
-      "Put an action item on the Plan page, e.g. 'Move $500 to the tax pot before 20 Nov'. Keep the title short and concrete, and put the numbers in the detail. Adding a title that's already open returns the existing item instead of a duplicate.",
-    input: {
-      title: z.string().trim().min(1).max(120),
-      detail: z.string().trim().optional().describe("One sentence of why or how, with the key number"),
-      dueDate: isoDate.optional(),
-    },
-    run: ({ title, detail, dueDate }) => {
-      const form = new FormData()
-      form.set("title", title)
-      if (detail) form.set("detail", detail)
-      if (dueDate) form.set("dueDate", dueDate)
-      form.set("createdBy", by)
-      return act(addPlanAction(form))
-    },
-  })
+/** Balances and transactions for the plan's figures, as the signed-in user. */
+export const FIGURE_SOURCE: NonNullable<PlanToolContext["figures"]> = {
+  balances: async () => new Map((await getAccountsWithBalances()).map((a) => [a.id, a.balance])),
+  txs: getTransactionAmounts,
+}
 
-/** The plan tools act as Claude (MCP); the Cas agent makes its own for the Plan page's chat. */
-const PLAN_TOOLS = planTools({
-  deps: () => planDeps("mcp"),
+/** The plan tools' context, acting as `actor`. */
+export const planToolContext = (actor: Actor): PlanToolContext => ({
+  deps: () => planDeps(actor),
   health: () => loadDataHealth(),
   categorySpend: getCategorySpend,
+  figures: FIGURE_SOURCE,
 })
+
+/** The plan tools act as Claude (MCP); the Cas agent makes its own for the Plan page's chat. */
+const PLAN_CONTEXT = planToolContext("mcp")
+const PLAN_TOOLS = planTools(PLAN_CONTEXT)
 
 export const TOOLS: CasTool[] = [
   tool({
@@ -186,7 +166,7 @@ export const TOOLS: CasTool[] = [
     title: "Briefing",
     access: "read",
     description:
-      "Start here. Everything happening right now in one call: bank feed health, what came in and went out since the last check-in against the usual pattern, the projected low point of your balances over the next 60 days, upcoming bills and one-offs, what needs categorizing, the last check-in's verdict and the plan's goal, Cas decisions still to carry out in the plan, the Plan page's open action items (each overdue, due_soon, later or no_due_date), and Cas's open notes and to-dos. Includes data_health: check it before relying on the numbers.",
+      "Start here. Everything happening right now in one call: bank feed health, what came in and went out since the last check-in against the usual pattern, the projected low point of your balances over the next 60 days, upcoming bills and one-offs, what needs categorizing, the last check-in's verdict and the plan's goal, Cas decisions still to carry out in the plan, the Plan page's open action items (each overdue, due_soon, later or no_due_date), the plan's figures (status, the goal's gap, the low point with the plan applied, spare cash, drift; the same numbers get_plan and the Plan page show), and Cas's open notes and to-dos. Includes data_health: check it before relying on the numbers.",
     run: async () => {
       const snap = await loadSnapshot()
       const overview = await getAkahuOverview().catch(
@@ -204,7 +184,7 @@ export const TOOLS: CasTool[] = [
           openPlanActions(),
           loadDataHealth(overview),
         ])
-      const plan = await planStatus(await planDeps("mcp"))
+      const [plan, figures] = await Promise.all([planStatus(await planDeps("mcp")), toolFigures(PLAN_CONTEXT)])
       return {
         today: todayLocal(),
         sync,
@@ -224,6 +204,7 @@ export const TOOLS: CasTool[] = [
           : null,
         plan,
         planActions: actions,
+        figures,
         openNotes: open,
         data_health: health,
       }
@@ -592,45 +573,6 @@ export const TOOLS: CasTool[] = [
     description: "Delete an asset by its assetId from get_net_worth, taking its value out of net worth.",
     input: { assetId: z.number().int().positive() },
     run: ({ assetId }) => act(deleteAsset(assetId)),
-  }),
-
-  tool({
-    name: "list_plan_actions",
-    title: "Plan action items",
-    access: "read",
-    description:
-      "The action items on the Plan page: things to do about the plan, each with an actionId, title, optional detail and dueDate, whether it's done (doneAt) and who added it. Check it before suggesting an action, so you don't repeat one that's already there. get_briefing already lists the open ones.",
-    input: { includeDone: z.boolean().optional().describe("Include finished items. Defaults to open ones only.") },
-    run: async ({ includeDone }) => {
-      let query = (await getDb())
-        .from("plan_actions")
-        .select(COLUMNS.planActions)
-        .order("id")
-        .limit(200)
-      if (!includeDone) query = query.is("done_at", null)
-      return { actions: await must<PlanAction[]>(query), today: todayLocal() }
-    },
-  }),
-
-  addPlanActionTool("mcp"),
-
-  tool({
-    name: "set_plan_action_done",
-    title: "Mark a plan action item done or not done",
-    access: "action",
-    description:
-      "Tick off a plan action item by its actionId from list_plan_actions, or reopen it with done false.",
-    input: { actionId: z.number().int().positive(), done: z.boolean() },
-    run: ({ actionId, done }) => act(setPlanActionDone(actionId, done)),
-  }),
-
-  tool({
-    name: "remove_plan_action",
-    title: "Remove a plan action item",
-    access: "action",
-    description: "Delete a plan action item by its actionId from list_plan_actions.",
-    input: { actionId: z.number().int().positive() },
-    run: ({ actionId }) => act(deletePlanAction(actionId)),
   }),
 
   tool({

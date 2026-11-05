@@ -71,7 +71,8 @@ import {
   pointBack,
 } from "@/lib/net-worth"
 import { categoryCosts, monthBudget, spareCash } from "@/lib/plan-budget"
-import { goalPlan, planGoal, type PlanGoal } from "@/lib/plan-goal"
+import { type PlanGoal } from "@/lib/plan-goal"
+import { goalFor } from "@/lib/plan-figures"
 import { planStanding, planVerdict, withGoal } from "@/lib/plan-verdict"
 import { getPlanState, withInstructions } from "@/lib/plan-service"
 import { planDeps } from "@/lib/plan-repo"
@@ -244,16 +245,13 @@ export default async function PlanPage({
   const from = pointBack(history, TREND_MONTHS)
   const waiting = state.unappliedDecisions.length > 0
   const startedPlan = started && latestPlan(started.messages)
-  const goal = planGoal({
-    goal: goalPlan(
-      startedPlan && { snapshot: started.snapshot, plan: startedPlan },
-      { snapshot: thread.snapshot, plan: base },
-      today
-    ),
-    latest: plan,
-    current: snap,
+  const goal = goalFor({
+    started: startedPlan && { snapshot: started.snapshot, plan: startedPlan },
+    base: { snapshot: thread.snapshot, plan: base },
+    live: { snapshot: snap, plan },
     balances: new Map(accounts.map((a) => [a.id, a.balance])),
     txs,
+    today,
   })
   const baseVerdict = planVerdict({
     sim,

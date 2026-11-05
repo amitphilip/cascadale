@@ -21,7 +21,7 @@ import {
   type PlanSnapshot,
 } from "@/lib/plan"
 import { latestPlan, loadSnapshot } from "@/lib/planner"
-import { goalPlan, planGoal } from "@/lib/plan-goal"
+import { goalFor } from "@/lib/plan-figures"
 import { supabasePlanRepo } from "@/lib/plan-repo"
 import { withInstructions } from "@/lib/plan-service"
 import {
@@ -173,16 +173,13 @@ export async function buildStats(snap: PlanSnapshot): Promise<CheckInStats> {
   const plan = live?.plan ?? null
   const goal =
     thread && base && live
-      ? planGoal({
-          goal: goalPlan(
-            startedPlan && { snapshot: started.snapshot, plan: startedPlan },
-            { snapshot: thread.snapshot, plan: base },
-            todayLocal()
-          ),
-          latest: live.plan,
-          current: live.snapshot,
+      ? goalFor({
+          started: startedPlan && { snapshot: started.snapshot, plan: startedPlan },
+          base: { snapshot: thread.snapshot, plan: base },
+          live,
           balances: new Map(balances.map((a) => [a.id, a.balance])),
           txs: allTxs,
+          today: todayLocal(),
         })
       : null
   const when = (incomeId: string) =>

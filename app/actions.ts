@@ -32,8 +32,11 @@ import {
 } from "@/lib/akahu"
 import { API_KEY_SETTING } from "@/lib/anthropic"
 import {
+  addPlanAction as addPlanActionService,
   removeAdjustment,
+  removePlanAction,
   removePot,
+  setPlanActionDone as setPlanActionDoneService,
   withInstructions,
 } from "@/lib/plan-service"
 import { planDeps } from "@/lib/plan-repo"
@@ -1132,47 +1135,36 @@ const planActionSchema = z.object({
     .transform((s) => s || null)
     .pipe(isoDate.nullable()),
   focusTitle: optionalText,
-  createdBy: z.enum(["website", "mcp", "cas"]).catch("website"),
 })
 
 export async function addPlanAction(form: FormData) {
   return run(async () => {
     const data = planActionSchema.parse(fields(form))
-    const db = await getDb()
-    // Adding what's already waiting to be done returns it, so a retry adds nothing twice.
-    const [same] = await must<{ id: number }[]>(
-      db.from("plan_actions").select("id").is("done_at", null).ilike("title", data.title.replace(/[\\%_]/g, "\\$&")).limit(1)
-    )
-    if (same) return { id: same.id }
-    return {
-      id: await insertId(db, "plan_actions", {
-        title: data.title,
-        detail: data.detail,
-        due_date: data.dueDate,
-        focus_title: data.focusTitle,
-        created_by: data.createdBy,
-      }),
-    }
+    const { id } = await addPlanActionService(await planDeps("website"), {
+      ...data,
+      reason: "Added on the Plan page",
+    })
+    return { id }
   })
 }
 
 export async function setPlanActionDone(actionId: number, done: boolean) {
   return run(async () => {
-    await must(
-      (await getDb())
-        .from("plan_actions")
-        .update({ done_at: done ? new Date().toISOString() : null })
-        .eq("id", id.parse(actionId))
-    )
+    await setPlanActionDoneService(await planDeps("website"), {
+      actionId: id.parse(actionId),
+      done,
+      reason: "Ticked on the Plan page",
+    })
     return {}
   })
 }
 
 export async function deletePlanAction(actionId: number) {
   return run(async () => {
-    await must(
-      (await getDb()).from("plan_actions").delete().eq("id", id.parse(actionId))
-    )
+    await removePlanAction(await planDeps("website"), {
+      actionId: id.parse(actionId),
+      reason: "Removed on the Plan page",
+    })
     return {}
   })
 }
