@@ -46,3 +46,28 @@ describe("plan action writes", () => {
     expect(h.changes).toHaveLength(1)
   })
 })
+
+describe("change log and plan/changed", () => {
+  test("each new write is told once, with before and after; a replay isn't", async () => {
+    const h = harness()
+    const told: number[] = []
+    h.deps.onChange = async (c) => void told.push(c.id)
+    const pot = { name: "Tax", amount: 200, frequency: "monthly", fromAccountId: 2 }
+    await h.call("upsert_pot", { operationId: "op-1", ...pot })
+    await h.call("upsert_pot", { operationId: "op-1", ...pot })
+    await h.call("upsert_pot", { operationId: "op-2", ...pot, amount: 250 })
+    expect(told).toEqual([h.changes[0].id, h.changes[1].id])
+    expect(h.changes[0]).toMatchObject({ before: null, after: { name: "Tax", amount: 200 } })
+    expect(h.changes[1]).toMatchObject({ before: { amount: 200 }, after: { amount: 250 } })
+  })
+
+  test("a failed event doesn't fail the write", async () => {
+    const h = harness()
+    h.deps.onChange = async () => {
+      throw new Error("Inngest is down")
+    }
+    const out = await h.call("add_plan_action", { title: "Ring the bank" })
+    expect(out.ok).toBe(true)
+    expect(h.changes[0].completedAt).not.toBeNull()
+  })
+})

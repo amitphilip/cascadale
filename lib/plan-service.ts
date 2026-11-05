@@ -52,7 +52,15 @@ export type PlanChange = {
   result: unknown
   createdAt: string
   completedAt: string | null
+  /** what the change touched, before and after */
+  before?: unknown
+  after?: unknown
+  proposalId?: number | null
+  transactionId?: number | null
 }
+
+/** What a change links to: the proposal it carries out, the transaction that prompted it. */
+export type ChangeLinks = { proposalId?: number | null; transactionId?: number | null }
 
 /** The last plan made with the model: the latest plan message and the snapshot it was made on. */
 export type PlanRecord = {
@@ -72,11 +80,11 @@ export type PlanDecision = { id: number; content: string; createdAt: string }
 
 export interface PlanRepo {
   /** Start a write: a new change row, or the existing one for this operation id. */
-  claim(c: { operationId: string; actor: Actor; action: string; reason: string | null }): Promise<{
+  claim(c: { operationId: string; actor: Actor; action: string; reason: string | null } & ChangeLinks): Promise<{
     change: PlanChange
     existing: boolean
   }>
-  complete(id: number, summary: string, result: unknown): Promise<void>
+  complete(id: number, summary: string, result: unknown, diff: { before: unknown; after: unknown }): Promise<void>
   /** Drop a change whose write failed, so the operation id can be retried. */
   release(id: number): Promise<void>
   listChanges(limit: number): Promise<PlanChange[]>
@@ -108,15 +116,37 @@ export type PlanDeps = {
   /** today's snapshot, built the same way the Plan page builds it */
   loadSnapshot: () => Promise<PlanSnapshot | null>
   actor: Actor
+  /** told of every new change once it's recorded (not replays); emits plan/changed */
+  onChange?: (change: PlanChange) => Promise<void>
 }
 
 /** A write's common inputs. */
-export type WriteMeta = {
+export type WriteMeta = ChangeLinks & {
   /** any unique string; the same id again returns the first result and changes nothing */
   operationId: string
   reason?: string | null
   /** Cas decisions this change carries out */
   decisionIds?: number[]
+}
+
+/** The before and after of what a write's result says it changed. */
+function diffOf(result: object) {
+  const changed = (result as { changed?: Record<string, { before?: unknown; after?: unknown }> }).changed
+  const first = changed && Object.values(changed)[0]
+  return { before: first?.before ?? null, after: first?.after ?? null }
+}
+
+/**
+ * Record a change and run its write once per operation id (see once). For writes outside the
+ * plan's own tables, such as a recategorisation Cas proposed and you approved.
+ */
+export function recordChange<T extends object>(
+  deps: PlanDeps,
+  action: string,
+  meta: WriteMeta,
+  fn: () => Promise<{ summary: string; result: T }>
+) {
+  return once(deps, action, meta, fn)
 }
 
 /**
@@ -136,6 +166,8 @@ async function once<T extends object>(
     actor: deps.actor,
     action,
     reason: meta.reason?.trim() || null,
+    proposalId: meta.proposalId ?? null,
+    transactionId: meta.transactionId ?? null,
   })
   if (existing) {
     if (change.action !== action)
@@ -152,7 +184,11 @@ async function once<T extends object>(
     // the write is in by now, so failing to report on it shouldn't undo the log of it
     const planNow = await planOutcome(deps).catch(() => null)
     const full = { ...result, appliedDecisions: decisions, planNow } as T
-    await deps.repo.complete(change.id, summary, full)
+    await deps.repo.complete(change.id, summary, full, diffOf(result))
+    // a failed event only delays Cas's next run; it mustn't fail the write
+    await deps.onChange?.({ ...change, summary, completedAt: new Date().toISOString() }).catch((err) =>
+      console.error("plan/changed not sent", err)
+    )
     return {
       ...full,
       change: changeRef({ ...change, summary, completedAt: new Date().toISOString() }),

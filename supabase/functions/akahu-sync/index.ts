@@ -247,6 +247,7 @@ async function adoptAccounts(userId: string, akahuAccounts: AkahuAccount[]) {
  * accounts were created or matched for Akahu accounts that had none.
  */
 async function syncUser(userId: string, runBy: RunBy, onlyAccountId?: number) {
+  const runId = crypto.randomUUID()
   const akahu = akahuApi(await tokensFor(userId))
   const akahuAccounts: AkahuAccount[] = await akahu.accounts()
   // A full sync first adds an account for any Akahu account without one.
@@ -307,6 +308,7 @@ async function syncUser(userId: string, runBy: RunBy, onlyAccountId?: number) {
           range_start: window.start,
           range_end: window.end,
           run_by: runBy,
+          run_id: runId,
         })
         .select("id")
         .single()
@@ -384,7 +386,40 @@ async function syncUser(userId: string, runBy: RunBy, onlyAccountId?: number) {
     }
   }
   const transfers = inserted > 0 ? await categorizeTransfers(userId) : 0
-  return { inserted, categorized: categorized + transfers, failed, ...adopted }
+  if (failed.length < linked.length) await notifySynced(userId, runId, inserted)
+  return { inserted, categorized: categorized + transfers, failed, ...adopted, runId }
+}
+
+/**
+ * Tell Cas's worker a sync finished (feeds/synced, through Inngest), so it ticks off
+ * finished action items and takes a fresh snapshot. Needs INNGEST_EVENT_KEY (or
+ * INNGEST_BASE_URL for the local dev server); a failure is logged, never fatal.
+ */
+async function notifySynced(userId: string, runId: string, inserted: number) {
+  const key = Deno.env.get("INNGEST_EVENT_KEY")
+  const base = Deno.env.get("INNGEST_BASE_URL") ?? "https://inn.gs"
+  if (!key && !Deno.env.get("INNGEST_BASE_URL")) return
+  try {
+    const [latest] = await must<{ created_at: string }[]>(
+      db
+        .from("transactions")
+        .select("created_at")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+    )
+    const res = await fetch(`${base}/e/${key ?? "dev"}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "feeds/synced",
+        data: { householdId: userId, syncRunId: runId, latestTransactionAt: latest?.created_at ?? null, inserted },
+      }),
+    })
+    if (!res.ok) console.error("feeds/synced not sent", res.status, await res.text())
+  } catch (err) {
+    console.error("feeds/synced not sent", err)
+  }
 }
 
 /**

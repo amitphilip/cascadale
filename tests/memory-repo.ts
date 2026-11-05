@@ -46,7 +46,7 @@ export function memoryRepo(
   }))
 
   const repo: PlanRepo = {
-    async claim({ operationId, actor, action, reason }) {
+    async claim({ operationId, actor, action, reason, proposalId, transactionId }) {
       const existing = changes.find((c) => c.operationId === operationId)
       if (existing) return { change: existing, existing: true }
       const change: PlanChange = {
@@ -59,13 +59,15 @@ export function memoryRepo(
         result: null,
         createdAt: now(),
         completedAt: null,
+        proposalId: proposalId ?? null,
+        transactionId: transactionId ?? null,
       }
       changes.push(change)
       return { change, existing: false }
     },
-    async complete(id, summary, result) {
+    async complete(id, summary, result, diff) {
       const c = changes.find((x) => x.id === id)!
-      Object.assign(c, { summary, result: structuredClone(result), completedAt: now() })
+      Object.assign(c, { summary, result: structuredClone(result), ...structuredClone(diff), completedAt: now() })
     },
     async release(id) {
       changes.splice(changes.findIndex((c) => c.id === id), 1)

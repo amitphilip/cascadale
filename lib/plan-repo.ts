@@ -1,6 +1,7 @@
 import "server-only"
 
-import { COLUMNS, DbError, getDb, must, type Db } from "@/lib/db"
+import { COLUMNS, DbError, getDb, getOwnerId, must, type Db } from "@/lib/db"
+import { emit } from "@/lib/events"
 import type { PlanAction } from "@/lib/db/schema"
 import type { PlanSnapshot } from "@/lib/plan"
 import type { Actor, AdjustmentInstruction, PotInstruction } from "@/lib/plan-instructions"
@@ -17,7 +18,7 @@ const POT_COLUMNS =
 const ADJUSTMENT_COLUMNS =
   "id, date, kind, target, ref, name, amount, fromAccountId:from_account_id, toAccountId:to_account_id, createdBy:created_by, createdAt:created_at, reason"
 const CHANGE_COLUMNS =
-  "id, operationId:operation_id, actor, action, reason, summary, result, createdAt:created_at, completedAt:completed_at"
+  "id, operationId:operation_id, actor, action, reason, summary, result, createdAt:created_at, completedAt:completed_at, transactionId:transaction_id"
 
 const pot = (r: PotInstruction): PotInstruction => ({ ...r, amount: Number(r.amount) })
 const adjustment = (r: AdjustmentInstruction): AdjustmentInstruction => ({
@@ -27,12 +28,12 @@ const adjustment = (r: AdjustmentInstruction): AdjustmentInstruction => ({
 
 export function supabasePlanRepo(db: Db): PlanRepo {
   return {
-    async claim({ operationId, actor, action, reason }) {
+    async claim({ operationId, actor, action, reason, transactionId }) {
       try {
         const change = await must<PlanChange>(
           db
             .from("plan_changes")
-            .insert({ operation_id: operationId, actor, action, reason })
+            .insert({ operation_id: operationId, actor, action, reason, transaction_id: transactionId ?? null })
             .select(CHANGE_COLUMNS)
             .single()
         )
@@ -46,11 +47,11 @@ export function supabasePlanRepo(db: Db): PlanRepo {
         return { change, existing: true }
       }
     },
-    async complete(id, summary, result) {
+    async complete(id, summary, result, { before, after }) {
       await must(
         db
           .from("plan_changes")
-          .update({ summary, result, completed_at: new Date().toISOString() })
+          .update({ summary, result, before, after, completed_at: new Date().toISOString() })
           .eq("id", id)
       )
     },
@@ -217,7 +218,24 @@ function planRecord(thread: Thread): PlanRecord | null {
   }
 }
 
-/** The plan service as the signed-in user, acting as `actor`. */
-export async function planDeps(actor: Actor): Promise<PlanDeps> {
-  return { repo: supabasePlanRepo(await getDb()), loadSnapshot: loadSnapshot as () => Promise<PlanSnapshot | null>, actor }
+/**
+ * The plan service as the signed-in user, acting as `actor`. Every recorded change emits
+ * plan/changed for Cas's worker, unless `quiet` (the worker's own writes, which it's
+ * already accounting for).
+ */
+export async function planDeps(actor: Actor, opts: { quiet?: boolean } = {}): Promise<PlanDeps> {
+  const db = await getDb()
+  return {
+    repo: supabasePlanRepo(db),
+    loadSnapshot: loadSnapshot as () => Promise<PlanSnapshot | null>,
+    actor,
+    onChange: opts.quiet
+      ? undefined
+      : async (change) => {
+          await emit({
+            name: "plan/changed",
+            data: { householdId: await getOwnerId(db), changeId: change.id, actor: change.actor, action: change.action },
+          })
+        },
+  }
 }

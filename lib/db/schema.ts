@@ -195,8 +195,8 @@ export type PlanAction = {
   dueDate: string | null
   /** the plan's focus item it was added from */
   focusTitle: string | null
-  /** website: you added it; mcp: Claude did, on your say-so; cas: Cas did, in the Plan page's chat */
-  createdBy: "website" | "mcp" | "cas"
+  /** website: you added it; mcp: Claude did, on your say-so; cas: Cas did; user: you approved Cas's proposal */
+  createdBy: "website" | "mcp" | "cas" | "user" | "system"
   /** null while still to do */
   doneAt: string | null
   createdAt: string

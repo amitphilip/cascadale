@@ -20,14 +20,22 @@ import { similarity } from "@/lib/rules"
  * Pure functions.
  */
 
-/** Who changed the plan. */
-export const ACTORS = ["website", "mcp", "cas"] as const
+/**
+ * Who changed the plan: the website, Claude through MCP, Cas, a person approving one of
+ * Cas's proposals (user), or Cascadale itself (system, e.g. ticking off a finished action).
+ */
+export const ACTORS = ["website", "mcp", "cas", "user", "system"] as const
 export type Actor = (typeof ACTORS)[number]
 export const ACTOR_LABELS: Record<Actor, string> = {
   website: "Website",
   mcp: "Claude",
   cas: "Cas",
+  user: "You, approving Cas",
+  system: "Cascadale",
 }
+
+/** Actors whose changes are a person's decision, which Cas mustn't undo. */
+export const PERSON_ACTORS: readonly Actor[] = ["website", "mcp", "user"]
 
 /** A pot or set-aside you asked for. */
 export type PotInstruction = {
