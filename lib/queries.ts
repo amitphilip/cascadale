@@ -60,6 +60,13 @@ export async function getAccountsWithBalances() {
       last_date: string | null
     }[]
   >((await db()).rpc("accounts_with_balances"))
+  const labels = new Map(
+    (
+      await must<{ id: number; purpose: string | null; aliases: string[] | null }[]>(
+        (await db()).from("accounts").select("id, purpose, aliases")
+      )
+    ).map((a) => [a.id, a])
+  )
   return rows.map((r) => ({
     id: r.id,
     name: r.name,
@@ -70,6 +77,8 @@ export async function getAccountsWithBalances() {
     txTotal: Number(r.tx_total),
     txCount: r.tx_count,
     lastDate: r.last_date,
+    purpose: labels.get(r.id)?.purpose ?? null,
+    aliases: labels.get(r.id)?.aliases ?? [],
     balance:
       Math.round((Number(r.opening_balance) + Number(r.tx_total)) * 100) / 100,
   }))

@@ -56,6 +56,10 @@ export type Account = {
   akahuId: string | null
   /** Only Akahu transactions after this date are synced (set when linking an account with history). */
   akahuStart: string | null
+  /** what it's for, e.g. "Council rates and annual bills" */
+  purpose: string | null
+  /** other names people call it, e.g. "rates account" */
+  aliases: string[]
   createdAt: string
 }
 

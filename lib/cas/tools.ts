@@ -16,6 +16,7 @@ import {
   syncAkahu,
   type ActionResult,
 } from "@/app/actions"
+import { findAccount } from "@/lib/account-lookup"
 import { getAkahuOverview, type AkahuOverview } from "@/lib/akahu"
 import { planTools, toolFigures, type PlanToolContext } from "@/lib/cas/plan-tools"
 import {
@@ -269,6 +270,19 @@ export const TOOLS: CasTool[] = [
         })),
         data_health: health,
       }
+    },
+  }),
+
+  tool({
+    name: "find_account",
+    title: "Find an account",
+    access: "read",
+    description:
+      "Which account the user means by a name, an alias or what it's for (e.g. 'the rates account', 'Tax', 'Mary's spending'). Returns the match when it's clear, else the candidates with what each is called and for, to ask about. The plan tools also take fromAccount / toAccount in words and resolve them the same way.",
+    input: { query: z.string().trim().min(1).max(100) },
+    run: async ({ query }) => {
+      const accounts = await (await planDeps("mcp")).accounts!()
+      return findAccount(accounts, query)
     },
   }),
 

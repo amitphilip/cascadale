@@ -33,7 +33,8 @@ export function AccountDialog({
   trigger,
   onSaved,
 }: {
-  account?: Pick<Account, "id" | "name" | "type" | "institution" | "openingBalance">
+  account?: Pick<Account, "id" | "name" | "type" | "institution" | "openingBalance"> &
+    Partial<Pick<Account, "purpose" | "aliases">>
   trigger: React.ReactElement
   onSaved?: (id: number) => void
 }) {
@@ -61,7 +62,7 @@ export function AccountDialog({
           <DialogHeader>
             <DialogTitle>{account ? "Edit account" : "Add account"}</DialogTitle>
             <DialogDescription>
-              Bank accounts, cards, loans, wallets — anything that holds a balance.
+              Bank accounts, cards, loans, wallets - anything that holds a balance.
             </DialogDescription>
           </DialogHeader>
           {account && <input type="hidden" name="id" value={account.id} />}
@@ -102,6 +103,28 @@ export function AccountDialog({
                 />
               </Field>
             </div>
+            <Field>
+              <FieldLabel htmlFor="acc-purpose">What it’s for</FieldLabel>
+              <Input
+                id="acc-purpose"
+                name="purpose"
+                defaultValue={account?.purpose ?? ""}
+                placeholder="e.g. Council rates and annual bills"
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="acc-aliases">Also called</FieldLabel>
+              <Input
+                id="acc-aliases"
+                name="aliases"
+                defaultValue={account?.aliases?.join(", ") ?? ""}
+                placeholder="e.g. rates, rates account"
+              />
+              <FieldDescription>
+                Other names, separated by commas, so Cas and Claude know which account you
+                mean.
+              </FieldDescription>
+            </Field>
             <Field>
               <FieldLabel htmlFor="acc-open">Opening balance</FieldLabel>
               <Input

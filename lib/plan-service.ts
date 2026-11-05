@@ -13,6 +13,7 @@ import {
   spareCash,
   type CategorySpend,
 } from "@/lib/plan-budget"
+import { resolveAccountId, type AccountRef } from "@/lib/account-lookup"
 import type { PlanAction } from "@/lib/db/schema"
 import type { DataHealth } from "@/lib/health"
 import { endPosition } from "@/lib/plan-goal"
@@ -119,6 +120,29 @@ export type PlanDeps = {
   actor: Actor
   /** told of every new change once it's recorded (not replays); emits plan/changed */
   onChange?: (change: PlanChange) => Promise<void>
+  /** accounts with their aliases and purpose, to find one by what people call it */
+  accounts?: () => Promise<AccountRef[]>
+}
+
+/** Accounts named in words rather than ids. */
+export type AccountNames = { fromAccount?: string | null; toAccount?: string | null }
+
+/**
+ * An input with fromAccount / toAccount (a name, alias or purpose, e.g. "rates account")
+ * turned into ids; an id given alongside wins. Throws with the candidates when it's unclear.
+ */
+export async function withAccountIds<T extends AccountNames & { fromAccountId?: number | null; toAccountId?: number | null }>(
+  deps: Pick<PlanDeps, "accounts" | "loadSnapshot">,
+  input: T
+): Promise<T> {
+  if (!input.fromAccount?.trim() && !input.toAccount?.trim()) return input
+  const list = deps.accounts ? await deps.accounts() : ((await deps.loadSnapshot())?.accounts ?? [])
+  const out = { ...input }
+  if (out.fromAccountId == null && input.fromAccount?.trim())
+    out.fromAccountId = resolveAccountId(list, input.fromAccount, "From account")
+  if (out.toAccountId == null && input.toAccount?.trim())
+    out.toAccountId = resolveAccountId(list, input.toAccount, "To account")
+  return out
 }
 
 /** A write's common inputs. */
@@ -384,7 +408,8 @@ function resolvePot(snap: PlanSnapshot, input: PotInput) {
 }
 
 /** Add a pot to the plan, or change the one with this name. */
-export async function upsertPot(deps: PlanDeps, input: PotInput & WriteMeta) {
+export async function upsertPot(deps: PlanDeps, raw: PotInput & AccountNames & WriteMeta) {
+  const input = await withAccountIds(deps, raw)
   return once(deps, "upsert_pot", input, async () => {
     const fields = resolvePot(await snapshotOrThrow(deps), input)
     const { name } = fields
@@ -503,7 +528,8 @@ async function potNames(repo: PlanRepo, latest: PlanRecord | null) {
   ]
 }
 
-export async function addAdjustment(deps: PlanDeps, input: AdjustmentInput & WriteMeta) {
+export async function addAdjustment(deps: PlanDeps, raw: AdjustmentInput & AccountNames & WriteMeta) {
+  const input = await withAccountIds(deps, raw)
   return once(deps, "add_plan_adjustment", input, async () => {
     const snap = await snapshotOrThrow(deps)
     const fields = resolveAdjustment(snap, input, await potNames(deps.repo, await deps.repo.latestPlan()))
@@ -535,15 +561,20 @@ export async function removeAdjustment(deps: PlanDeps, input: { adjustmentId: nu
 // ── Trying a change ──────────────────────────────────────────────────────────
 
 export type PlanTrial = {
-  pots?: PotInput[]
+  pots?: (PotInput & AccountNames)[]
   removePots?: string[]
-  adjustments?: AdjustmentInput[]
+  adjustments?: (AdjustmentInput & AccountNames)[]
   /** what a bill would cost each time it's paid */
   bills?: { name: string; amount: number }[]
 }
 
 /** What a change would do to the plan, run the same way as the real one. Saves nothing. */
-export async function tryPlanChange(deps: PlanDeps, trial: PlanTrial) {
+export async function tryPlanChange(deps: PlanDeps, raw: PlanTrial) {
+  const trial: PlanTrial = {
+    ...raw,
+    pots: raw.pots && (await Promise.all(raw.pots.map((p) => withAccountIds(deps, p)))),
+    adjustments: raw.adjustments && (await Promise.all(raw.adjustments.map((a) => withAccountIds(deps, a)))),
+  }
   const [base, snapshot, pots, adjustments] = await Promise.all([
     deps.repo.latestPlan(),
     snapshotOrThrow(deps),
@@ -740,7 +771,8 @@ const withId = <T extends OptionalMeta>(input: T): T & WriteMeta => ({
 })
 
 /** Put an action item on the Plan page. A title that's already open returns that item. */
-export async function addPlanAction(deps: PlanDeps, input: PlanActionInput & OptionalMeta) {
+export async function addPlanAction(deps: PlanDeps, raw: PlanActionInput & AccountNames & OptionalMeta) {
+  const input = await withAccountIds(deps, raw)
   const title = input.title.trim()
   if (!title) throw new Error("Describe the action")
   if (input.dueDate && !/^\d{4}-\d{2}-\d{2}$/.test(input.dueDate)) throw new Error("Due date is yyyy-MM-dd")

@@ -79,6 +79,8 @@ const potInput = {
     .describe("Which income funds it: an income key from get_financial_picture or part of its name. Its account is the default from account."),
   fromAccountId: accountId.optional().describe("Account the money comes from; defaults to the income's account"),
   toAccountId: accountId.optional().describe("Account it moves to; omit to earmark it in the from account"),
+  fromAccount: z.string().trim().optional().describe("Instead of fromAccountId: the account's name, an alias or what it's for (e.g. 'rates account')"),
+  toAccount: z.string().trim().optional().describe("Instead of toAccountId: the account's name, an alias or what it's for"),
   covers: z.array(z.string()).optional().describe("Bills it pays: their keys or names"),
   note: z.string().trim().max(200).optional(),
 }
@@ -91,6 +93,8 @@ const adjustmentInput = {
   amount: z.number().positive().optional().describe("For add and change_amount"),
   fromAccountId: accountId.optional().describe("For a transfer: the account it leaves"),
   toAccountId: accountId.optional().describe("For a transfer: the account it goes to"),
+  fromAccount: z.string().trim().optional().describe("Instead of fromAccountId: the account's name, an alias or what it's for"),
+  toAccount: z.string().trim().optional().describe("Instead of toAccountId: the account's name, an alias or what it's for"),
 }
 
 export function planTools(ctx: PlanToolContext): CasTool[] {
@@ -235,6 +239,8 @@ export function planTools(ctx: PlanToolContext): CasTool[] {
         amount: z.number().positive().optional().describe("For an item that moves money: how much"),
         fromAccountId: accountId.optional().describe("The account the money leaves"),
         toAccountId: accountId.optional().describe("The account it goes to"),
+        fromAccount: z.string().trim().optional().describe("Instead of fromAccountId: its name, an alias or what it's for"),
+        toAccount: z.string().trim().optional().describe("Instead of toAccountId: its name, an alias or what it's for"),
       },
       run: async (args) => ({ ok: true, ...(await addPlanAction(await ctx.deps(), args)) }),
     }),

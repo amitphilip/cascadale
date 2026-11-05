@@ -36,6 +36,7 @@ const TOOLS_INSTRUCTIONS = `Cascadale is the user's budgeting app: bank accounts
 - The Plan page also has action items, things to do ticked off as done. Use list_plan_actions, add_plan_action, set_plan_action_done and remove_plan_action; when you do something the user confirmed that matches an open one, tick it off.
 - Cas proposes changes rather than making them. get_status lists them; list_proposals has the detail. Offer them to the user, and run approve_proposal or reject_proposal on their answer.
 - Use the Cas connector's ask_cas only for new judgement questions (can we afford X, what should we change, trade-offs) that get_status and the raw tools don't answer; it's slower because it runs a model.
+- People call accounts by what they're for ("the rates account", "Tax"). find_account resolves a name, alias or purpose to one account, or lists the candidates to ask about; the plan tools take fromAccount / toAccount in words too.
 - Every response carries the household's currency and locale; amounts are in that currency. Transaction amounts are signed: negative is money out.`
 
 const CAS_INSTRUCTIONS = `Cas is the user's financial advisor and accountant for their budgeting app, Cascadale. It runs in the background after every sync and plan change and writes a state of play, which the Cascadale connector's get_status returns instantly. ask_cas runs it live: it investigates their accounts, bank feed syncs, transactions, budgets, recurring bills and plan, remembers earlier conversations through its notes, and answers with what's going on and what can or should be done.
@@ -90,7 +91,8 @@ function createToolsServer() {
     // Version notes (existing responses only ever gain fields):
     // 0.2.0: get_status and refresh_cas; figures on get_plan and get_briefing; plan action
     //   writes take an optional operationId and reason; list_proposals, approve_proposal and
-    //   reject_proposal
+    //   reject_proposal; find_account, purpose and aliases on get_overview's accounts, and
+    //   fromAccount / toAccount in words on the plan tools
     { name: "cascadale", title: "Cascadale", version: "0.2.0" },
     { instructions: TOOLS_INSTRUCTIONS }
   )

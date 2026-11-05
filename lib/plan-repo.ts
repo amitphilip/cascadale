@@ -243,6 +243,7 @@ export async function planDeps(actor: Actor, opts: { quiet?: boolean } = {}): Pr
     repo: supabasePlanRepo(db),
     loadSnapshot: loadSnapshot as () => Promise<PlanSnapshot | null>,
     actor,
+    accounts: () => must(db.from("accounts").select("id, name, aliases, purpose, archived").order("id")),
     onChange: opts.quiet
       ? undefined
       : async (change) => {

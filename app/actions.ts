@@ -159,6 +159,12 @@ const accountSchema = z.object({
   type: z.enum(ACCOUNT_TYPES),
   institution: optionalText,
   openingBalance: money.default(0),
+  purpose: optionalText,
+  // comma separated in the form
+  aliases: z
+    .string()
+    .optional()
+    .transform((s) => [...new Set((s ?? "").split(",").map((a) => a.trim()).filter(Boolean))]),
 })
 
 export async function saveAccount(form: FormData) {
