@@ -2,10 +2,13 @@ import { z } from "zod"
 
 import { CHANGES_DATA, isoDate, tool, type CasTool } from "@/lib/cas/tool"
 import type { DataHealth } from "@/lib/health"
+import type { CategorySpend } from "@/lib/plan-budget"
 import { ADJUSTMENT_KINDS, ADJUSTMENT_TARGETS, FREQUENCIES, simulate } from "@/lib/plan"
 import { endPosition } from "@/lib/plan-goal"
+import { todayLocal } from "@/supabase/functions/_shared/akahu"
 import {
   addAdjustment,
+  checkPurchase,
   getPlanState,
   livePlan,
   removeAdjustment,
@@ -25,6 +28,8 @@ export type PlanToolContext = {
   /** the plan service acting as Claude (MCP) */
   deps: () => Promise<PlanDeps>
   health: () => Promise<DataHealth>
+  /** this month's spend per category, for check_purchase's budget line */
+  categorySpend?: (month: string) => Promise<CategorySpend[]>
 }
 
 const operationId = z
@@ -114,6 +119,26 @@ export function planTools(ctx: PlanToolContext): CasTool[] {
           .describe("Bills costing something else, by key or name"),
       },
       run: async (args) => tryPlanChange(await ctx.deps(), args),
+    }),
+
+    tool({
+      name: "check_purchase",
+      title: "Can I buy this?",
+      access: "read",
+      description:
+        "Check a purchase against the plan without saving anything: runs it as a one-off on its date and returns verdict (yes; over_budget: the cash is there but it breaks the category's month; wait: not now, but it fits from earliestDate, the first payday it does; no: it doesn't fit anywhere in the projection), spare cash before and after (the lowest your accounts get with every bill and set-aside paid, savings pots left alone; below zero means something goes unpaid), the category's limit, spend and what's left this month, the plan's monthly left over, and where the plan ends before and after. Use it for every 'can I buy / afford' question, then weigh it against the goal's gap.",
+      input: {
+        name: z.string().trim().min(1).max(120).describe("What it is, e.g. New phone"),
+        amount: z.number().positive(),
+        date: isoDate.optional().describe("When they'd buy it; defaults to today"),
+        accountId: accountId.optional().describe("The account it'd be paid from; defaults to the cash account with the most in it"),
+        category: z.string().trim().optional().describe("The expense category it counts against, by name"),
+      },
+      run: async (args) => {
+        const today = todayLocal()
+        const spend = args.category && ctx.categorySpend ? await ctx.categorySpend(today.slice(0, 7)) : null
+        return checkPurchase(await ctx.deps(), args, spend, today)
+      },
     }),
 
     tool({

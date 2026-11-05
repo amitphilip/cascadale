@@ -1,6 +1,6 @@
 import "server-only"
 
-import { differenceInHours, parseISO } from "date-fns"
+import { differenceInCalendarDays, differenceInHours, parseISO } from "date-fns"
 import { z } from "zod"
 
 import {
@@ -127,8 +127,58 @@ async function notes(includeResolved = false) {
   return must<CasNote[]>(query)
 }
 
+/** Days ahead a to-do counts as due soon. */
+const DUE_SOON_DAYS = 7
+
+/** The open plan action items, each flagged overdue or due soon against today. */
+async function openPlanActions() {
+  const today = todayLocal()
+  const actions = await must<PlanAction[]>(
+    (await getDb()).from("plan_actions").select(COLUMNS.planActions).is("done_at", null).order("id").limit(200)
+  )
+  return actions.map(({ id, title, detail, dueDate, createdBy, createdAt }) => {
+    const days = dueDate ? differenceInCalendarDays(parseISO(dueDate), parseISO(today)) : null
+    return {
+      actionId: id,
+      title,
+      detail,
+      dueDate,
+      status: days === null ? "no_due_date" : days < 0 ? "overdue" : days <= DUE_SOON_DAYS ? "due_soon" : "later",
+      addedBy: createdBy,
+      addedOn: localDate(createdAt),
+    }
+  })
+}
+
+/** add_plan_action, recording who added the item: Claude (mcp) or Cas in its chat. */
+export const addPlanActionTool = (by: "mcp" | "cas") =>
+  tool({
+    name: "add_plan_action",
+    title: "Add a plan action item",
+    access: "action",
+    description:
+      "Put an action item on the Plan page, e.g. 'Move $500 to the tax pot before 20 Nov'. Keep the title short and concrete, and put the numbers in the detail. Adding a title that's already open returns the existing item instead of a duplicate.",
+    input: {
+      title: z.string().trim().min(1).max(120),
+      detail: z.string().trim().optional().describe("One sentence of why or how, with the key number"),
+      dueDate: isoDate.optional(),
+    },
+    run: ({ title, detail, dueDate }) => {
+      const form = new FormData()
+      form.set("title", title)
+      if (detail) form.set("detail", detail)
+      if (dueDate) form.set("dueDate", dueDate)
+      form.set("createdBy", by)
+      return act(addPlanAction(form))
+    },
+  })
+
 /** The plan tools act as Claude (MCP); the Cas agent makes its own for the Plan page's chat. */
-const PLAN_TOOLS = planTools({ deps: () => planDeps("mcp"), health: () => loadDataHealth() })
+const PLAN_TOOLS = planTools({
+  deps: () => planDeps("mcp"),
+  health: () => loadDataHealth(),
+  categorySpend: getCategorySpend,
+})
 
 export const TOOLS: CasTool[] = [
   tool({
@@ -136,13 +186,13 @@ export const TOOLS: CasTool[] = [
     title: "Briefing",
     access: "read",
     description:
-      "Start here. Everything happening right now in one call: bank feed health, what came in and went out since the last check-in against the usual pattern, the projected low point of your balances over the next 60 days, upcoming bills and one-offs, what needs categorizing, the last check-in's verdict and the plan's goal, Cas decisions still to carry out in the plan, and Cas's open notes and to-dos. Includes data_health: check it before relying on the numbers.",
+      "Start here. Everything happening right now in one call: bank feed health, what came in and went out since the last check-in against the usual pattern, the projected low point of your balances over the next 60 days, upcoming bills and one-offs, what needs categorizing, the last check-in's verdict and the plan's goal, Cas decisions still to carry out in the plan, the Plan page's open action items (each overdue, due_soon, later or no_due_date), and Cas's open notes and to-dos. Includes data_health: check it before relying on the numbers.",
     run: async () => {
       const snap = await loadSnapshot()
       const overview = await getAkahuOverview().catch(
         (err: Error): AkahuOverview => ({ connected: true, error: err.message, accounts: [] })
       )
-      const [sync, sinceLastCheckIn, categorization, merchants, lowRules, [last], open, health] =
+      const [sync, sinceLastCheckIn, categorization, merchants, lowRules, [last], open, actions, health] =
         await Promise.all([
           syncStatus(overview).catch((err: Error) => ({ error: err.message })),
           snap ? buildStats(snap) : null,
@@ -151,6 +201,7 @@ export const TOOLS: CasTool[] = [
           getRuleReview("low"),
           getCheckIns(1),
           notes(),
+          openPlanActions(),
           loadDataHealth(overview),
         ])
       const plan = await planStatus(await planDeps("mcp"))
@@ -172,6 +223,7 @@ export const TOOLS: CasTool[] = [
             }
           : null,
         plan,
+        planActions: actions,
         openNotes: open,
         data_health: health,
       }
@@ -547,7 +599,7 @@ export const TOOLS: CasTool[] = [
     title: "Plan action items",
     access: "read",
     description:
-      "The action items on the Plan page: things to do about the plan, each with an actionId, title, optional detail and dueDate, whether it's done (doneAt) and who added it. Check it before suggesting an action, so you don't repeat one that's already there.",
+      "The action items on the Plan page: things to do about the plan, each with an actionId, title, optional detail and dueDate, whether it's done (doneAt) and who added it. Check it before suggesting an action, so you don't repeat one that's already there. get_briefing already lists the open ones.",
     input: { includeDone: z.boolean().optional().describe("Include finished items. Defaults to open ones only.") },
     run: async ({ includeDone }) => {
       let query = (await getDb())
@@ -560,26 +612,7 @@ export const TOOLS: CasTool[] = [
     },
   }),
 
-  tool({
-    name: "add_plan_action",
-    title: "Add a plan action item",
-    access: "action",
-    description:
-      "Put an action item on the Plan page, e.g. 'Move $500 to the tax pot before 20 Nov'. Keep the title short and concrete, and put the numbers in the detail. Adding a title that's already open returns the existing item instead of a duplicate.",
-    input: {
-      title: z.string().trim().min(1).max(120),
-      detail: z.string().trim().optional().describe("One sentence of why or how, with the key number"),
-      dueDate: isoDate.optional(),
-    },
-    run: ({ title, detail, dueDate }) => {
-      const form = new FormData()
-      form.set("title", title)
-      if (detail) form.set("detail", detail)
-      if (dueDate) form.set("dueDate", dueDate)
-      form.set("createdBy", "mcp")
-      return act(addPlanAction(form))
-    },
-  }),
+  addPlanActionTool("mcp"),
 
   tool({
     name: "set_plan_action_done",

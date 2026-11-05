@@ -7,11 +7,12 @@ import { anthropicClient } from "@/lib/anthropic"
 import { describeError } from "@/lib/categorize"
 import { planTools } from "@/lib/cas/plan-tools"
 import type { CasTool } from "@/lib/cas/tool"
-import { TOOLS } from "@/lib/cas/tools"
+import { addPlanActionTool, TOOLS } from "@/lib/cas/tools"
 import { loadDataHealth } from "@/lib/data-health"
 import type { DataHealth } from "@/lib/health"
 import { PlanSchema, type Plan } from "@/lib/plan"
 import { planDeps } from "@/lib/plan-repo"
+import { getCategorySpend } from "@/lib/queries"
 import { todayLocal } from "@/supabase/functions/_shared/akahu"
 
 const MODEL = "claude-opus-5-5"
@@ -26,6 +27,7 @@ const SYSTEM = `You are Cas, the personal financial advisor and accountant for o
 Your job is to know what is going on with their money and say what can be done or needs to be done. Act like a good accountant who also advises: keep the books trustworthy (feeds syncing, transactions categorized, nothing double counted), then look at the picture (cash flow, spending against budget and plan, upcoming bills and whether the money is there for them, savings progress) and turn it into clear next steps.
 
 How to work:
+- For "can I buy / afford X", run check_purchase (with its category when you can tell it) and give a straight verdict first: yes, yes but it breaks the category's month, wait until a date, or no, with the one number that decides it. Weigh it against the goal's gap from get_briefing: a purchase that fits the cash but eats the goal's margin is a "wait" or a "no". When it's a yes and they'll buy it, recommend add_upcoming_expense (if it's still ahead) so the plan counts it.
 - Start with get_briefing unless the question is narrow, then dig in with the other tools. Check the numbers before you state them; never estimate what a tool can tell you.
 - Lead with what matters most. Flag problems early: a feed that stopped syncing, a projected balance below zero, spending well over pace, a bill no pot covers, a big upcoming expense.
 - Give concrete recommendations with amounts and dates, each grounded in the data. Say when you're assuming something.
@@ -33,7 +35,8 @@ How to work:
 - The plan is the one on their Plan page: always today's data with every pot and adjustment applied, so there's nothing to rebuild. Use try_plan_change to test what you recommend before you recommend it.
 - You can't change their data yourself. When something should be done in the app, recommend it as an action for Claude to offer them, naming the action and its inputs (e.g. upsert_pot with name, amount, frequency, income and accounts; add_plan_adjustment with date, kind, target and amount); Claude runs it through Cascadale's tools once they confirm.
 - When they decide something that changes the plan, save it as a decision note with affectsPlan, so the Plan page lists it as waiting until it's carried out, and give its note id with the recommended action (decisionIds). Actions available to Claude: ${ACTIONS.map((t) => `${t.name} (${t.title.toLowerCase()})`).join(", ")}. For anything else, say what to do in the app.
-- Turn recommendations into plan action items: check list_plan_actions first, then recommend add_plan_action (a short title, the numbers in the detail, a due date when there is one) for each concrete thing they should do, and set_plan_action_done for ones the data shows are finished.
+- Follow up on the Plan page's open action items (planActions in the briefing): mention the ones that bear on the question, always call out overdue ones and ones due soon, and say when the data shows one is done or no longer needed.
+- Turn recommendations into plan action items: check the open ones first, then recommend add_plan_action (a short title, the numbers in the detail, a due date when there is one) for each concrete thing they should do, and set_plan_action_done for ones the data shows are finished.
 - Keep your notes: save a note when you notice something worth tracking across conversations, when they state a decision or preference, or when you recommend a to-do. Resolve notes that are done or no longer true. Read your open notes (the briefing includes them) and follow up on them.
 - You are not a licensed financial adviser; for tax, legal or investment product decisions, give the general picture and suggest a professional where it really matters.
 
@@ -120,21 +123,30 @@ export async function askCas(question: string, context?: string, health?: DataHe
   }
 }
 
-/** What Cas can do to the plan from its chat: nothing outside the plan and its to-do list. */
-const CHAT_ACTIONS = ["add_plan_action", "set_plan_action_done", "remove_plan_action", "add_upcoming_expense"]
+/** What Cas can do from its chat: the plan, its to-do list, upcoming one-offs and category budgets. */
+const CHAT_ACTIONS = [
+  "add_plan_action",
+  "set_plan_action_done",
+  "remove_plan_action",
+  "add_upcoming_expense",
+  "set_category_budgets",
+]
 
-const CHAT_SYSTEM = `You are Cas, the personal financial advisor and accountant for one person or household, talking with them directly in the chat beside their Plan page in their private budgeting app.
+const CHAT_SYSTEM = `You are Cas, the financial accountant and manager for one person or household, talking with them directly in the chat beside their Plan page in their private budgeting app. You keep the books, you run the plan, and you're the one they check with before spending: say yes, wait or no, and keep the plan in line with what they decide.
 
 The plan: on each payday, money moves into named pots so every bill is funded when it's due, and what's left is theirs to spend. It lands on a goal: a net position (cash less what's owed on cards and revolving credit, home loans left out) by an end date. The plan is always today's data with every pot and one-off adjustment applied, so a change takes effect the moment you make it. There is nothing to rebuild.
 
 How to work:
+- "Can I buy X?" (or afford, get, spend on): run check_purchase with the amount, the category it falls under and the date if they gave one. Answer in the first line with a verdict and the deciding number: "Yes", "Yes, but it puts Dining Out 80 over this month", "Wait until 14 Nov, after Mary's pay", or "No, it would leave Rent short on 1 Dec". Then a line or two why, from the spare cash, the category's month and the goal (get_briefing has the goal's gap: a purchase bigger than the margin pushes the goal out, so say by how much). If you'd say wait, suggest how they could make it fit sooner (a pot to trim, a category to hold back). If it's a yes and the purchase is still ahead, offer to add it as an upcoming expense so the plan counts it; add it when they say they're going ahead.
+- Budgets: each category's monthly limit is its budget if it has one, else what the plan expects it to cost. When they ask to set or change budgets, use set_category_budgets (category ids from list_categories) and say what changed. Point out a category running well over its month when it matters to what they asked.
 - Look before you answer. get_plan and get_briefing show where things stand, including the goal's target, forecast and gap; the other read tools answer specific questions. Never estimate what a tool can tell you.
 - Test before you act. Run try_plan_change on anything you'd recommend or do, and on every what-if, and quote what it shows. Check that a change doesn't overdraw a cash account or leave a bill uncovered.
 - Make the changes they ask for, using upsert_pot, remove_pot, add_plan_adjustment and remove_plan_adjustment. Read planNow in the result and tell them what it did. Their message asking is their confirmation.
 - Don't change anything they didn't ask for. When you see something worth changing, say what, with the numbers from try_plan_change, and ask. Decisions in get_plan's unappliedDecisions are already theirs: carry one out when they ask, passing its id in decisionIds.
 - When the plan's direction changes enough that its headline or focus list no longer holds, call set_plan_text with new ones. Don't for small changes.
-- Add a concrete thing for them to do to the Plan page with add_plan_action, after checking list_plan_actions. Tick off ones that are done.
-- You can't change anything else (transactions, categories, budgets, accounts). Say what to do in the app.
+- Follow up on their open action items (planActions in get_briefing): mention the ones that bear on what they asked, always call out overdue ones and ones due soon, and tick off ones the data shows are done (say so when you do).
+- Add a concrete thing for them to do to the Plan page with add_plan_action, after checking the open ones.
+- You can't change anything else (transactions, categories, accounts). Say what to do in the app.
 - Keep your notes: you only see the last few messages here, so save a note for any decision, preference or fact you'll need in a later conversation, and resolve notes that are done. get_briefing includes the open ones.
 - Say plainly when an answer rests on stale or drifted data. You are not a licensed financial adviser; for tax, legal or investment product decisions, give the general picture.
 - Pass a fresh operationId with every plan write.
@@ -151,12 +163,20 @@ export type ChatTurn = { role: "user" | "assistant"; content: string }
  * plan's own action tools, acting as "cas" on the change log. Returns its reply, and the
  * plan to store with it if anything changed: the base plan, with new text if it set some.
  */
-export async function planChat(text: string, chat: ChatTurn[], base: Plan | null) {
+export async function planChat(
+  text: string,
+  chat: ChatTurn[],
+  base: Plan | null,
+  /** who's asking, and the accounts that are theirs */
+  who?: { name: string; accounts: string[] }
+) {
   let wrote = false
   let revised: Pick<Plan, "summary" | "focus"> | null = null
-  const plan = planTools({ deps: () => planDeps("cas"), health: () => loadDataHealth() }).filter(
-    (t) => t.access === "action"
-  )
+  const plan = planTools({
+    deps: () => planDeps("cas"),
+    health: () => loadDataHealth(),
+    categorySpend: getCategorySpend,
+  }).filter((t) => t.access === "action")
   const setText: CasTool = {
     name: "set_plan_text",
     title: "Set the plan's headline",
@@ -171,7 +191,9 @@ export async function planChat(text: string, chat: ChatTurn[], base: Plan | null
   }
   const tools = runnable(
     [
-      ...TOOLS.filter((t) => t.access !== "action" || CHAT_ACTIONS.includes(t.name)),
+      ...TOOLS.filter((t) => t.access !== "action" || CHAT_ACTIONS.includes(t.name)).map((t) =>
+        t.name === "add_plan_action" ? addPlanActionTool("cas") : t
+      ),
       ...plan,
       ...(base ? [setText] : []),
     ],
@@ -188,7 +210,15 @@ export async function planChat(text: string, chat: ChatTurn[], base: Plan | null
       ...recent,
       {
         role: "user",
-        content: `Today is ${todayLocal()}.\n\nData health, checked just now:\n<data_health>\n${JSON.stringify(health)}\n</data_health>\n\n${text}`,
+        content: [
+          `Today is ${todayLocal()}.`,
+          who &&
+            `You're talking with ${who.name}. Their own accounts: ${who.accounts.join(", ") || "none marked yet"}; the rest are joint or someone else's. When they ask about their own spending, start from their accounts and their pay, then the family's plan.`,
+          `Data health, checked just now:\n<data_health>\n${JSON.stringify(health)}\n</data_health>`,
+          text,
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
       },
     ])
     const reply =

@@ -23,8 +23,8 @@ import { cn } from "@/lib/utils"
 const TABS = TAB_HREFS.map((href) => NAV.find((n) => n.href === href)!)
 const MORE = NAV.filter((n) => !TAB_HREFS.includes(n.href))
 
-const ITEM =
-  "flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 text-[11px] font-medium"
+// icons only: five labels don't fit a phone's width without wrapping
+const ITEM = "flex min-h-14 flex-1 items-center justify-center"
 
 /** Phone navigation: the four most-used pages plus a sheet with the rest. Hidden from md up. */
 export function MobileTabBar({
@@ -57,6 +57,8 @@ export function MobileTabBar({
             key={tab.href}
             href={tab.href}
             aria-current={isActive(tab.href) ? "page" : undefined}
+            aria-label={tab.label}
+            title={tab.label}
             className={cn(
               ITEM,
               isActive(tab.href) ? "text-foreground" : "text-muted-foreground"
@@ -76,16 +78,16 @@ export function MobileTabBar({
                 </span>
               )}
             </span>
-            {tab.label}
           </Link>
         ))}
         <button
           type="button"
           onClick={() => setOpen(true)}
+          aria-label="More"
+          title="More"
           className={cn(ITEM, moreActive ? "text-foreground" : "text-muted-foreground")}
         >
           <DotsThreeIcon className="size-6" weight="bold" />
-          More
         </button>
       </nav>
       <Sheet open={open} onOpenChange={setOpen}>

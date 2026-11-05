@@ -5,6 +5,7 @@ import { AkahuForm } from "./akahu-form"
 import { ApiKeyForm } from "./api-key-form"
 import { InstallApp } from "./install-card"
 import { SettingsForm } from "./settings-form"
+import { YouForm } from "./you-form"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import {
@@ -16,19 +17,38 @@ import {
 } from "@/components/ui/card"
 import { getAkahuStatus } from "@/lib/akahu"
 import { getApiKeyStatus } from "@/lib/anthropic"
-import { getSettings } from "@/lib/queries"
+import { getUserId } from "@/lib/db"
+import { getMyPrefs, getPeople, getSettings } from "@/lib/queries"
 
 export const metadata: Metadata = { title: "Settings" }
 
 export default async function SettingsPage() {
-  const [current, apiKey, akahu] = await Promise.all([
+  const userId = await getUserId()
+  const [current, apiKey, akahu, prefs, people] = await Promise.all([
     getSettings(),
     getApiKeyStatus(),
     getAkahuStatus(),
+    getMyPrefs(userId),
+    getPeople(),
   ])
   return (
     <>
       <PageHeader title="Settings" />
+      <Card>
+        <CardHeader>
+          <CardTitle>You</CardTitle>
+          <CardDescription>
+            Everyone in the household sees the same money; you choose where
+            you start.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <YouForm
+            name={prefs.name ?? people.find((p) => p.id === userId)?.name ?? ""}
+            homeView={prefs.homeView}
+          />
+        </CardContent>
+      </Card>
       <Card>
         <CardHeader>
           <CardTitle>Display</CardTitle>

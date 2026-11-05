@@ -20,17 +20,9 @@ import {
 import { Input } from "@/components/ui/input"
 import { useServerAction } from "@/hooks/use-server-action"
 import { formatMoney, type MoneyFormat } from "@/lib/format"
+import type { CategoryCost } from "@/lib/plan-budget"
 import { cn } from "@/lib/utils"
 
-/** One expense category's monthly cost in the plan's snapshot. */
-export type CategoryCost = {
-  category: string
-  /** scheduled bills, per month */
-  bills: number
-  /** day-to-day spending, per month */
-  dayToDay: number
-  budget: number | null
-}
 
 /** Categories shown before "Show all". */
 const SHOWN = 8

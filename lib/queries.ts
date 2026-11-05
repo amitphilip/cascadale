@@ -26,6 +26,7 @@ import type {
   RecurringTx,
 } from "@/lib/recurring"
 import { merchantKey } from "@/lib/rules"
+import type { HomeView, Person } from "@/lib/views"
 import type { PlanTx } from "@/lib/snapshot"
 import { todayLocal } from "@/supabase/functions/_shared/akahu"
 
@@ -433,6 +434,55 @@ export async function getCategorySpend(month: string) {
     budget: r.budget === null ? null : Number(r.budget),
     spent: Number(r.spent),
   }))
+}
+
+/** Like getCategorySpend, for spending from these accounts only. */
+export async function getCategorySpendFor(month: string, accountIds: number[]) {
+  if (accountIds.length === 0) return []
+  const { start, end } = monthRange(month)
+  const rows = await must<
+    { id: number | null; name: string | null; budget: number | null; spent: number }[]
+  >(
+    (await db()).rpc("category_spend_for", {
+      p_start: start,
+      p_end: end,
+      p_accounts: accountIds,
+    })
+  )
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name ?? "Uncategorized",
+    budget: r.budget === null ? null : Number(r.budget),
+    spent: Number(r.spent),
+  }))
+}
+
+/** Everyone in the household, the owner first. */
+export async function getPeople(): Promise<Person[]> {
+  const rows = await must<
+    { id: string; email: string; name: string | null; is_owner: boolean }[]
+  >((await db()).rpc("household_people"))
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name?.trim() || r.email.split("@")[0],
+    isOwner: r.is_owner,
+  }))
+}
+
+/** The signed-in person's name and the view they open on. */
+export async function getMyPrefs(userId: string) {
+  const [row] = await must<{ name: string | null; home_view: HomeView }[]>(
+    (await db()).from("user_prefs").select("name, home_view").eq("user_id", userId)
+  )
+  return { name: row?.name ?? null, homeView: row?.home_view ?? "family" }
+}
+
+/** Whose each account is: account id to the holder's user id, or null for joint. */
+export async function getAccountHolders() {
+  const rows = await must<{ id: number; holder_id: string | null }[]>(
+    (await db()).from("accounts").select("id, holder_id")
+  )
+  return new Map(rows.map((r) => [r.id, r.holder_id]))
 }
 
 export async function getStatements() {

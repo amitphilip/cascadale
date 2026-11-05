@@ -19,6 +19,7 @@ export type ChatMessage = {
 }
 
 const STARTERS = [
+  "Can I buy a $300 jacket this week?",
   "Explain the plan in simple terms",
   "Add an emergency fund pot",
   "What happens if my rent goes up 10%?",
@@ -122,7 +123,7 @@ export function PlanChat({ threadId, messages }: { threadId: number; messages: C
             }
           }}
           rows={2}
-          placeholder="Ask a question or request a change…"
+          placeholder="Can I buy…? Ask a question or request a change"
           aria-label="Message Cas"
           className="min-h-0 resize-none"
           disabled={pending}

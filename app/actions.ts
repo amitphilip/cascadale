@@ -51,6 +51,7 @@ import {
 import { deleteStored, readStoredRows } from "@/lib/import/files"
 import { applyMapping, detectStatementInfo, type Mapping } from "@/lib/import/parse"
 import { FREQUENCIES, type Frequency } from "@/lib/plan"
+import { HOME_VIEWS } from "@/lib/views"
 import {
   chatMessages,
   latestPlan,
@@ -1035,7 +1036,19 @@ export async function askPlanner(threadId: number, message: string) {
     )
     // loaded here because the agent's tools import this file
     const { planChat } = await import("@/lib/cas/agent")
-    const turn = await planChat(text, chatMessages(thread, messages), latestPlan(messages))
+    const userId = await getUserId(db)
+    const { getAccountHolders, getMyPrefs, getPeople } = await import("@/lib/queries")
+    const [people, prefs, holders, accounts] = await Promise.all([
+      getPeople(),
+      getMyPrefs(userId),
+      getAccountHolders(),
+      must<{ id: number; name: string }[]>(db.from("accounts").select("id, name")),
+    ])
+    const who = {
+      name: prefs.name ?? people.find((p) => p.id === userId)?.name ?? "them",
+      accounts: accounts.filter((a) => holders.get(a.id) === userId).map((a) => a.name),
+    }
+    const turn = await planChat(text, chatMessages(thread, messages), latestPlan(messages), who)
     await saveTurn(db, threadId, {
       user: { content: text, context: "" },
       assistant: { content: turn.reply, plan: turn.plan },
@@ -1119,7 +1132,7 @@ const planActionSchema = z.object({
     .transform((s) => s || null)
     .pipe(isoDate.nullable()),
   focusTitle: optionalText,
-  createdBy: z.enum(["website", "mcp"]).catch("website"),
+  createdBy: z.enum(["website", "mcp", "cas"]).catch("website"),
 })
 
 export async function addPlanAction(form: FormData) {
@@ -1260,5 +1273,41 @@ export async function decideAuthorization(authorizationId: string, approve: bool
       : await oauth.denyAuthorization(authorizationId, { skipBrowserRedirect: true })
     if (error) throw new Error(error.message)
     return { redirectUrl: data.redirect_url }
+  })
+}
+
+/** Your name and the view the app opens on for you. */
+export async function saveMyPrefs(prefs: { name: string; homeView: string }) {
+  return run(async () => {
+    const { name, homeView } = z
+      .object({
+        name: z.string().trim().max(40),
+        homeView: z.enum(HOME_VIEWS),
+      })
+      .parse(prefs)
+    const db = await getDb()
+    await must(
+      db.from("user_prefs").upsert({
+        user_id: await getUserId(db),
+        name: name || null,
+        home_view: homeView,
+        updated_at: new Date().toISOString(),
+      })
+    )
+    return {}
+  })
+}
+
+/** Whose an account is: someone in the household, or null for a joint account. */
+export async function setAccountHolder(accountId: number, holderId: string | null) {
+  return run(async () => {
+    const holder = z.string().uuid().nullable().parse(holderId)
+    await must(
+      (await getDb())
+        .from("accounts")
+        .update({ holder_id: holder })
+        .eq("id", id.parse(accountId))
+    )
+    return {}
   })
 }

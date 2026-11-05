@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input"
 import { useServerAction } from "@/hooks/use-server-action"
 import { formatDate } from "@/lib/format"
 import type { PlanAction } from "@/lib/db/schema"
+import { ACTOR_LABELS } from "@/lib/plan-instructions"
 import { cn } from "@/lib/utils"
 
 /** Your action items: open ones first, with a form to add one; done ones folded away. */
@@ -48,7 +49,9 @@ export function ActionItems({
           {formatDate(a.dueDate, locale)}
         </span>
       ) : null,
-      a.createdBy === "mcp" ? <span key="by">Added by Claude</span> : null,
+      a.createdBy !== "website" ? (
+        <span key="by">Added by {ACTOR_LABELS[a.createdBy]}</span>
+      ) : null,
       a.detail ? <span key="detail">{a.detail}</span> : null,
     ].filter(Boolean)
     return (

@@ -76,11 +76,19 @@ export function PlanGoalCard({
         <CardTitle id="plan-goal" className="text-xl text-balance">
           {summary}
         </CardTitle>
+        <p className="text-sm text-pretty">
+          You’re on course for{" "}
+          <span className="font-medium tabular-nums">{money(goal.forecast)}</span>{" "}
+          by {date(goal.endDate)},{" "}
+          <span className={cn("font-medium tabular-nums", ahead ? GOOD : BAD)}>
+            {money(Math.abs(goal.gap))} {ahead ? "more than" : "short of"}
+          </span>{" "}
+          the goal of {money(goal.target)}.
+        </p>
         <CardDescription className="text-pretty">
-          Tracked as your net position: cash less what you owe on cards and
-          revolving credit, home loans left out. Days will drift from the plan;
-          Cas checks in against the goal and adjusts the plan to still land on
-          it.
+          These are net amounts: your cash less what you owe on cards and
+          revolving credit (home loans left out). Days will drift from the
+          plan; Cas checks in and adjusts it to still land on the goal.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid grid-cols-[minmax(0,1fr)] gap-5">

@@ -12,7 +12,10 @@ import {
   WarningCircleIcon,
 } from "@phosphor-icons/react/ssr"
 
-import { CategoryBreakdown, type CategoryCost } from "./category-breakdown"
+import { CategoryBreakdown } from "./category-breakdown"
+import { AccountHoldersCard } from "./account-holders-card"
+import { PlanBudgetCard } from "./plan-budget-card"
+import { ViewSwitcher } from "./view-switcher"
 import { NewPlanDialog } from "./new-plan-dialog"
 import { PlanChangesCard } from "./plan-changes-card"
 import { PlanGoalCard } from "./plan-goal-card"
@@ -67,7 +70,8 @@ import {
   netWorthHistory,
   pointBack,
 } from "@/lib/net-worth"
-import { goalPlan, planGoal } from "@/lib/plan-goal"
+import { categoryCosts, monthBudget, spareCash } from "@/lib/plan-budget"
+import { goalPlan, planGoal, type PlanGoal } from "@/lib/plan-goal"
 import { planStanding, planVerdict, withGoal } from "@/lib/plan-verdict"
 import { getPlanState, withInstructions } from "@/lib/plan-service"
 import { planDeps } from "@/lib/plan-repo"
@@ -75,7 +79,13 @@ import { chatMessages, latestPlan, loadSnapshot } from "@/lib/planner"
 import {
   getAccountsWithBalances,
   getAssets,
+  getCategories,
+  getAccountHolders,
+  getCategorySpend,
+  getCategorySpendFor,
   getCheckIns,
+  getMyPrefs,
+  getPeople,
   getGoalThread,
   getOpenCasNotes,
   getPlanActions,
@@ -84,7 +94,9 @@ import {
   getTransactionAmounts,
 } from "@/lib/queries"
 import { CADENCE_LABELS } from "@/lib/recurring"
+import { getUserId } from "@/lib/db"
 import { cn } from "@/lib/utils"
+import { parseView } from "@/lib/views"
 import { localDate, todayLocal } from "@/supabase/functions/_shared/akahu"
 
 export const metadata: Metadata = { title: "Plan" }
@@ -112,7 +124,12 @@ const SPEND_COLOR =
 const LEFT_COLOR =
   "color-mix(in oklch, var(--muted-foreground) 18%, transparent)"
 
-export default async function PlanPage() {
+export default async function PlanPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ view?: string }>
+}) {
+  const userId = await getUserId()
   const [
     fmt,
     thread,
@@ -125,6 +142,12 @@ export default async function PlanPage() {
     checkIns,
     notes,
     started,
+    categories,
+    spend,
+    people,
+    prefs,
+    holders,
+    params,
   ] = await Promise.all([
     getSettings(),
     getPlanThread(),
@@ -137,7 +160,20 @@ export default async function PlanPage() {
     getCheckIns(1),
     getOpenCasNotes(),
     getGoalThread(),
+    getCategories(),
+    getCategorySpend(todayLocal().slice(0, 7)),
+    getPeople(),
+    getMyPrefs(userId),
+    getAccountHolders(),
+    searchParams,
   ])
+  // you open on your own view or the family's, as you chose in Settings
+  const view = parseView(params.view) ?? prefs.homeView
+  const me = people.find((p) => p.id === userId)
+  const myName = prefs.name ?? me?.name ?? "Me"
+  const mine = new Set(
+    [...holders].filter(([, holder]) => holder === userId).map(([id]) => id)
+  )
 
   if (!current) {
     return (
@@ -237,6 +273,26 @@ export default async function PlanPage() {
     (iso) => formatDate(iso, fmt.locale)
   )
   const checkIn = checkIns[0] ?? null
+  const costs = categoryCosts(snap)
+  const month = monthBudget(costs, spend, today)
+  const categoryId = new Map(
+    categories.filter((c) => c.kind === "expense").map((c) => [c.name, c.id])
+  )
+  const myCosts = categoryCosts(snap, mine)
+  const myMonth = monthBudget(
+    myCosts,
+    await getCategorySpendFor(today.slice(0, 7), [...mine]),
+    today
+  )
+  const myIncomes = new Set(
+    snap.incomes.filter((i) => mine.has(i.accountId)).map((i) => i.id)
+  )
+  const plannedBudgets = costs.flatMap((c) => {
+    const id = categoryId.get(c.category)
+    return id === undefined
+      ? []
+      : [{ categoryId: id, amount: Math.round(c.bills + c.dayToDay) }]
+  })
   const standing = planStanding({
     verdict,
     checkIn: checkIn
@@ -309,28 +365,99 @@ export default async function PlanPage() {
         />
       </PageHeader>
 
+      <ViewSwitcher view={view} me={myName} />
+
       <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] items-start gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
-        <div className="grid min-w-0 gap-6">
-          <PlanGoalCard summary={plan.summary} goal={goal} fmt={fmt} />
+        {view === "me" && (
+          <div className="grid min-w-0 gap-6">
+            {mine.size === 0 ? (
+              <Empty className="border">
+                <EmptyHeader>
+                  <EmptyTitle>No accounts are marked as yours yet</EmptyTitle>
+                  <EmptyDescription>
+                    Say whose each account is in the accountant view, and this
+                    page shows your pay, your spending and your accounts.
+                  </EmptyDescription>
+                </EmptyHeader>
+                <EmptyContent>
+                  <Button
+                    variant="outline"
+                    nativeButton={false}
+                    render={<Link href="/plan?view=accountant#whose-accounts" />}
+                  >
+                    Set whose accounts <ArrowRightIcon />
+                  </Button>
+                </EmptyContent>
+              </Empty>
+            ) : (
+              <>
+                <FamilyGoalLine goal={goal} fmt={fmt} />
+                <PaydayCards
+                  snap={snap}
+                  plan={plan}
+                  colors={colors}
+                  fmt={fmt}
+                  incomes={myIncomes}
+                  title="On your payday, move"
+                />
+                <PlanBudgetCard
+                  budget={myMonth}
+                  spare={null}
+                  goalGap={goal.gap}
+                  budgets={[]}
+                  fmt={fmt}
+                  title="Your"
+                />
+                <MyAccountsCard snap={snap} sim={sim} ids={mine} fmt={fmt} />
+              </>
+            )}
+            <PlanTodoCard
+              actions={actions}
+              suggestions={suggestions}
+              today={today}
+              fmt={fmt}
+            />
+          </div>
+        )}
 
-          <PlanStatusCard
-            standing={standing}
-            verdict={verdict}
-            checkIn={checkIn}
-            notes={observations}
-            fmt={fmt}
-          />
+        {view === "family" && (
+          <div className="grid min-w-0 gap-6">
+            <PlanGoalCard summary={plan.summary} goal={goal} fmt={fmt} />
+            <PlanBudgetCard
+              budget={month}
+              spare={spareCash(snap, sim)}
+              goalGap={goal.gap}
+              budgets={plannedBudgets}
+              fmt={fmt}
+            />
+            <PlanTodoCard
+              actions={actions}
+              suggestions={suggestions}
+              today={today}
+              fmt={fmt}
+            />
+            <PaydayCards snap={snap} plan={plan} colors={colors} fmt={fmt} />
+            {waiting && (
+              <PlanChangesCard
+                state={state}
+                snap={snap}
+                checkIn={checkIn}
+                today={today}
+                fmt={fmt}
+              />
+            )}
+          </div>
+        )}
 
-          <PlanTodoCard
-            actions={actions}
-            suggestions={suggestions}
-            today={today}
-            fmt={fmt}
-          />
-
-          <PaydayCards snap={snap} plan={plan} colors={colors} fmt={fmt} />
-
-          {waiting && (
+        {view === "accountant" && (
+          <div className="grid min-w-0 gap-6">
+            <PlanStatusCard
+              standing={standing}
+              verdict={verdict}
+              checkIn={checkIn}
+              notes={observations}
+              fmt={fmt}
+            />
             <PlanChangesCard
               state={state}
               snap={snap}
@@ -338,60 +465,49 @@ export default async function PlanPage() {
               today={today}
               fmt={fmt}
             />
-          )}
-
-          <details className="group grid gap-6">
-            <summary className="flex cursor-pointer list-none items-center gap-2 font-heading font-semibold">
-              <CaretRightIcon className="transition-transform group-open:rotate-90" />
-              How the plan works
-            </summary>
-            <div className="mt-6 grid min-w-0 gap-6">
-              {!waiting && (
-                <PlanChangesCard
-                  state={state}
-                  snap={snap}
-                  checkIn={checkIn}
-                  today={today}
-                  fmt={fmt}
-                />
+            <AllocationCard
+              income={sim.monthly.income}
+              rows={allocation(sim, colors, snap)}
+              fmt={fmt}
+            />
+            <CategoryBreakdown
+              threadId={thread.id}
+              costs={costs}
+              leftOver={sim.monthly.free}
+              fmt={fmt}
+            />
+            <UpcomingCard
+              events={sim.events.filter(
+                (e) =>
+                  e.date <=
+                  sim.days[Math.min(UPCOMING_DAYS, sim.days.length) - 1]
               )}
-
-              <AllocationCard
-                income={sim.monthly.income}
-                rows={allocation(sim, colors, snap)}
-                fmt={fmt}
+              days={UPCOMING_DAYS}
+              accountName={(id) => accountName(snap, id)}
+              fmt={fmt}
+            />
+            <NetWorthCard
+              history={history}
+              owned={worth.owned}
+              owed={worth.totals.debts}
+              fmt={fmt}
+            />
+            <PotsCard snap={snap} sim={sim} colors={colors} fmt={fmt} />
+            <BalancesCard snap={snap} sim={sim} fmt={fmt} />
+            <div id="whose-accounts" className="scroll-mt-8">
+              <AccountHoldersCard
+                accounts={accounts
+                  .filter((a) => !a.archived)
+                  .map((a) => ({
+                    id: a.id,
+                    name: a.name,
+                    holderId: holders.get(a.id) ?? null,
+                  }))}
+                people={people}
               />
-
-              <CategoryBreakdown
-                threadId={thread.id}
-                costs={categoryCosts(snap)}
-                leftOver={sim.monthly.free}
-                fmt={fmt}
-              />
-
-              <UpcomingCard
-                events={sim.events.filter(
-                  (e) =>
-                    e.date <=
-                    sim.days[Math.min(UPCOMING_DAYS, sim.days.length) - 1]
-                )}
-                days={UPCOMING_DAYS}
-                accountName={(id) => accountName(snap, id)}
-                fmt={fmt}
-              />
-
-              <NetWorthCard
-                history={history}
-                owned={worth.owned}
-                owed={worth.totals.debts}
-                fmt={fmt}
-              />
-
-              <PotsCard snap={snap} sim={sim} colors={colors} fmt={fmt} />
-              <BalancesCard snap={snap} sim={sim} fmt={fmt} />
             </div>
-          </details>
-        </div>
+          </div>
+        )}
 
         <PlanAsk threadId={thread.id} messages={messages} />
       </div>
@@ -445,31 +561,6 @@ function allocation(
   ]
 }
 
-/** Monthly spending per expense category, biggest first. */
-function categoryCosts(snap: PlanSnapshot): CategoryCost[] {
-  const costs = new Map<string, CategoryCost>()
-  const get = (category: string) => {
-    const c = costs.get(category) ?? {
-      category,
-      bills: 0,
-      dayToDay: 0,
-      budget: snap.budgets.find((b) => b.category === category)?.budget ?? null,
-    }
-    costs.set(category, c)
-    return c
-  }
-  for (const b of snap.bills) get(b.category).bills += b.monthly
-  for (const v of snap.variable) get(v.category).dayToDay += v.monthly
-  return [...costs.values()]
-    .map((c) => ({
-      ...c,
-      bills: Math.round(c.bills * 100) / 100,
-      dayToDay: Math.round(c.dayToDay * 100) / 100,
-    }))
-    .filter((c) => c.bills + c.dayToDay >= 1)
-    .sort((a, b) => b.bills + b.dayToDay - (a.bills + a.dayToDay))
-}
-
 const accountName = (snap: PlanSnapshot, id: number) =>
   snap.accounts.find((a) => a.id === id)?.name ?? "Unknown account"
 
@@ -518,11 +609,16 @@ function PaydayCards({
   plan,
   colors,
   fmt,
+  incomes,
+  title = "On each payday, move",
 }: {
   snap: PlanSnapshot
   plan: Plan
   colors: Colors
   fmt: MoneyFormat
+  /** only these incomes, without the monthly and fortnightly set-asides */
+  incomes?: Set<string>
+  title?: string
 }) {
   const sources = [
     ...snap.incomes.map((i) => ({
@@ -551,13 +647,15 @@ function PaydayCards({
   ]
   const funding = sources.filter(
     (src) =>
-      src.amount >= MIN_PAYDAY ||
-      plan.set_asides.some((s) => s.income_id === src.id)
+      (!incomes || incomes.has(src.id)) &&
+      (src.amount >= MIN_PAYDAY ||
+        plan.set_asides.some((s) => s.income_id === src.id))
   )
+  if (funding.length === 0) return null
   return (
     <section className="grid gap-3">
       <h3 className="flex items-center gap-2 font-heading font-semibold">
-        <ArrowDownLeftIcon /> On each payday, move
+        <ArrowDownLeftIcon /> {title}
       </h3>
       <div className="grid gap-4 lg:grid-cols-2">
         {funding.map((src) => {
@@ -811,6 +909,75 @@ function BalancesCard({ snap, sim, fmt }: Props) {
             )
           })}
         </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+/** The family's goal in a line, for a person's own view. */
+function FamilyGoalLine({ goal, fmt }: { goal: PlanGoal; fmt: MoneyFormat }) {
+  const ahead = goal.gap >= 0
+  return (
+    <Link
+      href="/plan?view=family"
+      className="flex items-center gap-3 rounded-xl border px-4 py-3 text-sm text-pretty hover:bg-accent"
+    >
+      <span className="min-w-0 flex-1">
+        <span className="font-medium">Family goal:</span> on course for{" "}
+        {money(goal.forecast, fmt)} by {formatDate(goal.endDate, fmt.locale)},{" "}
+        <span className={ahead ? "text-positive" : "text-destructive"}>
+          {formatMoney(Math.abs(goal.gap), fmt)} {ahead ? "ahead" : "short"}
+        </span>
+        .
+      </span>
+      <CaretRightIcon className="shrink-0 text-muted-foreground" />
+    </Link>
+  )
+}
+
+/** A person's own accounts: now, and the lowest they get over the projection. */
+function MyAccountsCard({ snap, sim, ids, fmt }: Props & { ids: Set<number> }) {
+  const shown = snap.accounts.filter((a) => ids.has(a.id))
+  if (shown.length === 0) return null
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Your accounts</CardTitle>
+        <CardDescription>
+          Now, and the lowest each gets over the next {HORIZON_DAYS} days with
+          the plan.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <ul className="grid gap-2 text-sm">
+          {shown.map((a) => {
+            const run = sim.balances[a.id] ?? [a.balance]
+            const lowest = Math.min(...run)
+            const dips = lowest < 0 && isCashAccount(a.type)
+            return (
+              <li
+                key={a.id}
+                className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3 border-b pb-2 last:border-b-0 last:pb-0"
+              >
+                <span className="truncate font-medium" title={a.name}>
+                  {a.name}
+                </span>
+                <span className="font-medium tabular-nums">
+                  {formatMoney(a.balance, fmt)}
+                </span>
+                <span
+                  className={cn(
+                    "col-span-2 text-xs tabular-nums",
+                    dips ? "text-destructive" : "text-muted-foreground"
+                  )}
+                >
+                  Lowest {formatMoney(lowest, fmt)}
+                  {dips && " · will need topping up"}
+                </span>
+              </li>
+            )
+          })}
+        </ul>
       </CardContent>
     </Card>
   )

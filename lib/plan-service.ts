@@ -7,6 +7,12 @@ import {
   type Plan,
   type PlanSnapshot,
 } from "@/lib/plan"
+import {
+  categoryCosts,
+  monthBudget,
+  spareCash,
+  type CategorySpend,
+} from "@/lib/plan-budget"
 import { endPosition } from "@/lib/plan-goal"
 import {
   adjustmentEvents,
@@ -555,5 +561,109 @@ export async function tryPlanChange(deps: PlanDeps, trial: PlanTrial) {
     overdrafts: simulate(after.snapshot, after.plan).overdrafts,
     uncoveredBills: uncoveredBills(after.snapshot, after.plan),
     warnings: after.plan.warnings,
+  }
+}
+
+export type PurchaseInput = {
+  name: string
+  amount: number
+  /** when you'd buy it; defaults to the plan's first day */
+  date?: string
+  /** the account it's paid from; defaults to the cash account with the most in it */
+  accountId?: number
+  /** the expense category it would count against */
+  category?: string
+}
+
+export type PurchaseVerdict = "yes" | "over_budget" | "wait" | "no"
+
+/**
+ * Can you buy this? Runs the purchase through the plan as a one-off on its date and says
+ * whether every bill and set-aside still gets paid (spare cash stays at or above zero),
+ * what it does to the category's month and to where the plan ends, and if not now, the
+ * first payday it would fit. Saves nothing.
+ */
+export async function checkPurchase(
+  deps: Pick<PlanDeps, "repo" | "loadSnapshot">,
+  input: PurchaseInput,
+  spend: CategorySpend[] | null,
+  today: string
+) {
+  const live = await livePlan(deps)
+  if (!live) throw new Error("There's no plan yet")
+  const { snapshot, plan } = live
+  const date = !input.date || input.date < snapshot.start ? snapshot.start : input.date
+  const account = accountOf(snapshot, input.accountId, "account")
+  const before = simulate(snapshot, plan)
+  const spareBefore = spareCash(snapshot, before)
+  const buying = (on: string): PlanSnapshot => ({
+    ...snapshot,
+    upcoming: [
+      ...(snapshot.upcoming ?? []),
+      { id: "P1", name: input.name, date: on, amount: input.amount, accountId: account?.id ?? null },
+    ],
+  })
+  const tryOn = (on: string) => {
+    const snap = buying(on)
+    const sim = simulate(snap, plan)
+    return { date: on, snap, sim, spare: spareCash(snap, sim) }
+  }
+  const fits = (t: ReturnType<typeof tryOn>) => (t.spare?.balance ?? -Infinity) >= 0
+
+  const now = tryOn(date)
+  let earliest = fits(now) ? now : null
+  if (!earliest) {
+    const paydays = [
+      ...new Set(before.events.filter((e) => e.kind === "income" && e.date > date).map((e) => e.date)),
+    ]
+    for (const day of paydays) {
+      const t = tryOn(day)
+      if (fits(t)) {
+        earliest = t
+        break
+      }
+    }
+  }
+
+  const budget = input.category
+    ? monthBudget(categoryCosts(snapshot), spend ?? [], today).lines.find(
+        (l) => l.category.toLowerCase() === input.category!.trim().toLowerCase()
+      ) ?? null
+    : null
+  const budgetLeftAfter = budget && Math.round((budget.left - input.amount) * 100) / 100
+  const verdict: PurchaseVerdict =
+    earliest === now
+      ? budgetLeftAfter !== null && budgetLeftAfter < 0
+        ? "over_budget"
+        : "yes"
+      : earliest
+        ? "wait"
+        : "no"
+  const newOverdrafts = now.sim.overdrafts.filter((o) => {
+    const was = before.overdrafts.find((b) => b.accountId === o.accountId)
+    return !was || o.lowest < was.lowest - 0.5
+  })
+  const name = (id: number) => snapshot.accounts.find((a) => a.id === id)?.name ?? `#${id}`
+
+  return {
+    verdict,
+    purchase: { name: input.name, amount: input.amount, date, account: account?.name ?? null },
+    spareCash: {
+      before: spareBefore?.balance ?? null,
+      after: now.spare?.balance ?? null,
+      lowestOn: now.spare?.date ?? null,
+    },
+    earliestDate: earliest?.date ?? null,
+    budget: budget && {
+      category: budget.category,
+      limit: budget.limit,
+      limitIs: budget.fromBudget ? "budget" : "plan",
+      spentThisMonth: budget.spent,
+      leftBefore: budget.left,
+      leftAfter: budgetLeftAfter,
+    },
+    leftOverPerMonth: before.monthly.free,
+    end: { before: endPosition(snapshot, plan), after: endPosition(now.snap, plan) },
+    newOverdrafts: newOverdrafts.map((o) => ({ account: name(o.accountId), date: o.date, lowest: o.lowest })),
   }
 }
