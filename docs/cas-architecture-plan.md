@@ -131,3 +131,25 @@ doesn't match the repo. Each phase ships as its own commit with its migration an
 
 Live checks (Inngest dev server, a real sync) need a running stack and aren't run
 here; nothing in this work writes to production.
+
+## Status
+
+All nine phases are in, one commit each, with migrations under `supabase/migrations/`
+(`20261107000000` to `20261107000600`) and tests under `tests/`. The migrations were
+applied in order to a scratch Postgres 16 with Supabase's auth and storage stubbed out;
+none were pushed to a real project.
+
+Still to check against a running stack (not possible here):
+- Inngest end to end: the edge function's `feeds/synced` post, the debounce in practice,
+  and `asHousehold` minting a session with the real admin API.
+- Haiku 5.5 with structured output on a real snapshot, and the token and latency numbers.
+- The Plan page's proposals card and the account dialog's new fields, in a browser.
+
+Left as they were, on purpose:
+- Categorisation stays on Opus 5.5 (`casModel.categorise` changes it); its web search
+  tool and fallback now follow the model.
+- Budgets, recategorisation and assets are only logged in `plan_changes` when they run
+  from an approved proposal.
+- Between a sync and Cas's run (up to 90 seconds plus the run), `get_plan` and
+  `get_briefing` can still show an action as overdue that the run will tick off.
+- There's no Settings screen for the models yet; they're settings rows or env vars.
