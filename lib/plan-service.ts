@@ -73,7 +73,8 @@ export type PlanRecord = {
   plan: Plan
 }
 
-export type NewPlanAction = Pick<PlanAction, "title" | "detail" | "dueDate" | "focusTitle" | "createdBy">
+export type NewPlanAction = Pick<PlanAction, "title" | "detail" | "dueDate" | "focusTitle" | "createdBy"> &
+  Pick<PlanAction, "amount" | "fromAccountId" | "toAccountId">
 
 /** A decision Cas noted that changes the plan, not yet applied to it. */
 export type PlanDecision = { id: number; content: string; createdAt: string }
@@ -104,7 +105,7 @@ export interface PlanRepo {
   listActions(includeDone: boolean): Promise<PlanAction[]>
   addAction(a: NewPlanAction): Promise<PlanAction>
   /** null when there's no such action */
-  setActionDone(id: number, done: boolean): Promise<PlanAction | null>
+  setActionDone(id: number, done: boolean, by: { actor: Actor; transactionId: number | null }): Promise<PlanAction | null>
   removeAction(id: number): Promise<PlanAction | null>
 
   openDecisions(): Promise<PlanDecision[]>
@@ -725,6 +726,10 @@ export type PlanActionInput = {
   dueDate?: string | null
   /** the plan's focus item it came from */
   focusTitle?: string | null
+  /** for an item that moves money: with an account, a sync can tick it off */
+  amount?: number | null
+  fromAccountId?: number | null
+  toAccountId?: number | null
 }
 
 /** A write's meta where the operation id may be left out: one is made up, so it runs once. */
@@ -739,6 +744,9 @@ export async function addPlanAction(deps: PlanDeps, input: PlanActionInput & Opt
   const title = input.title.trim()
   if (!title) throw new Error("Describe the action")
   if (input.dueDate && !/^\d{4}-\d{2}-\d{2}$/.test(input.dueDate)) throw new Error("Due date is yyyy-MM-dd")
+  if (input.amount != null && !(input.amount > 0)) throw new Error("The amount must be above zero")
+  if ((input.fromAccountId != null || input.toAccountId != null) && input.fromAccountId === input.toAccountId)
+    throw new Error("A transfer needs two different accounts")
   const same = (await deps.repo.listActions(false)).find((a) => a.title.toLowerCase() === title.toLowerCase())
   if (same) return { id: same.id, existing: true }
   return once(deps, "add_plan_action", withId(input), async () => {
@@ -748,6 +756,9 @@ export async function addPlanAction(deps: PlanDeps, input: PlanActionInput & Opt
       dueDate: input.dueDate || null,
       focusTitle: input.focusTitle?.trim() || null,
       createdBy: deps.actor,
+      amount: input.amount ?? null,
+      fromAccountId: input.fromAccountId ?? null,
+      toAccountId: input.toAccountId ?? null,
     })
     return {
       summary: `Added action: ${title}`,
@@ -763,7 +774,10 @@ export async function setPlanActionDone(
   return once(deps, "set_plan_action_done", withId(input), async () => {
     const before = (await deps.repo.listActions(true)).find((a) => a.id === input.actionId)
     if (!before) throw new Error(`No action ${input.actionId}; list_plan_actions shows them`)
-    const after = await deps.repo.setActionDone(input.actionId, input.done)
+    const after = await deps.repo.setActionDone(input.actionId, input.done, {
+      actor: deps.actor,
+      transactionId: input.done ? (input.transactionId ?? null) : null,
+    })
     return {
       summary: `${input.done ? "Done" : "Reopened"}: ${before.title}`,
       result: { changed: { action: { before, after } } },

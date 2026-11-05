@@ -197,6 +197,13 @@ export type PlanAction = {
   focusTitle: string | null
   /** website: you added it; mcp: Claude did, on your say-so; cas: Cas did; user: you approved Cas's proposal */
   createdBy: "website" | "mcp" | "cas" | "user" | "system"
+  /** money it moves, when it's a transfer or payment; with an account, it can be matched */
+  amount?: number | null
+  fromAccountId?: number | null
+  toAccountId?: number | null
+  /** who ticked it off, and the transaction that showed it was done */
+  doneBy?: "website" | "mcp" | "cas" | "user" | "system" | null
+  doneTransactionId?: number | null
   /** null while still to do */
   doneAt: string | null
   createdAt: string

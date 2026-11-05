@@ -160,16 +160,23 @@ export function supabasePlanRepo(db: Db): PlanRepo {
             due_date: a.dueDate,
             focus_title: a.focusTitle,
             created_by: a.createdBy,
+            amount: a.amount ?? null,
+            from_account_id: a.fromAccountId ?? null,
+            to_account_id: a.toAccountId ?? null,
           })
           .select(COLUMNS.planActions)
           .single()
       )
     },
-    async setActionDone(id, done) {
+    async setActionDone(id, done, by) {
       const [row] = await must<PlanAction[]>(
         db
           .from("plan_actions")
-          .update({ done_at: done ? new Date().toISOString() : null })
+          .update({
+            done_at: done ? new Date().toISOString() : null,
+            done_by: done ? by.actor : null,
+            done_transaction_id: done ? by.transactionId : null,
+          })
           .eq("id", id)
           .select(COLUMNS.planActions)
       )

@@ -225,13 +225,16 @@ export function planTools(ctx: PlanToolContext): CasTool[] {
       title: "Add a plan action item",
       access: "action",
       description:
-        `${CHANGES_DATA} Put an action item on the Plan page, e.g. 'Move $500 to the tax pot before 20 Nov'. Keep the title short and concrete, and put the numbers in the detail. Adding a title that's already open returns the existing item instead of a duplicate.`,
+        `${CHANGES_DATA} Put an action item on the Plan page, e.g. 'Move $500 to the tax pot before 20 Nov'. Keep the title short and concrete, and put the numbers in the detail. Adding a title that's already open returns the existing item instead of a duplicate. For one that moves money, give the amount and accounts: the next bank sync ticks it off itself when a matching transfer shows up.`,
       input: {
         operationId: optionalOperationId,
         reason,
         title: z.string().trim().min(1).max(120),
         detail: z.string().trim().optional().describe("One sentence of why or how, with the key number"),
         dueDate: isoDate.optional(),
+        amount: z.number().positive().optional().describe("For an item that moves money: how much"),
+        fromAccountId: accountId.optional().describe("The account the money leaves"),
+        toAccountId: accountId.optional().describe("The account it goes to"),
       },
       run: async (args) => ({ ok: true, ...(await addPlanAction(await ctx.deps(), args)) }),
     }),

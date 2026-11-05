@@ -4,6 +4,8 @@ import { getApiKey } from "@/lib/anthropic"
 import { proposalProblem } from "@/lib/cas/proposals"
 import { FIGURE_SOURCE, proposalTools } from "@/lib/cas/tools"
 import { loadDataHealth } from "@/lib/data-health"
+import type { MatchTx } from "@/lib/action-matching"
+import { getDb, must } from "@/lib/db"
 import { asHousehold } from "@/lib/db/household"
 import { planDeps } from "@/lib/plan-repo"
 import { todayLocal } from "@/supabase/functions/_shared/akahu"
@@ -26,6 +28,18 @@ export async function runCasNow() {
     judge: (await getApiKey()) ? claudeJudge : null,
     model: SNAPSHOT_MODEL,
     today: todayLocal(),
+    system: await planDeps("system", { quiet: true }),
+    transactions: async (since) =>
+      (
+        await must<MatchTx[]>(
+          (await getDb())
+            .from("transactions")
+            .select("id, accountId:account_id, date, amount, description")
+            .gte("date", since)
+            .order("id")
+            .limit(5000)
+        )
+      ).map((t) => ({ ...t, amount: Number(t.amount) })),
   })
 }
 

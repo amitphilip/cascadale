@@ -1,9 +1,16 @@
 import { format, subDays, parseISO } from "date-fns"
 
+import { matchable, matchActions, type MatchTx } from "@/lib/action-matching"
 import type { DataHealth } from "@/lib/health"
 import type { PlanFigures } from "@/lib/plan-figures"
 import { PERSON_ACTORS } from "@/lib/plan-instructions"
-import { loadFigures, type FigureSource, type PlanChange, type PlanDeps } from "@/lib/plan-service"
+import {
+  loadFigures,
+  setPlanActionDone,
+  type FigureSource,
+  type PlanChange,
+  type PlanDeps,
+} from "@/lib/plan-service"
 
 import type { Judge, Judgement } from "./judge"
 import type { CasSnapshot, CasStore, NewProposal, Proposal, SnapshotWarning, TopAction } from "./store"
@@ -28,6 +35,63 @@ export type WorkerDeps = {
   today: string
   /** why a proposed call couldn't run (lib/cas/proposals.ts), so it's dropped; none checks nothing */
   validate?: (tool: string, args: Record<string, unknown>) => string | null
+  /** the plan service acting as system, quiet, and transactions from a date on: to tick off finished items */
+  system?: PlanDeps
+  transactions?: (since: string) => Promise<MatchTx[]>
+}
+
+/**
+ * Tick off action items the transactions show are done, before anything else, so the
+ * snapshot never reports finished work as overdue. A clear match is ticked off as system
+ * with the transaction linked; several possible ones become a proposal.
+ */
+export async function autoComplete(deps: WorkerDeps) {
+  const { system, transactions, store, today } = deps
+  if (!system || !transactions) return { ticked: [] as number[], proposed: [] as number[] }
+  const all = await system.repo.listActions(true)
+  const open = all.filter(matchable)
+  const pendingSystem = (await store.listProposals(["pending"])).filter((p) => p.source === "system")
+  // a possible match for an item that's since been done or removed is moot
+  const openIds = new Set(all.filter((a) => a.doneAt === null).map((a) => a.id))
+  for (const p of pendingSystem)
+    if (!openIds.has(Number(p.args.actionId)))
+      await store.settleProposal(p.id, { status: "superseded", reason: "The action item is done or gone" })
+  if (!open.length) return { ticked: [], proposed: [] }
+
+  const earliest = open.map((a) => a.createdAt.slice(0, 10)).sort()[0]
+  const since = format(subDays(parseISO(earliest), 3), "yyyy-MM-dd")
+  const txs = await transactions(since)
+  const byId = new Map(txs.map((t) => [t.id, t]))
+  const ticked: number[] = []
+  const proposed: number[] = []
+  for (const m of matchActions(all, txs, today)) {
+    const action = all.find((a) => a.id === m.actionId)!
+    if (m.kind === "confident") {
+      const t = byId.get(m.transactionId)!
+      await setPlanActionDone(system, {
+        actionId: m.actionId,
+        done: true,
+        operationId: `match-${m.actionId}-${m.transactionId}`,
+        reason: `Matched ${t.description} (${t.amount}) on ${t.date}`,
+        transactionId: m.transactionId,
+      })
+      ticked.push(m.actionId)
+    } else if (!pendingSystem.some((p) => Number(p.args.actionId) === m.actionId && p.status === "pending")) {
+      const list = m.candidates.map((t) => `${t.description} ${t.amount} on ${t.date}`).join("; ")
+      const [p] = await store.addProposals([
+        {
+          tool: "set_plan_action_done",
+          args: { actionId: m.actionId, done: true },
+          reason: `"${action.title}" may be done, but it isn't clear which transaction did it: ${list}`.slice(0, 500),
+          source: "system",
+          basedOnChangeId: null,
+          basedOnSyncAt: null,
+        },
+      ])
+      proposed.push(p.id)
+    }
+  }
+  return { ticked, proposed }
 }
 
 export type RawProposal = { tool: string; args: Record<string, unknown>; reason: string }
@@ -131,7 +195,12 @@ function parseArgs(json: string): Record<string, unknown> | null {
 
 const brief = (c: PlanChange) => ({ at: c.createdAt, actor: c.actor, action: c.action, summary: c.summary })
 
-export type RunResult = { snapshot: CasSnapshot; added: Proposal[]; superseded: number[] }
+export type RunResult = {
+  snapshot: CasSnapshot
+  added: Proposal[]
+  superseded: number[]
+  matched: Awaited<ReturnType<typeof autoComplete>>
+}
 
 const sameCall = (a: { tool: string; args: unknown }, b: { tool: string; args: unknown }) =>
   a.tool === b.tool && JSON.stringify(a.args) === JSON.stringify(b.args)
@@ -139,6 +208,7 @@ const sameCall = (a: { tool: string; args: unknown }, b: { tool: string; args: u
 /** One background run: figures, one judgement, one snapshot. */
 export async function runCas(deps: WorkerDeps): Promise<RunResult> {
   const { store, today } = deps
+  const matched = await autoComplete(deps)
   // what the snapshot is based on, read first: anything recorded while it works makes it stale
   const [change, sync, previous, health, uncategorised, openNotes, pending, rejected] = await Promise.all([
     store.latestChange(),
@@ -247,5 +317,5 @@ export async function runCas(deps: WorkerDeps): Promise<RunResult> {
     latencyMs: usage.latencyMs,
     error,
   })
-  return { snapshot, added, superseded }
+  return { snapshot, added, superseded, matched }
 }

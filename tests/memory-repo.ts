@@ -118,10 +118,12 @@ export function memoryRepo(
       actions.push(row)
       return structuredClone(row)
     },
-    async setActionDone(id, done) {
+    async setActionDone(id, done, by) {
       const a = actions.find((x) => x.id === id)
       if (!a) return null
       a.doneAt = done ? now() : null
+      a.doneBy = done ? by.actor : null
+      a.doneTransactionId = done ? by.transactionId : null
       return structuredClone(a)
     },
     async removeAction(id) {

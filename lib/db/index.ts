@@ -144,7 +144,7 @@ export const COLUMNS = {
   upcomingExpenses:
     "id, name, amount, dueDate:due_date, accountId:account_id, note, createdAt:created_at",
   planActions:
-    "id, title, detail, dueDate:due_date, focusTitle:focus_title, createdBy:created_by, doneAt:done_at, createdAt:created_at",
+    "id, title, detail, dueDate:due_date, focusTitle:focus_title, createdBy:created_by, doneAt:done_at, createdAt:created_at, amount, fromAccountId:from_account_id, toAccountId:to_account_id, doneBy:done_by, doneTransactionId:done_transaction_id",
   checkIns:
     "id, periodStart:period_start, periodEnd:period_end, stats, result, createdAt:created_at",
   casNotes:

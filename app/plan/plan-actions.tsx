@@ -39,6 +39,7 @@ export function ActionItems({
       finished ? (
         <span key="done">
           Done {formatDate(a.doneAt!.slice(0, 10), locale)}
+          {a.doneBy === "system" && " · a transaction showed it was done"}
         </span>
       ) : a.dueDate ? (
         <span
