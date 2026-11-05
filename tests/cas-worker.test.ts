@@ -28,6 +28,7 @@ const judgement = (over: Partial<Judgement> = {}): Judgement => ({
   proposals: [],
   keepProposalIds: [],
   notes: [],
+  resolveNotes: [],
   uncertain: false,
   ...over,
 })

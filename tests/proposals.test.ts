@@ -17,7 +17,7 @@ function setup() {
   const tools = planTools({ ...h.ctx, deps: async () => userDeps })
   const ctx: ProposalContext = { store: cas.store, deps: userDeps, tools }
   const judged = (j: Partial<Judgement>): Judge => async (_i, model) => ({
-    judgement: { headline: "x", topActions: [], proposals: [], keepProposalIds: [], notes: [], uncertain: false, ...j },
+    judgement: { headline: "x", topActions: [], proposals: [], keepProposalIds: [], notes: [], resolveNotes: [], uncertain: false, ...j },
     model,
     inputTokens: 0,
     outputTokens: 0,

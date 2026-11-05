@@ -54,6 +54,9 @@ export const JudgementSchema = z.object({
   notes: z
     .array(z.object({ kind: z.enum(["observation", "todo"]), content: z.string() }))
     .describe("Anything to remember for later runs, including disagreements with a person's decision"),
+  resolveNotes: z
+    .array(z.object({ noteId: z.number().int(), resolution: z.string() }))
+    .describe("Discrepancy notes (and others) that today's figures settle, with how"),
   uncertain: z.boolean().describe("True when the data doesn't support a confident read"),
 })
 export type Judgement = z.infer<typeof JudgementSchema>
@@ -93,5 +96,6 @@ You're given the figures, already worked out: status, the goal's gap, the low po
 - rejectedProposals were turned down: don't propose them again.
 - keepProposalIds: pending proposals that still hold. Leave out ones the latest changes or data make stale.
 - notes: things to remember, e.g. a disagreement or a pattern. Don't repeat open notes.
+- openNotes of kind discrepancy are reports that the raw data disagrees with your last snapshot. Check them against the figures: if the figures now agree, resolve them in resolveNotes saying so; if the data really is off (stale feed, drift, an action done but not ticked), say so in the headline or a top action, and resolve them once there's nothing left to reconcile.
 - uncertain: true when stale feeds, drift or missing data mean you can't give a confident read.
 Use New Zealand English, plain and short, amounts in dollars, accounts and pots by name.`

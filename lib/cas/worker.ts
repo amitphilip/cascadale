@@ -298,6 +298,10 @@ export async function runCas(deps: WorkerDeps): Promise<RunResult> {
     await store.saveNote(n)
   }
 
+  const noteIds = new Set(openNotes.map((n) => n.id))
+  for (const r of judgement?.resolveNotes ?? [])
+    if (noteIds.has(r.noteId)) await store.resolveNote(r.noteId, r.resolution.slice(0, 500))
+
   const snapshot = await store.saveSnapshot({
     status: figures?.status ?? "watch",
     headline: judgement?.headline || plainHeadline(figures),

@@ -82,6 +82,8 @@ export interface CasStore {
   syncsAfter(at: string | null): Promise<SyncMark[]>
   openNotes(): Promise<CasNote[]>
   saveNote(note: { kind: CasNote["kind"]; content: string }): Promise<CasNote>
+  /** null when it's already resolved */
+  resolveNote(id: number, resolution: string): Promise<CasNote | null>
   uncategorisedCount(): Promise<number>
 
   listProposals(statuses: ProposalStatus[], limit?: number): Promise<Proposal[]>

@@ -25,6 +25,7 @@ import {
   rejectProposals,
   type ProposalContext,
 } from "@/lib/cas/proposals"
+import { reportDiscrepancy } from "@/lib/cas/discrepancy"
 import { loadStatus } from "@/lib/cas/status"
 import { PROPOSAL_STATUSES } from "@/lib/cas/store"
 import { casStore } from "@/lib/cas/store-db"
@@ -692,6 +693,21 @@ export const TOOLS: CasTool[] = [
     description: `${CHANGES_DATA} Turn down one or more of Cas's proposals. It's recorded as the user's decision, so Cas won't propose it again.`,
     input: { proposalIds, reason: z.string().trim().max(300).optional().describe("Why, in a few words") },
     run: async ({ proposalIds, reason }) => rejectProposals(await proposalContext(), proposalIds, reason),
+  }),
+
+  tool({
+    name: "report_discrepancy",
+    title: "Report a discrepancy to Cas",
+    access: "control",
+    description:
+      "When what you see in the raw data disagrees with get_status (e.g. it lists an action as overdue but the transfer is in search_transactions, or a balance differs), report it here. It's saved as a Cas note (kind discrepancy) and starts a debounced Cas run, which reconciles it and resolves the note; get_status shows the snapshot as stale until then. Doesn't change your finances.",
+    input: {
+      what: z.string().trim().min(1).max(500).describe("What the raw data shows, with the numbers"),
+      snapshotSays: z.string().trim().max(300).optional().describe("What the snapshot says instead"),
+      evidence: z.string().trim().max(500).optional().describe("Transaction ids, amounts, dates or tools that show it"),
+      snapshotId: z.number().int().positive().optional(),
+    },
+    run: async (args) => reportDiscrepancy(await planDeps("mcp"), await casStore(), args),
   }),
 
   tool({

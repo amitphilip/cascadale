@@ -115,6 +115,17 @@ export function supabaseCasStore(db: Db): CasStore {
     saveNote({ kind, content }) {
       return must<CasNote>(db.from("cas_notes").insert({ kind, content }).select(COLUMNS.casNotes).single())
     },
+    async resolveNote(id, resolution) {
+      const [row] = await must<CasNote[]>(
+        db
+          .from("cas_notes")
+          .update({ resolved_at: new Date().toISOString(), resolution })
+          .eq("id", id)
+          .is("resolved_at", null)
+          .select(COLUMNS.casNotes)
+      )
+      return row ?? null
+    },
     async uncategorisedCount() {
       return Number((await getCategorizationStats())?.uncategorized ?? 0)
     },

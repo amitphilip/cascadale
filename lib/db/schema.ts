@@ -226,7 +226,7 @@ export type CheckIn = {
   createdAt: string
 }
 
-export const NOTE_KINDS = ["observation", "decision", "preference", "todo"] as const
+export const NOTE_KINDS = ["observation", "decision", "preference", "todo", "discrepancy"] as const
 export type NoteKind = (typeof NOTE_KINDS)[number]
 
 /** Something Cas remembers between conversations (cas_notes). */

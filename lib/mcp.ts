@@ -30,6 +30,7 @@ const TOOLS_INSTRUCTIONS = `Cascadale is the user's budgeting app: bank accounts
 
 - For "how are we going" questions, call get_status first: Cas's latest state of play, written in the background after every sync and plan change, returned in well under a second. If is_stale is true, say what's newer and that Cas is catching up (or call refresh_cas).
 - Use the raw read tools for facts (balances, transactions, the plan). get_briefing is the fullest single overview. Their figures (goal gap, low point, drift) are the same numbers get_status is built from.
+- When what you see in the raw data conflicts with get_status, call report_discrepancy (no need to ask first: it only tells Cas) so Cas reconciles it on its next run.
 - These tools change the user's real finances: ${ACTION_NAMES.join(", ")}. Confirm with the user before calling one, and tell them what changed from the tool's result.
 - Check data_health (on get_briefing, get_overview, get_plan and run_check_in) before relying on numbers: name stale accounts and drift from the bank, rather than answering as if the data were current.
 - The plan is the one on the website's Plan page. To change it, use upsert_pot / remove_pot (pots and set-asides) and add_plan_adjustment / remove_plan_adjustment (one-off changes on a date). These take effect at once: the plan is always today's data with every pot and adjustment applied, and there is nothing to rebuild. try_plan_change runs a change through the simulation without saving it. When get_plan lists unappliedDecisions, offer to carry them out. Pass a fresh operationId with every write; retrying with the same one is safe.
@@ -92,7 +93,7 @@ function createToolsServer() {
     // 0.2.0: get_status and refresh_cas; figures on get_plan and get_briefing; plan action
     //   writes take an optional operationId and reason; list_proposals, approve_proposal and
     //   reject_proposal; find_account, purpose and aliases on get_overview's accounts, and
-    //   fromAccount / toAccount in words on the plan tools
+    //   fromAccount / toAccount in words on the plan tools; report_discrepancy
     { name: "cascadale", title: "Cascadale", version: "0.2.0" },
     { instructions: TOOLS_INSTRUCTIONS }
   )

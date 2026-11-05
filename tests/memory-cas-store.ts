@@ -53,6 +53,12 @@ export function memoryCasStore(changes: PlanChange[], opts: { uncategorised?: nu
       notes.push(n)
       return n
     },
+    async resolveNote(id, resolution) {
+      const n = notes.find((x) => x.id === id && x.resolvedAt === null)
+      if (!n) return null
+      Object.assign(n, { resolvedAt: new Date().toISOString(), resolution })
+      return structuredClone(n)
+    },
     async uncategorisedCount() {
       return opts.uncategorised ?? 0
     },
