@@ -8,6 +8,11 @@ import { endPosition } from "@/lib/plan-goal"
 import { todayLocal } from "@/supabase/functions/_shared/akahu"
 import {
   addAdjustment,
+  addPlanAction,
+  loadFigures,
+  removePlanAction,
+  setPlanActionDone,
+  type FigureSource,
   checkPurchase,
   getPlanState,
   livePlan,
@@ -30,6 +35,14 @@ export type PlanToolContext = {
   health: () => Promise<DataHealth>
   /** this month's spend per category, for check_purchase's budget line */
   categorySpend?: (month: string) => Promise<CategorySpend[]>
+  /** balances and transactions for the plan's headline figures */
+  figures?: Omit<FigureSource, "health">
+}
+
+/** The figures (lib/plan-figures.ts) as the tools report them, or null without a plan. */
+export async function toolFigures(ctx: PlanToolContext) {
+  if (!ctx.figures) return null
+  return loadFigures(await ctx.deps(), { ...ctx.figures, health: ctx.health }, todayLocal())
 }
 
 const operationId = z
@@ -46,6 +59,9 @@ const decisionIds = z
   .optional()
   .describe("Cas decision notes (from get_plan's unappliedDecisions) this change carries out")
 const accountId = z.number().int().positive()
+const optionalOperationId = operationId.optional().describe(
+  "Any unique string for this change. Retrying with the same id changes nothing twice; one is made up if you leave it out."
+)
 
 /** What every write to the plan does and returns. */
 const WRITE_NOTE =
@@ -63,6 +79,8 @@ const potInput = {
     .describe("Which income funds it: an income key from get_financial_picture or part of its name. Its account is the default from account."),
   fromAccountId: accountId.optional().describe("Account the money comes from; defaults to the income's account"),
   toAccountId: accountId.optional().describe("Account it moves to; omit to earmark it in the from account"),
+  fromAccount: z.string().trim().optional().describe("Instead of fromAccountId: the account's name, an alias or what it's for (e.g. 'rates account')"),
+  toAccount: z.string().trim().optional().describe("Instead of toAccountId: the account's name, an alias or what it's for"),
   covers: z.array(z.string()).optional().describe("Bills it pays: their keys or names"),
   note: z.string().trim().max(200).optional(),
 }
@@ -75,6 +93,8 @@ const adjustmentInput = {
   amount: z.number().positive().optional().describe("For add and change_amount"),
   fromAccountId: accountId.optional().describe("For a transfer: the account it leaves"),
   toAccountId: accountId.optional().describe("For a transfer: the account it goes to"),
+  fromAccount: z.string().trim().optional().describe("Instead of fromAccountId: the account's name, an alias or what it's for"),
+  toAccount: z.string().trim().optional().describe("Instead of toAccountId: the account's name, an alias or what it's for"),
 }
 
 export function planTools(ctx: PlanToolContext): CasTool[] {
@@ -84,9 +104,9 @@ export function planTools(ctx: PlanToolContext): CasTool[] {
       title: "Current plan",
       access: "read",
       description:
-        "The savings plan the Plan page shows, as it stands today: what to set aside into which pot and when, its focus and warnings, its simulation's monthly totals, overdrafts and bills no pot covers, where it ends, your pots and one-off adjustments, recent changes with who made them, and Cas decisions still to carry out (unappliedDecisions). status is current or no_plan. Includes data_health.",
+        "The savings plan the Plan page shows, as it stands today: what to set aside into which pot and when, its focus and warnings, its simulation's monthly totals, overdrafts and bills no pot covers, where it ends, your pots and one-off adjustments, recent changes with who made them, and Cas decisions still to carry out (unappliedDecisions). status is current or no_plan. figures has the headline numbers every view shares: status, the goal's gap, the low point, spare cash, drift and each open action item's status. Includes data_health.",
       run: async () => {
-        const [deps, health] = await Promise.all([ctx.deps(), ctx.health()])
+        const [deps, health, figures] = await Promise.all([ctx.deps(), ctx.health(), toolFigures(ctx)])
         const [{ plan: base, ...rest }, live] = await Promise.all([getPlanState(deps), livePlan(deps)])
         const sim = live && simulate(live.snapshot, live.plan)
         return {
@@ -98,6 +118,7 @@ export function planTools(ctx: PlanToolContext): CasTool[] {
           uncoveredBills: live && uncoveredBills(live.snapshot, live.plan),
           end: live ? endPosition(live.snapshot, live.plan) : null,
           ...rest,
+          figures,
           data_health: health,
         }
       },
@@ -188,6 +209,59 @@ export function planTools(ctx: PlanToolContext): CasTool[] {
       description: `${CHANGES_DATA} Cancel a one-off adjustment (its id from list_plan_adjustments); it's kept as history. ${WRITE_NOTE}`,
       input: { operationId, reason, decisionIds, adjustmentId: z.number().int().positive() },
       run: async (args) => removeAdjustment(await ctx.deps(), args),
+    }),
+
+    tool({
+      name: "list_plan_actions",
+      title: "Plan action items",
+      access: "read",
+      description:
+        "The action items on the Plan page: things to do about the plan, each with an actionId, title, optional detail and dueDate, whether it's done (doneAt) and who added it. Check it before suggesting an action, so you don't repeat one that's already there. get_briefing already lists the open ones.",
+      input: { includeDone: z.boolean().optional().describe("Include finished items. Defaults to open ones only.") },
+      run: async ({ includeDone }) => ({
+        actions: await (await ctx.deps()).repo.listActions(!!includeDone),
+        today: todayLocal(),
+      }),
+    }),
+
+    tool({
+      name: "add_plan_action",
+      title: "Add a plan action item",
+      access: "action",
+      description:
+        `${CHANGES_DATA} Put an action item on the Plan page, e.g. 'Move $500 to the tax pot before 20 Nov'. Keep the title short and concrete, and put the numbers in the detail. Adding a title that's already open returns the existing item instead of a duplicate. For one that moves money, give the amount and accounts: the next bank sync ticks it off itself when a matching transfer shows up.`,
+      input: {
+        operationId: optionalOperationId,
+        reason,
+        title: z.string().trim().min(1).max(120),
+        detail: z.string().trim().optional().describe("One sentence of why or how, with the key number"),
+        dueDate: isoDate.optional(),
+        amount: z.number().positive().optional().describe("For an item that moves money: how much"),
+        fromAccountId: accountId.optional().describe("The account the money leaves"),
+        toAccountId: accountId.optional().describe("The account it goes to"),
+        fromAccount: z.string().trim().optional().describe("Instead of fromAccountId: its name, an alias or what it's for"),
+        toAccount: z.string().trim().optional().describe("Instead of toAccountId: its name, an alias or what it's for"),
+      },
+      run: async (args) => ({ ok: true, ...(await addPlanAction(await ctx.deps(), args)) }),
+    }),
+
+    tool({
+      name: "set_plan_action_done",
+      title: "Mark a plan action item done or not done",
+      access: "action",
+      description:
+        `${CHANGES_DATA} Tick off a plan action item by its actionId from list_plan_actions, or reopen it with done false.`,
+      input: { operationId: optionalOperationId, reason, actionId: z.number().int().positive(), done: z.boolean() },
+      run: async (args) => ({ ok: true, ...(await setPlanActionDone(await ctx.deps(), args)) }),
+    }),
+
+    tool({
+      name: "remove_plan_action",
+      title: "Remove a plan action item",
+      access: "action",
+      description: `${CHANGES_DATA} Delete a plan action item by its actionId from list_plan_actions.`,
+      input: { operationId: optionalOperationId, reason, actionId: z.number().int().positive() },
+      run: async (args) => ({ ok: true, ...(await removePlanAction(await ctx.deps(), args)) }),
     }),
   ]
 }

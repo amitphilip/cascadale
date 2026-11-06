@@ -13,7 +13,11 @@ import {
   spareCash,
   type CategorySpend,
 } from "@/lib/plan-budget"
+import { resolveAccountId, type AccountRef } from "@/lib/account-lookup"
+import type { PlanAction } from "@/lib/db/schema"
+import type { DataHealth } from "@/lib/health"
 import { endPosition } from "@/lib/plan-goal"
+import { goalFor, planFigures, type Tx } from "@/lib/plan-figures"
 import {
   adjustmentEvents,
   applyPots,
@@ -49,7 +53,15 @@ export type PlanChange = {
   result: unknown
   createdAt: string
   completedAt: string | null
+  /** what the change touched, before and after */
+  before?: unknown
+  after?: unknown
+  proposalId?: number | null
+  transactionId?: number | null
 }
+
+/** What a change links to: the proposal it carries out, the transaction that prompted it. */
+export type ChangeLinks = { proposalId?: number | null; transactionId?: number | null }
 
 /** The last plan made with the model: the latest plan message and the snapshot it was made on. */
 export type PlanRecord = {
@@ -62,16 +74,19 @@ export type PlanRecord = {
   plan: Plan
 }
 
+export type NewPlanAction = Pick<PlanAction, "title" | "detail" | "dueDate" | "focusTitle" | "createdBy"> &
+  Pick<PlanAction, "amount" | "fromAccountId" | "toAccountId">
+
 /** A decision Cas noted that changes the plan, not yet applied to it. */
 export type PlanDecision = { id: number; content: string; createdAt: string }
 
 export interface PlanRepo {
   /** Start a write: a new change row, or the existing one for this operation id. */
-  claim(c: { operationId: string; actor: Actor; action: string; reason: string | null }): Promise<{
+  claim(c: { operationId: string; actor: Actor; action: string; reason: string | null } & ChangeLinks): Promise<{
     change: PlanChange
     existing: boolean
   }>
-  complete(id: number, summary: string, result: unknown): Promise<void>
+  complete(id: number, summary: string, result: unknown, diff: { before: unknown; after: unknown }): Promise<void>
   /** Drop a change whose write failed, so the operation id can be retried. */
   release(id: number): Promise<void>
   listChanges(limit: number): Promise<PlanChange[]>
@@ -85,6 +100,14 @@ export interface PlanRepo {
   removeAdjustment(id: number, by: Actor, reason: string | null): Promise<AdjustmentInstruction | null>
 
   latestPlan(): Promise<PlanRecord | null>
+  /** the latest plan you started yourself, which sets the goal */
+  goalPlan(): Promise<PlanRecord | null>
+
+  listActions(includeDone: boolean): Promise<PlanAction[]>
+  addAction(a: NewPlanAction): Promise<PlanAction>
+  /** null when there's no such action */
+  setActionDone(id: number, done: boolean, by: { actor: Actor; transactionId: number | null }): Promise<PlanAction | null>
+  removeAction(id: number): Promise<PlanAction | null>
 
   openDecisions(): Promise<PlanDecision[]>
   applyDecisions(ids: number[], changeId: number): Promise<PlanDecision[]>
@@ -95,15 +118,60 @@ export type PlanDeps = {
   /** today's snapshot, built the same way the Plan page builds it */
   loadSnapshot: () => Promise<PlanSnapshot | null>
   actor: Actor
+  /** told of every new change once it's recorded (not replays); emits plan/changed */
+  onChange?: (change: PlanChange) => Promise<void>
+  /** accounts with their aliases and purpose, to find one by what people call it */
+  accounts?: () => Promise<AccountRef[]>
+}
+
+/** Accounts named in words rather than ids. */
+export type AccountNames = { fromAccount?: string | null; toAccount?: string | null }
+
+/**
+ * An input with fromAccount / toAccount (a name, alias or purpose, e.g. "rates account")
+ * turned into ids; an id given alongside wins. Throws with the candidates when it's unclear.
+ */
+export async function withAccountIds<T extends AccountNames & { fromAccountId?: number | null; toAccountId?: number | null }>(
+  deps: Pick<PlanDeps, "accounts" | "loadSnapshot">,
+  input: T
+): Promise<T> {
+  if (!input.fromAccount?.trim() && !input.toAccount?.trim()) return input
+  const list = deps.accounts ? await deps.accounts() : ((await deps.loadSnapshot())?.accounts ?? [])
+  const out = { ...input }
+  if (out.fromAccountId == null && input.fromAccount?.trim())
+    out.fromAccountId = resolveAccountId(list, input.fromAccount, "From account")
+  if (out.toAccountId == null && input.toAccount?.trim())
+    out.toAccountId = resolveAccountId(list, input.toAccount, "To account")
+  return out
 }
 
 /** A write's common inputs. */
-export type WriteMeta = {
+export type WriteMeta = ChangeLinks & {
   /** any unique string; the same id again returns the first result and changes nothing */
   operationId: string
   reason?: string | null
   /** Cas decisions this change carries out */
   decisionIds?: number[]
+}
+
+/** The before and after of what a write's result says it changed. */
+function diffOf(result: object) {
+  const changed = (result as { changed?: Record<string, { before?: unknown; after?: unknown }> }).changed
+  const first = changed && Object.values(changed)[0]
+  return { before: first?.before ?? null, after: first?.after ?? null }
+}
+
+/**
+ * Record a change and run its write once per operation id (see once). For writes outside the
+ * plan's own tables, such as a recategorisation Cas proposed and you approved.
+ */
+export function recordChange<T extends object>(
+  deps: PlanDeps,
+  action: string,
+  meta: WriteMeta,
+  fn: () => Promise<{ summary: string; result: T }>
+) {
+  return once(deps, action, meta, fn)
 }
 
 /**
@@ -123,6 +191,8 @@ async function once<T extends object>(
     actor: deps.actor,
     action,
     reason: meta.reason?.trim() || null,
+    proposalId: meta.proposalId ?? null,
+    transactionId: meta.transactionId ?? null,
   })
   if (existing) {
     if (change.action !== action)
@@ -139,7 +209,11 @@ async function once<T extends object>(
     // the write is in by now, so failing to report on it shouldn't undo the log of it
     const planNow = await planOutcome(deps).catch(() => null)
     const full = { ...result, appliedDecisions: decisions, planNow } as T
-    await deps.repo.complete(change.id, summary, full)
+    await deps.repo.complete(change.id, summary, full, diffOf(result))
+    // a failed event only delays Cas's next run; it mustn't fail the write
+    await deps.onChange?.({ ...change, summary, completedAt: new Date().toISOString() }).catch((err) =>
+      console.error("plan/changed not sent", err)
+    )
     return {
       ...full,
       change: changeRef({ ...change, summary, completedAt: new Date().toISOString() }),
@@ -334,7 +408,8 @@ function resolvePot(snap: PlanSnapshot, input: PotInput) {
 }
 
 /** Add a pot to the plan, or change the one with this name. */
-export async function upsertPot(deps: PlanDeps, input: PotInput & WriteMeta) {
+export async function upsertPot(deps: PlanDeps, raw: PotInput & AccountNames & WriteMeta) {
+  const input = await withAccountIds(deps, raw)
   return once(deps, "upsert_pot", input, async () => {
     const fields = resolvePot(await snapshotOrThrow(deps), input)
     const { name } = fields
@@ -453,7 +528,8 @@ async function potNames(repo: PlanRepo, latest: PlanRecord | null) {
   ]
 }
 
-export async function addAdjustment(deps: PlanDeps, input: AdjustmentInput & WriteMeta) {
+export async function addAdjustment(deps: PlanDeps, raw: AdjustmentInput & AccountNames & WriteMeta) {
+  const input = await withAccountIds(deps, raw)
   return once(deps, "add_plan_adjustment", input, async () => {
     const snap = await snapshotOrThrow(deps)
     const fields = resolveAdjustment(snap, input, await potNames(deps.repo, await deps.repo.latestPlan()))
@@ -485,15 +561,20 @@ export async function removeAdjustment(deps: PlanDeps, input: { adjustmentId: nu
 // ── Trying a change ──────────────────────────────────────────────────────────
 
 export type PlanTrial = {
-  pots?: PotInput[]
+  pots?: (PotInput & AccountNames)[]
   removePots?: string[]
-  adjustments?: AdjustmentInput[]
+  adjustments?: (AdjustmentInput & AccountNames)[]
   /** what a bill would cost each time it's paid */
   bills?: { name: string; amount: number }[]
 }
 
 /** What a change would do to the plan, run the same way as the real one. Saves nothing. */
-export async function tryPlanChange(deps: PlanDeps, trial: PlanTrial) {
+export async function tryPlanChange(deps: PlanDeps, raw: PlanTrial) {
+  const trial: PlanTrial = {
+    ...raw,
+    pots: raw.pots && (await Promise.all(raw.pots.map((p) => withAccountIds(deps, p)))),
+    adjustments: raw.adjustments && (await Promise.all(raw.adjustments.map((a) => withAccountIds(deps, a)))),
+  }
   const [base, snapshot, pots, adjustments] = await Promise.all([
     deps.repo.latestPlan(),
     snapshotOrThrow(deps),
@@ -666,4 +747,114 @@ export async function checkPurchase(
     end: { before: endPosition(snapshot, plan), after: endPosition(now.snap, plan) },
     newOverdrafts: newOverdrafts.map((o) => ({ account: name(o.accountId), date: o.date, lowest: o.lowest })),
   }
+}
+
+// ── Action items ─────────────────────────────────────────────────────────────
+
+export type PlanActionInput = {
+  title: string
+  detail?: string | null
+  dueDate?: string | null
+  /** the plan's focus item it came from */
+  focusTitle?: string | null
+  /** for an item that moves money: with an account, a sync can tick it off */
+  amount?: number | null
+  fromAccountId?: number | null
+  toAccountId?: number | null
+}
+
+/** A write's meta where the operation id may be left out: one is made up, so it runs once. */
+export type OptionalMeta = Omit<WriteMeta, "operationId"> & { operationId?: string }
+const withId = <T extends OptionalMeta>(input: T): T & WriteMeta => ({
+  ...input,
+  operationId: input.operationId?.trim() || crypto.randomUUID(),
+})
+
+/** Put an action item on the Plan page. A title that's already open returns that item. */
+export async function addPlanAction(deps: PlanDeps, raw: PlanActionInput & AccountNames & OptionalMeta) {
+  const input = await withAccountIds(deps, raw)
+  const title = input.title.trim()
+  if (!title) throw new Error("Describe the action")
+  if (input.dueDate && !/^\d{4}-\d{2}-\d{2}$/.test(input.dueDate)) throw new Error("Due date is yyyy-MM-dd")
+  if (input.amount != null && !(input.amount > 0)) throw new Error("The amount must be above zero")
+  if ((input.fromAccountId != null || input.toAccountId != null) && input.fromAccountId === input.toAccountId)
+    throw new Error("A transfer needs two different accounts")
+  const same = (await deps.repo.listActions(false)).find((a) => a.title.toLowerCase() === title.toLowerCase())
+  if (same) return { id: same.id, existing: true }
+  return once(deps, "add_plan_action", withId(input), async () => {
+    const after = await deps.repo.addAction({
+      title,
+      detail: input.detail?.trim() || null,
+      dueDate: input.dueDate || null,
+      focusTitle: input.focusTitle?.trim() || null,
+      createdBy: deps.actor,
+      amount: input.amount ?? null,
+      fromAccountId: input.fromAccountId ?? null,
+      toAccountId: input.toAccountId ?? null,
+    })
+    return {
+      summary: `Added action: ${title}`,
+      result: { id: after.id, changed: { action: { before: null, after } } },
+    }
+  })
+}
+
+export async function setPlanActionDone(
+  deps: PlanDeps,
+  input: { actionId: number; done: boolean } & OptionalMeta
+) {
+  return once(deps, "set_plan_action_done", withId(input), async () => {
+    const before = (await deps.repo.listActions(true)).find((a) => a.id === input.actionId)
+    if (!before) throw new Error(`No action ${input.actionId}; list_plan_actions shows them`)
+    const after = await deps.repo.setActionDone(input.actionId, input.done, {
+      actor: deps.actor,
+      transactionId: input.done ? (input.transactionId ?? null) : null,
+    })
+    return {
+      summary: `${input.done ? "Done" : "Reopened"}: ${before.title}`,
+      result: { changed: { action: { before, after } } },
+    }
+  })
+}
+
+export async function removePlanAction(deps: PlanDeps, input: { actionId: number } & OptionalMeta) {
+  return once(deps, "remove_plan_action", withId(input), async () => {
+    const before = await deps.repo.removeAction(input.actionId)
+    if (!before) throw new Error(`No action ${input.actionId}; list_plan_actions shows them`)
+    return {
+      summary: `Removed action: ${before.title}`,
+      result: { changed: { action: { before, after: null } } },
+    }
+  })
+}
+
+// ── Figures ──────────────────────────────────────────────────────────────────
+
+/** What the figures need beyond the plan: today's balances and every transaction. */
+export type FigureSource = {
+  balances: () => Promise<Map<number, number>>
+  txs: () => Promise<Tx[]>
+  health: () => Promise<DataHealth | null>
+}
+
+/** The plan's headline numbers as they stand today (see lib/plan-figures.ts). */
+export async function loadFigures(deps: Pick<PlanDeps, "repo" | "loadSnapshot">, source: FigureSource, today: string) {
+  const [live, started, balances, txs, health, actions] = await Promise.all([
+    livePlan(deps),
+    deps.repo.goalPlan(),
+    source.balances(),
+    source.txs(),
+    source.health(),
+    deps.repo.listActions(false),
+  ])
+  if (!live) return null
+  const goal = goalFor({
+    started: started && { snapshot: started.snapshot, plan: started.plan },
+    base: { snapshot: live.base.snapshot, plan: live.base.plan },
+    live,
+    balances,
+    txs,
+    today,
+  })
+  return planFigures({ live, goal, health, actions, today })
 }

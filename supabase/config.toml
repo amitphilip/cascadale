@@ -419,3 +419,7 @@ enabled = true
 # (neither is checked by the gateway here); the function verifies both itself.
 [functions.akahu-sync]
 verify_jwt = false
+
+# Cas's background runs call it with a ticket, not a user JWT (see the function).
+[functions.cas-session]
+verify_jwt = false

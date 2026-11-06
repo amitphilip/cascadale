@@ -5,8 +5,9 @@ import { z } from "zod"
  * - memory: reads or writes Cas's own notes; for the agent (the Cas MCP server
  *   shows them too)
  * - action: changes your data; only on Cascadale's MCP server, so you confirm each one
+ * - control: runs Cas's background work (refresh_cas); on Cascadale's MCP server, not for Cas
  */
-export type ToolAccess = "read" | "memory" | "action"
+export type ToolAccess = "read" | "memory" | "action" | "control"
 
 export type CasTool = {
   name: string

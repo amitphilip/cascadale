@@ -11,9 +11,12 @@ describe("tool definitions", () => {
     const { tools } = harness()
     const writes = tools.filter((t) => t.access === "action")
     expect(writes.map((t) => t.name).sort()).toEqual([
+      "add_plan_action",
       "add_plan_adjustment",
+      "remove_plan_action",
       "remove_plan_adjustment",
       "remove_pot",
+      "set_plan_action_done",
       "upsert_pot",
     ])
     for (const t of writes) {

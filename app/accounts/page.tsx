@@ -85,6 +85,7 @@ export default async function AccountsPage() {
                       {ACCOUNT_TYPE_LABELS[a.type]}
                       {a.institution ? ` · ${a.institution}` : ""}
                     </div>
+                    <AccountLabels purpose={a.purpose} aliases={a.aliases} />
                   </div>
                   <AccountActions account={a} />
                 </div>
@@ -124,6 +125,7 @@ export default async function AccountsPage() {
                       {a.institution && (
                         <div className="text-xs text-muted-foreground">{a.institution}</div>
                       )}
+                      <AccountLabels purpose={a.purpose} aliases={a.aliases} />
                     </TableCell>
                     <TableCell>
                       <div className="flex gap-1.5">
@@ -161,5 +163,17 @@ export default async function AccountsPage() {
         </>
       )}
     </>
+  )
+}
+
+/** What an account is for and what else it's called, when set. */
+function AccountLabels({ purpose, aliases }: { purpose: string | null; aliases: string[] }) {
+  if (!purpose && aliases.length === 0) return null
+  return (
+    <div className="text-xs text-pretty text-muted-foreground">
+      {purpose}
+      {purpose && aliases.length > 0 && " · "}
+      {aliases.length > 0 && `Also “${aliases.join("”, “")}”`}
+    </div>
   )
 }

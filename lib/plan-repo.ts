@@ -1,10 +1,12 @@
 import "server-only"
 
-import { DbError, getDb, must, type Db } from "@/lib/db"
+import { COLUMNS, DbError, getDb, getOwnerId, must, type Db } from "@/lib/db"
+import { emit } from "@/lib/events"
+import type { PlanAction } from "@/lib/db/schema"
 import type { PlanSnapshot } from "@/lib/plan"
 import type { Actor, AdjustmentInstruction, PotInstruction } from "@/lib/plan-instructions"
-import { getPlanThread } from "@/lib/queries"
-import type { PlanChange, PlanDeps, PlanRepo } from "@/lib/plan-service"
+import { getGoalThread, getPlanThread } from "@/lib/queries"
+import type { PlanChange, PlanDeps, PlanRecord, PlanRepo } from "@/lib/plan-service"
 import { loadSnapshot } from "@/lib/planner"
 
 // The plan service's tables (plan_pots, plan_adjustments, plan_changes, plan_threads and
@@ -16,7 +18,7 @@ const POT_COLUMNS =
 const ADJUSTMENT_COLUMNS =
   "id, date, kind, target, ref, name, amount, fromAccountId:from_account_id, toAccountId:to_account_id, createdBy:created_by, createdAt:created_at, reason"
 const CHANGE_COLUMNS =
-  "id, operationId:operation_id, actor, action, reason, summary, result, createdAt:created_at, completedAt:completed_at"
+  "id, operationId:operation_id, actor, action, reason, summary, result, createdAt:created_at, completedAt:completed_at, transactionId:transaction_id, proposalId:proposal_id"
 
 const pot = (r: PotInstruction): PotInstruction => ({ ...r, amount: Number(r.amount) })
 const adjustment = (r: AdjustmentInstruction): AdjustmentInstruction => ({
@@ -26,12 +28,19 @@ const adjustment = (r: AdjustmentInstruction): AdjustmentInstruction => ({
 
 export function supabasePlanRepo(db: Db): PlanRepo {
   return {
-    async claim({ operationId, actor, action, reason }) {
+    async claim({ operationId, actor, action, reason, transactionId, proposalId }) {
       try {
         const change = await must<PlanChange>(
           db
             .from("plan_changes")
-            .insert({ operation_id: operationId, actor, action, reason })
+            .insert({
+              operation_id: operationId,
+              actor,
+              action,
+              reason,
+              transaction_id: transactionId ?? null,
+              proposal_id: proposalId ?? null,
+            })
             .select(CHANGE_COLUMNS)
             .single()
         )
@@ -45,11 +54,11 @@ export function supabasePlanRepo(db: Db): PlanRepo {
         return { change, existing: true }
       }
     },
-    async complete(id, summary, result) {
+    async complete(id, summary, result, { before, after }) {
       await must(
         db
           .from("plan_changes")
-          .update({ summary, result, completed_at: new Date().toISOString() })
+          .update({ summary, result, before, after, completed_at: new Date().toISOString() })
           .eq("id", id)
       )
     },
@@ -133,18 +142,51 @@ export function supabasePlanRepo(db: Db): PlanRepo {
       return row ? adjustment(row) : null
     },
 
-    async latestPlan() {
-      const thread = await getPlanThread()
-      const message = thread?.messages.findLast((m) => m.plan)
-      if (!thread || !message?.plan) return null
-      return {
-        id: message.id,
-        threadId: thread.id,
-        createdAt: message.createdAt,
-        madeBy: thread.madeBy,
-        snapshot: thread.snapshot,
-        plan: message.plan,
-      }
+    latestPlan: async () => planRecord(await getPlanThread()),
+    goalPlan: async () => planRecord(await getGoalThread()),
+
+    listActions(includeDone) {
+      let query = db.from("plan_actions").select(COLUMNS.planActions).order("id").limit(500)
+      if (!includeDone) query = query.is("done_at", null)
+      return must<PlanAction[]>(query)
+    },
+    addAction(a) {
+      return must<PlanAction>(
+        db
+          .from("plan_actions")
+          .insert({
+            title: a.title,
+            detail: a.detail,
+            due_date: a.dueDate,
+            focus_title: a.focusTitle,
+            created_by: a.createdBy,
+            amount: a.amount ?? null,
+            from_account_id: a.fromAccountId ?? null,
+            to_account_id: a.toAccountId ?? null,
+          })
+          .select(COLUMNS.planActions)
+          .single()
+      )
+    },
+    async setActionDone(id, done, by) {
+      const [row] = await must<PlanAction[]>(
+        db
+          .from("plan_actions")
+          .update({
+            done_at: done ? new Date().toISOString() : null,
+            done_by: done ? by.actor : null,
+            done_transaction_id: done ? by.transactionId : null,
+          })
+          .eq("id", id)
+          .select(COLUMNS.planActions)
+      )
+      return row ?? null
+    },
+    async removeAction(id) {
+      const [row] = await must<PlanAction[]>(
+        db.from("plan_actions").delete().eq("id", id).select(COLUMNS.planActions)
+      )
+      return row ?? null
     },
 
     openDecisions() {
@@ -174,7 +216,41 @@ export function supabasePlanRepo(db: Db): PlanRepo {
   }
 }
 
-/** The plan service as the signed-in user, acting as `actor`. */
-export async function planDeps(actor: Actor): Promise<PlanDeps> {
-  return { repo: supabasePlanRepo(await getDb()), loadSnapshot: loadSnapshot as () => Promise<PlanSnapshot | null>, actor }
+type Thread = Awaited<ReturnType<typeof getPlanThread>>
+
+/** A thread's latest plan message, with the snapshot it was made on. */
+function planRecord(thread: Thread): PlanRecord | null {
+  const message = thread?.messages.findLast((m) => m.plan)
+  if (!thread || !message?.plan) return null
+  return {
+    id: message.id,
+    threadId: thread.id,
+    createdAt: message.createdAt,
+    madeBy: thread.madeBy,
+    snapshot: thread.snapshot,
+    plan: message.plan,
+  }
+}
+
+/**
+ * The plan service as the signed-in user, acting as `actor`. Every recorded change emits
+ * plan/changed for Cas's worker, unless `quiet` (the worker's own writes, which it's
+ * already accounting for).
+ */
+export async function planDeps(actor: Actor, opts: { quiet?: boolean } = {}): Promise<PlanDeps> {
+  const db = await getDb()
+  return {
+    repo: supabasePlanRepo(db),
+    loadSnapshot: loadSnapshot as () => Promise<PlanSnapshot | null>,
+    actor,
+    accounts: () => must(db.from("accounts").select("id, name, aliases, purpose, archived").order("id")),
+    onChange: opts.quiet
+      ? undefined
+      : async (change) => {
+          await emit(db, {
+            name: "plan/changed",
+            data: { householdId: await getOwnerId(db), changeId: change.id, actor: change.actor, action: change.action },
+          })
+        },
+  }
 }

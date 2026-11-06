@@ -1,5 +1,6 @@
 import "server-only"
 
+import { AsyncLocalStorage } from "node:async_hooks"
 import { cache } from "react"
 import { cookies, headers } from "next/headers"
 import { createServerClient } from "@supabase/ssr"
@@ -32,15 +33,26 @@ export function tokenClient(token: string) {
 }
 
 /**
+ * Background work (Cas's worker) runs as a household's owner with no request of theirs:
+ * lib/db/household.ts signs in as them and runs the work inside this, so getDb and
+ * getUserId act as that user just as they would in a request.
+ */
+export const actingAs = new AsyncLocalStorage<{ db: ReturnType<typeof tokenClient>; userId: string }>()
+
+/**
  * A client acting as the signed-in user, one per request: from the bearer token when the
  * request carries one (the MCP endpoint), otherwise from the session cookies.
  * Row level security scopes every query to that user.
  */
-export const getDb = cache(async () => {
+const requestDb = cache(async () => {
   const token = bearerToken((await headers()).get("authorization"))
   if (token) return tokenClient(token)
   return cookieClient(await cookies())
 })
+
+export async function getDb() {
+  return actingAs.getStore()?.db ?? requestDb()
+}
 
 function cookieClient(store: Awaited<ReturnType<typeof cookies>>) {
   const { url, key } = supabaseEnv()
@@ -58,10 +70,12 @@ function cookieClient(store: Awaited<ReturnType<typeof cookies>>) {
   })
 }
 
-export type Db = Awaited<ReturnType<typeof getDb>>
+export type Db = Awaited<ReturnType<typeof requestDb>>
 
 /** The signed-in user's id; throws when signed out. */
 export async function getUserId(db?: Db) {
+  const acting = actingAs.getStore()
+  if (acting) return acting.userId
   db ??= await getDb()
   // A token client has no session to read claims from, so check its token instead.
   const token = bearerToken((await headers()).get("authorization"))
@@ -115,7 +129,7 @@ export async function selectAll<T>(page: (from: number, to: number) => PromiseLi
  */
 export const COLUMNS = {
   accounts:
-    "id, name, type, institution, openingBalance:opening_balance, archived, akahuId:akahu_id, akahuStart:akahu_start, createdAt:created_at",
+    "id, name, type, institution, openingBalance:opening_balance, archived, akahuId:akahu_id, akahuStart:akahu_start, purpose, aliases, createdAt:created_at",
   assets: "id, name, kind, value, valuedOn:valued_on, note",
   categories: "id, name, kind, monthlyBudget:monthly_budget",
   rules:
@@ -130,7 +144,7 @@ export const COLUMNS = {
   upcomingExpenses:
     "id, name, amount, dueDate:due_date, accountId:account_id, note, createdAt:created_at",
   planActions:
-    "id, title, detail, dueDate:due_date, focusTitle:focus_title, createdBy:created_by, doneAt:done_at, createdAt:created_at",
+    "id, title, detail, dueDate:due_date, focusTitle:focus_title, createdBy:created_by, doneAt:done_at, createdAt:created_at, amount, fromAccountId:from_account_id, toAccountId:to_account_id, doneBy:done_by, doneTransactionId:done_transaction_id",
   checkIns:
     "id, periodStart:period_start, periodEnd:period_end, stats, result, createdAt:created_at",
   casNotes:

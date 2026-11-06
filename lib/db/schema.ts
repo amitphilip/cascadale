@@ -56,6 +56,10 @@ export type Account = {
   akahuId: string | null
   /** Only Akahu transactions after this date are synced (set when linking an account with history). */
   akahuStart: string | null
+  /** what it's for, e.g. "Council rates and annual bills" */
+  purpose: string | null
+  /** other names people call it, e.g. "rates account" */
+  aliases: string[]
   createdAt: string
 }
 
@@ -195,8 +199,15 @@ export type PlanAction = {
   dueDate: string | null
   /** the plan's focus item it was added from */
   focusTitle: string | null
-  /** website: you added it; mcp: Claude did, on your say-so; cas: Cas did, in the Plan page's chat */
-  createdBy: "website" | "mcp" | "cas"
+  /** website: you added it; mcp: Claude did, on your say-so; cas: Cas did; user: you approved Cas's proposal */
+  createdBy: "website" | "mcp" | "cas" | "user" | "system"
+  /** money it moves, when it's a transfer or payment; with an account, it can be matched */
+  amount?: number | null
+  fromAccountId?: number | null
+  toAccountId?: number | null
+  /** who ticked it off, and the transaction that showed it was done */
+  doneBy?: "website" | "mcp" | "cas" | "user" | "system" | null
+  doneTransactionId?: number | null
   /** null while still to do */
   doneAt: string | null
   createdAt: string
@@ -215,7 +226,7 @@ export type CheckIn = {
   createdAt: string
 }
 
-export const NOTE_KINDS = ["observation", "decision", "preference", "todo"] as const
+export const NOTE_KINDS = ["observation", "decision", "preference", "todo", "discrepancy"] as const
 export type NoteKind = (typeof NOTE_KINDS)[number]
 
 /** Something Cas remembers between conversations (cas_notes). */

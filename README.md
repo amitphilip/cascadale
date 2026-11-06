@@ -110,7 +110,7 @@ Two MCP servers (Streamable HTTP), each added to claude.ai as its own connector:
   `add_upcoming_expense`, `run_check_in`, …). Actions change your data, and
   Claude is told to ask you first.
 - **Cas** has `ask_cas`, which hands a question to the agent
-  ([lib/cas/agent.ts](lib/cas/agent.ts), Claude Opus 5.5 with the
+  ([lib/cas/agent.ts](lib/cas/agent.ts), Claude Sonnet 5.5 by default, with the
   Anthropic key from Settings). It works through the read tools on its own,
   checks feed health, books, cash flow, budgets, bills and plan, and answers with
   suggested actions for Claude to run on Cascadale. It never changes your finances
@@ -138,6 +138,29 @@ Two MCP servers (Streamable HTTP), each added to claude.ai as its own connector:
 - Every response carries the household's currency and locale (NZD and en-NZ
   unless Settings says otherwise).
 
+- **Cas in the background:** after every sync (`feeds/synced`) and plan change
+  (`plan/changed`), an Inngest function ([lib/cas/inngest.ts](lib/cas/inngest.ts)),
+  debounced 90 seconds per household, ticks off action items a transaction shows are
+  done, works out the plan's figures ([lib/plan-figures.ts](lib/plan-figures.ts)) and
+  asks the model once for a headline, next actions and proposals. It writes a
+  `cas_snapshots` row, which `get_status` returns without a model, flagged `is_stale`
+  when a newer sync or change came after it. `refresh_cas` asks for a run now.
+- **Proposals:** Cas proposes changes as tool calls (`cas_proposals`) instead of
+  describing them. `list_proposals`, `approve_proposal` and `reject_proposal`, or Approve
+  and Reject on the Plan page, settle them; approving runs the call through the same
+  services, recorded as the user. Cas never proposes undoing a person's change; it adds
+  a note instead.
+- **Change log:** `plan_changes` is append-only: actor (`website`, `mcp`, `cas`, `user`,
+  `system`), the person, reason, before and after, and the proposal or transaction behind
+  it. `report_discrepancy` tells Cas when the raw data disagrees with its snapshot.
+- **Accounts by name:** each account has a purpose and aliases (Accounts page), so
+  `find_account` and the plan tools' `fromAccount` / `toAccount` resolve "the rates
+  account" or "Tax", or list the candidates.
+- **Models:** Haiku 5.5 for snapshot runs, Sonnet 5.5 for check-ins, `ask_cas`, the Plan
+  chat and escalated runs, Opus 5.5 for deep reviews and new plans
+  ([lib/cas/models.ts](lib/cas/models.ts)); set them with `CAS_MODEL_*` or Settings rows
+  `casModel.*`. Each snapshot records its model, tokens and latency.
+
 Tools are defined once in [lib/cas/tools.ts](lib/cas/tools.ts) (the plan tools in
 [lib/cas/plan-tools.ts](lib/cas/plan-tools.ts)). Both
 servers sign in through Supabase Auth's OAuth 2.1 server, so clients act as you,
@@ -151,7 +174,17 @@ and row level security still applies.
 3. Deploy the app somewhere public over HTTPS; claude.ai can't reach `localhost`.
    `ask_cas` can take a few minutes, so allow long requests (its route sets
    `maxDuration = 300`).
-4. In claude.ai, go to **Settings → Connectors → Add custom connector** twice:
+4. For Cas's background runs, create an [Inngest](https://www.inngest.com) app, sync it
+   to `https://<your app>/api/inngest`, and set `INNGEST_EVENT_KEY` and
+   `INNGEST_SIGNING_KEY` on the app. Deploy the session function and give the sync
+   function the event key: `npx supabase functions deploy cas-session` and
+   `npx supabase secrets set INNGEST_EVENT_KEY=…`. The app holds no admin key: each
+   event carries a single-use ticket, created by whoever triggered it, which
+   `cas-session` exchanges for a short session as that person
+   ([lib/db/household.ts](lib/db/household.ts)). Locally, run
+   `npx inngest-cli@latest dev` and set `INNGEST_DEV=1`. Without Inngest everything else
+   works, and `refresh_cas` runs Cas straight away instead.
+5. In claude.ai, go to **Settings → Connectors → Add custom connector** twice:
    Cascadale at `https://<your app>/api/mcp` and Cas at
    `https://<your app>/api/mcp/cas`. Sign in and allow each.
 

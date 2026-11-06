@@ -1,33 +1,43 @@
 import "server-only"
 
-import { differenceInCalendarDays, differenceInHours, parseISO } from "date-fns"
+import { differenceInHours, parseISO } from "date-fns"
 import { z } from "zod"
 
 import {
   categorizeMerchant,
   checkIn,
-  addPlanAction,
   deleteAsset,
-  deletePlanAction,
   reconcileAccount,
   runAutoCategorize,
   saveAsset,
   saveUpcomingExpense,
   setCategoryBudgets,
-  setPlanActionDone,
   setTransactionCategory,
   syncAkahu,
   type ActionResult,
 } from "@/app/actions"
+import { findAccount } from "@/lib/account-lookup"
 import { getAkahuOverview, type AkahuOverview } from "@/lib/akahu"
-import { planTools } from "@/lib/cas/plan-tools"
-import { tool, isoDate, type CasTool } from "@/lib/cas/tool"
+import { planTools, toolFigures, type PlanToolContext } from "@/lib/cas/plan-tools"
+import {
+  approveProposals,
+  describeProposal,
+  rejectProposals,
+  type ProposalContext,
+} from "@/lib/cas/proposals"
+import { reportDiscrepancy } from "@/lib/cas/discrepancy"
+import { loadStatus } from "@/lib/cas/status"
+import { PROPOSAL_STATUSES } from "@/lib/cas/store"
+import { casStore } from "@/lib/cas/store-db"
+import { CHANGES_DATA, tool, isoDate, type CasTool } from "@/lib/cas/tool"
+import { emit, eventsConfigured } from "@/lib/events"
 import { loadDataHealth } from "@/lib/data-health"
 import { buildStats } from "@/lib/checkin"
-import { COLUMNS, getDb, must } from "@/lib/db"
-import { ASSET_KINDS, NOTE_KINDS, type CasNote, type PlanAction } from "@/lib/db/schema"
+import { COLUMNS, getDb, getOwnerId, must } from "@/lib/db"
+import { ASSET_KINDS, NOTE_KINDS, type CasNote } from "@/lib/db/schema"
 import { buildNetWorth } from "@/lib/net-worth"
 import { describeSimulation, simulate } from "@/lib/plan"
+import { actionStatus } from "@/lib/plan-figures"
 import { livePlan, planStatus } from "@/lib/plan-service"
 import { planDeps } from "@/lib/plan-repo"
 import { loadSnapshot } from "@/lib/planner"
@@ -45,12 +55,14 @@ import {
   getRuleReview,
   getSettings,
   getStatements,
+  getTransactionAmounts,
   getTransactions,
   getUncategorizedMerchants,
   getUpcomingExpenses,
   PAGE_SIZE,
 } from "@/lib/queries"
 import { localDate, todayLocal } from "@/supabase/functions/_shared/akahu"
+import type { Actor } from "@/lib/plan-instructions"
 
 export type { CasTool }
 
@@ -127,66 +139,69 @@ async function notes(includeResolved = false) {
   return must<CasNote[]>(query)
 }
 
-/** Days ahead a to-do counts as due soon. */
-const DUE_SOON_DAYS = 7
-
 /** The open plan action items, each flagged overdue or due soon against today. */
 async function openPlanActions() {
   const today = todayLocal()
-  const actions = await must<PlanAction[]>(
-    (await getDb()).from("plan_actions").select(COLUMNS.planActions).is("done_at", null).order("id").limit(200)
-  )
-  return actions.map(({ id, title, detail, dueDate, createdBy, createdAt }) => {
-    const days = dueDate ? differenceInCalendarDays(parseISO(dueDate), parseISO(today)) : null
-    return {
-      actionId: id,
-      title,
-      detail,
-      dueDate,
-      status: days === null ? "no_due_date" : days < 0 ? "overdue" : days <= DUE_SOON_DAYS ? "due_soon" : "later",
-      addedBy: createdBy,
-      addedOn: localDate(createdAt),
-    }
-  })
+  const actions = await (await planDeps("mcp")).repo.listActions(false)
+  return actions.map(({ id, title, detail, dueDate, createdBy, createdAt }) => ({
+    actionId: id,
+    title,
+    detail,
+    dueDate,
+    status: actionStatus(dueDate, today),
+    addedBy: createdBy,
+    addedOn: localDate(createdAt),
+  }))
 }
 
-/** add_plan_action, recording who added the item: Claude (mcp) or Cas in its chat. */
-export const addPlanActionTool = (by: "mcp" | "cas") =>
-  tool({
-    name: "add_plan_action",
-    title: "Add a plan action item",
-    access: "action",
-    description:
-      "Put an action item on the Plan page, e.g. 'Move $500 to the tax pot before 20 Nov'. Keep the title short and concrete, and put the numbers in the detail. Adding a title that's already open returns the existing item instead of a duplicate.",
-    input: {
-      title: z.string().trim().min(1).max(120),
-      detail: z.string().trim().optional().describe("One sentence of why or how, with the key number"),
-      dueDate: isoDate.optional(),
-    },
-    run: ({ title, detail, dueDate }) => {
-      const form = new FormData()
-      form.set("title", title)
-      if (detail) form.set("detail", detail)
-      if (dueDate) form.set("dueDate", dueDate)
-      form.set("createdBy", by)
-      return act(addPlanAction(form))
-    },
-  })
+/** Balances and transactions for the plan's figures, as the signed-in user. */
+export const FIGURE_SOURCE: NonNullable<PlanToolContext["figures"]> = {
+  balances: async () => new Map((await getAccountsWithBalances()).map((a) => [a.id, a.balance])),
+  txs: getTransactionAmounts,
+}
 
-/** The plan tools act as Claude (MCP); the Cas agent makes its own for the Plan page's chat. */
-const PLAN_TOOLS = planTools({
-  deps: () => planDeps("mcp"),
+/** The plan tools' context, acting as `actor`. */
+export const planToolContext = (actor: Actor): PlanToolContext => ({
+  deps: () => planDeps(actor),
   health: () => loadDataHealth(),
   categorySpend: getCategorySpend,
+  figures: FIGURE_SOURCE,
 })
 
+/** The plan tools act as Claude (MCP); the Cas agent makes its own for the Plan page's chat. */
+const PLAN_CONTEXT = planToolContext("mcp")
+const PLAN_TOOLS = planTools(PLAN_CONTEXT)
+
+/** The action tools a proposal can run, as "user": the plan's own, then the rest. */
+export function proposalTools(): CasTool[] {
+  const plan = planTools(planToolContext("user")).filter((t) => t.access === "action")
+  const names = new Set(plan.map((t) => t.name))
+  return [...plan, ...TOOLS.filter((t) => t.access === "action" && !names.has(t.name))]
+}
+
+/** Approving or rejecting Cas's proposals as the signed-in person. */
+export async function proposalContext(): Promise<ProposalContext> {
+  return { store: await casStore(), deps: await planDeps("user"), tools: proposalTools() }
+}
+
+const proposalIds = z.array(z.number().int().positive()).min(1).max(20)
+
 export const TOOLS: CasTool[] = [
+  tool({
+    name: "get_status",
+    title: "How we're going",
+    access: "read",
+    description:
+      "Fast: Cas's latest state of play, written in the background after every sync and plan change, without running a model. snapshot has status (on_track, watch, off_track), headline, goalGap, lowPoint, topActions (linked to plan action ids), warnings (drift, stale feeds, uncategorised), proposals and the figures it's built from, plus the model and when it ran. is_stale is true when a sync or change came after it, and newer lists them; Cas is already catching up, or call refresh_cas. Use this first for 'how are we going'.",
+    run: async () => loadStatus(await casStore()),
+  }),
+
   tool({
     name: "get_briefing",
     title: "Briefing",
     access: "read",
     description:
-      "Start here. Everything happening right now in one call: bank feed health, what came in and went out since the last check-in against the usual pattern, the projected low point of your balances over the next 60 days, upcoming bills and one-offs, what needs categorizing, the last check-in's verdict and the plan's goal, Cas decisions still to carry out in the plan, the Plan page's open action items (each overdue, due_soon, later or no_due_date), and Cas's open notes and to-dos. Includes data_health: check it before relying on the numbers.",
+      "Start here. Everything happening right now in one call: bank feed health, what came in and went out since the last check-in against the usual pattern, the projected low point of your balances over the next 60 days, upcoming bills and one-offs, what needs categorizing, the last check-in's verdict and the plan's goal, Cas decisions still to carry out in the plan, the Plan page's open action items (each overdue, due_soon, later or no_due_date), the plan's figures (status, the goal's gap, the low point with the plan applied, spare cash, drift; the same numbers get_plan and the Plan page show), and Cas's open notes and to-dos. Includes data_health: check it before relying on the numbers.",
     run: async () => {
       const snap = await loadSnapshot()
       const overview = await getAkahuOverview().catch(
@@ -204,7 +219,7 @@ export const TOOLS: CasTool[] = [
           openPlanActions(),
           loadDataHealth(overview),
         ])
-      const plan = await planStatus(await planDeps("mcp"))
+      const [plan, figures] = await Promise.all([planStatus(await planDeps("mcp")), toolFigures(PLAN_CONTEXT)])
       return {
         today: todayLocal(),
         sync,
@@ -224,6 +239,7 @@ export const TOOLS: CasTool[] = [
           : null,
         plan,
         planActions: actions,
+        figures,
         openNotes: open,
         data_health: health,
       }
@@ -255,6 +271,19 @@ export const TOOLS: CasTool[] = [
         })),
         data_health: health,
       }
+    },
+  }),
+
+  tool({
+    name: "find_account",
+    title: "Find an account",
+    access: "read",
+    description:
+      "Which account the user means by a name, an alias or what it's for (e.g. 'the rates account', 'Tax', 'Mary's spending'). Returns the match when it's clear, else the candidates with what each is called and for, to ask about. The plan tools also take fromAccount / toAccount in words and resolve them the same way.",
+    input: { query: z.string().trim().min(1).max(100) },
+    run: async ({ query }) => {
+      const accounts = await (await planDeps("mcp")).accounts!()
+      return findAccount(accounts, query)
     },
   }),
 
@@ -595,45 +624,6 @@ export const TOOLS: CasTool[] = [
   }),
 
   tool({
-    name: "list_plan_actions",
-    title: "Plan action items",
-    access: "read",
-    description:
-      "The action items on the Plan page: things to do about the plan, each with an actionId, title, optional detail and dueDate, whether it's done (doneAt) and who added it. Check it before suggesting an action, so you don't repeat one that's already there. get_briefing already lists the open ones.",
-    input: { includeDone: z.boolean().optional().describe("Include finished items. Defaults to open ones only.") },
-    run: async ({ includeDone }) => {
-      let query = (await getDb())
-        .from("plan_actions")
-        .select(COLUMNS.planActions)
-        .order("id")
-        .limit(200)
-      if (!includeDone) query = query.is("done_at", null)
-      return { actions: await must<PlanAction[]>(query), today: todayLocal() }
-    },
-  }),
-
-  addPlanActionTool("mcp"),
-
-  tool({
-    name: "set_plan_action_done",
-    title: "Mark a plan action item done or not done",
-    access: "action",
-    description:
-      "Tick off a plan action item by its actionId from list_plan_actions, or reopen it with done false.",
-    input: { actionId: z.number().int().positive(), done: z.boolean() },
-    run: ({ actionId, done }) => act(setPlanActionDone(actionId, done)),
-  }),
-
-  tool({
-    name: "remove_plan_action",
-    title: "Remove a plan action item",
-    access: "action",
-    description: "Delete a plan action item by its actionId from list_plan_actions.",
-    input: { actionId: z.number().int().positive() },
-    run: ({ actionId }) => act(deletePlanAction(actionId)),
-  }),
-
-  tool({
     name: "add_upcoming_expense",
     title: "Add an upcoming expense",
     access: "action",
@@ -671,4 +661,77 @@ export const TOOLS: CasTool[] = [
   }),
 
   ...PLAN_TOOLS.filter((t) => t.access === "action"),
+
+  tool({
+    name: "list_proposals",
+    title: "Cas's proposals",
+    access: "read",
+    description:
+      "Changes Cas proposes instead of making: each a tool call (tool, args) with its reason and a one-line summary, waiting for the user to approve or reject. Pending only unless status says otherwise. A proposal Cas made on data that has since changed is marked superseded on its next run.",
+    input: { status: z.array(z.enum(PROPOSAL_STATUSES)).optional().describe("Default: pending") },
+    run: async ({ status }) => ({
+      proposals: (await (await casStore()).listProposals(status ?? ["pending"])).map((p) => ({
+        ...p,
+        summary: describeProposal(p),
+      })),
+    }),
+  }),
+
+  tool({
+    name: "approve_proposal",
+    title: "Approve Cas's proposals",
+    access: "action",
+    description: `${CHANGES_DATA} Carry out one or more of Cas's proposals (ids from list_proposals or get_status), in order. Each runs its tool call through the same services as the website, recorded on the change log as the user approving it, linked to the proposal. Safe to retry: an approved proposal isn't run twice. Returns each one's status and result.`,
+    input: { proposalIds },
+    run: async ({ proposalIds }) => approveProposals(await proposalContext(), proposalIds),
+  }),
+
+  tool({
+    name: "reject_proposal",
+    title: "Reject Cas's proposals",
+    access: "action",
+    description: `${CHANGES_DATA} Turn down one or more of Cas's proposals. It's recorded as the user's decision, so Cas won't propose it again.`,
+    input: { proposalIds, reason: z.string().trim().max(300).optional().describe("Why, in a few words") },
+    run: async ({ proposalIds, reason }) => rejectProposals(await proposalContext(), proposalIds, reason),
+  }),
+
+  tool({
+    name: "report_discrepancy",
+    title: "Report a discrepancy to Cas",
+    access: "control",
+    description:
+      "When what you see in the raw data disagrees with get_status (e.g. it lists an action as overdue but the transfer is in search_transactions, or a balance differs), report it here. It's saved as a Cas note (kind discrepancy) and starts a debounced Cas run, which reconciles it and resolves the note; get_status shows the snapshot as stale until then. Doesn't change your finances.",
+    input: {
+      what: z.string().trim().min(1).max(500).describe("What the raw data shows, with the numbers"),
+      snapshotSays: z.string().trim().max(300).optional().describe("What the snapshot says instead"),
+      evidence: z.string().trim().max(500).optional().describe("Transaction ids, amounts, dates or tools that show it"),
+      snapshotId: z.number().int().positive().optional(),
+    },
+    run: async (args) => reportDiscrepancy(await planDeps("mcp"), await casStore(), args),
+  }),
+
+  tool({
+    name: "refresh_cas",
+    title: "Refresh Cas's snapshot",
+    access: "control",
+    description:
+      "Ask Cas to take a fresh snapshot now (get_status then shows it). Runs in the background, debounced like the automatic runs: several calls in a minute or so make one run, about 90 seconds after the last. Doesn't change your finances.",
+    input: {
+      reason: z.string().trim().max(200).optional().describe("Why, e.g. 'the user just moved money'"),
+      deep: z.boolean().optional().describe("A deep review on the most capable model (slower, costs more)"),
+    },
+    run: async ({ reason, deep }) => {
+      if (!eventsConfigured()) {
+        // no background runner here (e.g. local development): run it now instead
+        const { runCasNow } = await import("@/lib/cas/run")
+        const { snapshot } = await runCasNow({ deep })
+        return { queued: false, ranNow: true, snapshotId: snapshot.id, status: snapshot.status, model: snapshot.model }
+      }
+      const sent = await emit(await getDb(), {
+        name: "cas/refresh",
+        data: { householdId: await getOwnerId(), reason, deep },
+      })
+      return { queued: sent.sent, ...(sent.sent ? { debounce: "90s" } : { error: sent.reason }) }
+    },
+  }),
 ]

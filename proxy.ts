@@ -6,8 +6,9 @@ const SIGN_IN = "/sign-in"
 const SIGNED_OUT_ONLY = [SIGN_IN, "/forgot-password"]
 // Where password reset emails land: it exchanges the link for a session.
 const AUTH_CONFIRM = "/auth/confirm"
-// The MCP endpoint and its OAuth metadata check access tokens themselves (app/api/mcp).
-const TOKEN_AUTH = ["/api/mcp", "/.well-known/"]
+// The MCP endpoint and its OAuth metadata check access tokens themselves (app/api/mcp), and
+// Inngest's requests are signed and checked by its serve handler (app/api/inngest).
+const TOKEN_AUTH = ["/api/mcp", "/.well-known/", "/api/inngest"]
 
 /** Refresh the Supabase session cookies, and send anyone signed out to the sign-in page. */
 export async function proxy(request: NextRequest) {

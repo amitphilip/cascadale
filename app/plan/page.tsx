@@ -27,6 +27,7 @@ import {
   type Allocation,
 } from "./plan-summary-cards"
 import { PlanTodoCard, type Suggestion } from "./plan-todo-card"
+import { PlanProposalsCard } from "./plan-proposals-card"
 import { PlanAsk } from "./plan-ask"
 import { type ChatMessage } from "./plan-chat"
 import { PageHeader } from "@/components/page-header"
@@ -71,7 +72,8 @@ import {
   pointBack,
 } from "@/lib/net-worth"
 import { categoryCosts, monthBudget, spareCash } from "@/lib/plan-budget"
-import { goalPlan, planGoal, type PlanGoal } from "@/lib/plan-goal"
+import { type PlanGoal } from "@/lib/plan-goal"
+import { goalFor } from "@/lib/plan-figures"
 import { planStanding, planVerdict, withGoal } from "@/lib/plan-verdict"
 import { getPlanState, withInstructions } from "@/lib/plan-service"
 import { planDeps } from "@/lib/plan-repo"
@@ -95,6 +97,7 @@ import {
 } from "@/lib/queries"
 import { CADENCE_LABELS } from "@/lib/recurring"
 import { getUserId } from "@/lib/db"
+import { casStore } from "@/lib/cas/store-db"
 import { cn } from "@/lib/utils"
 import { parseView } from "@/lib/views"
 import { localDate, todayLocal } from "@/supabase/functions/_shared/akahu"
@@ -147,6 +150,7 @@ export default async function PlanPage({
     people,
     prefs,
     holders,
+    proposals,
     params,
   ] = await Promise.all([
     getSettings(),
@@ -165,6 +169,7 @@ export default async function PlanPage({
     getPeople(),
     getMyPrefs(userId),
     getAccountHolders(),
+    casStore().then((store) => store.listProposals(["pending"])),
     searchParams,
   ])
   // you open on your own view or the family's, as you chose in Settings
@@ -244,16 +249,13 @@ export default async function PlanPage({
   const from = pointBack(history, TREND_MONTHS)
   const waiting = state.unappliedDecisions.length > 0
   const startedPlan = started && latestPlan(started.messages)
-  const goal = planGoal({
-    goal: goalPlan(
-      startedPlan && { snapshot: started.snapshot, plan: startedPlan },
-      { snapshot: thread.snapshot, plan: base },
-      today
-    ),
-    latest: plan,
-    current: snap,
+  const goal = goalFor({
+    started: startedPlan && { snapshot: started.snapshot, plan: startedPlan },
+    base: { snapshot: thread.snapshot, plan: base },
+    live: { snapshot: snap, plan },
     balances: new Map(accounts.map((a) => [a.id, a.balance])),
     txs,
+    today,
   })
   const baseVerdict = planVerdict({
     sim,
@@ -423,6 +425,7 @@ export default async function PlanPage({
         {view === "family" && (
           <div className="grid min-w-0 gap-6">
             <PlanGoalCard summary={plan.summary} goal={goal} fmt={fmt} />
+            <PlanProposalsCard proposals={proposals} locale={fmt.locale} />
             <PlanBudgetCard
               budget={month}
               spare={spareCash(snap, sim)}
@@ -451,6 +454,7 @@ export default async function PlanPage({
 
         {view === "accountant" && (
           <div className="grid min-w-0 gap-6">
+            <PlanProposalsCard proposals={proposals} locale={fmt.locale} />
             <PlanStatusCard
               standing={standing}
               verdict={verdict}

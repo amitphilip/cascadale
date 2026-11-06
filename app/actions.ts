@@ -32,8 +32,11 @@ import {
 } from "@/lib/akahu"
 import { API_KEY_SETTING } from "@/lib/anthropic"
 import {
+  addPlanAction as addPlanActionService,
   removeAdjustment,
+  removePlanAction,
   removePot,
+  setPlanActionDone as setPlanActionDoneService,
   withInstructions,
 } from "@/lib/plan-service"
 import { planDeps } from "@/lib/plan-repo"
@@ -156,6 +159,12 @@ const accountSchema = z.object({
   type: z.enum(ACCOUNT_TYPES),
   institution: optionalText,
   openingBalance: money.default(0),
+  purpose: optionalText,
+  // comma separated in the form
+  aliases: z
+    .string()
+    .optional()
+    .transform((s) => [...new Set((s ?? "").split(",").map((a) => a.trim()).filter(Boolean))]),
 })
 
 export async function saveAccount(form: FormData) {
@@ -1132,47 +1141,36 @@ const planActionSchema = z.object({
     .transform((s) => s || null)
     .pipe(isoDate.nullable()),
   focusTitle: optionalText,
-  createdBy: z.enum(["website", "mcp", "cas"]).catch("website"),
 })
 
 export async function addPlanAction(form: FormData) {
   return run(async () => {
     const data = planActionSchema.parse(fields(form))
-    const db = await getDb()
-    // Adding what's already waiting to be done returns it, so a retry adds nothing twice.
-    const [same] = await must<{ id: number }[]>(
-      db.from("plan_actions").select("id").is("done_at", null).ilike("title", data.title.replace(/[\\%_]/g, "\\$&")).limit(1)
-    )
-    if (same) return { id: same.id }
-    return {
-      id: await insertId(db, "plan_actions", {
-        title: data.title,
-        detail: data.detail,
-        due_date: data.dueDate,
-        focus_title: data.focusTitle,
-        created_by: data.createdBy,
-      }),
-    }
+    const { id } = await addPlanActionService(await planDeps("website"), {
+      ...data,
+      reason: "Added on the Plan page",
+    })
+    return { id }
   })
 }
 
 export async function setPlanActionDone(actionId: number, done: boolean) {
   return run(async () => {
-    await must(
-      (await getDb())
-        .from("plan_actions")
-        .update({ done_at: done ? new Date().toISOString() : null })
-        .eq("id", id.parse(actionId))
-    )
+    await setPlanActionDoneService(await planDeps("website"), {
+      actionId: id.parse(actionId),
+      done,
+      reason: "Ticked on the Plan page",
+    })
     return {}
   })
 }
 
 export async function deletePlanAction(actionId: number) {
   return run(async () => {
-    await must(
-      (await getDb()).from("plan_actions").delete().eq("id", id.parse(actionId))
-    )
+    await removePlanAction(await planDeps("website"), {
+      actionId: id.parse(actionId),
+      reason: "Removed on the Plan page",
+    })
     return {}
   })
 }
@@ -1308,6 +1306,30 @@ export async function setAccountHolder(accountId: number, holderId: string | nul
         .update({ holder_id: holder })
         .eq("id", id.parse(accountId))
     )
+    return {}
+  })
+}
+
+// ── Cas's proposals ─────────────────────────────────────────────────────────
+
+export async function approveProposal(proposalId: number) {
+  return run(async () => {
+    const { proposalContext } = await import("@/lib/cas/tools")
+    const { approveProposals } = await import("@/lib/cas/proposals")
+    const [result] = (await approveProposals(await proposalContext(), [id.parse(proposalId)])).results
+    if (result.status !== "approved") throw new Error(result.error ?? `The proposal is ${result.status}`)
+    return {}
+  })
+}
+
+export async function rejectProposal(proposalId: number) {
+  return run(async () => {
+    const { proposalContext } = await import("@/lib/cas/tools")
+    const { rejectProposals } = await import("@/lib/cas/proposals")
+    const [result] = (
+      await rejectProposals(await proposalContext(), [id.parse(proposalId)], "Rejected on the Plan page")
+    ).results
+    if (result.status !== "rejected") throw new Error(result.error ?? `The proposal is ${result.status}`)
     return {}
   })
 }
