@@ -408,12 +408,23 @@ async function notifySynced(userId: string, runId: string, inserted: number) {
         .order("created_at", { ascending: false })
         .limit(1)
     )
+    // the worker exchanges this for a session as the household's owner (see cas-session)
+    const ticket = crypto.randomUUID()
+    await must(
+      db.from("cas_tickets").insert({ id: ticket, user_id: userId, created_by: userId, reason: "feeds/synced" })
+    )
     const res = await fetch(`${base}/e/${key ?? "dev"}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         name: "feeds/synced",
-        data: { householdId: userId, syncRunId: runId, latestTransactionAt: latest?.created_at ?? null, inserted },
+        data: {
+          householdId: userId,
+          ticket,
+          syncRunId: runId,
+          latestTransactionAt: latest?.created_at ?? null,
+          inserted,
+        },
       }),
     })
     if (!res.ok) console.error("feeds/synced not sent", res.status, await res.text())

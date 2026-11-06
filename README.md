@@ -175,10 +175,13 @@ and row level security still applies.
    `ask_cas` can take a few minutes, so allow long requests (its route sets
    `maxDuration = 300`).
 4. For Cas's background runs, create an [Inngest](https://www.inngest.com) app, sync it
-   to `https://<your app>/api/inngest`, and set `INNGEST_EVENT_KEY`,
-   `INNGEST_SIGNING_KEY` and `SUPABASE_SECRET_KEY` (the worker signs in as the household
-   with it; server only) on the app. Give the edge function the event key too:
-   `npx supabase secrets set INNGEST_EVENT_KEY=…`. Locally, run
+   to `https://<your app>/api/inngest`, and set `INNGEST_EVENT_KEY` and
+   `INNGEST_SIGNING_KEY` on the app. Deploy the session function and give the sync
+   function the event key: `npx supabase functions deploy cas-session` and
+   `npx supabase secrets set INNGEST_EVENT_KEY=…`. The app holds no admin key: each
+   event carries a single-use ticket, created by whoever triggered it, which
+   `cas-session` exchanges for a short session as that person
+   ([lib/db/household.ts](lib/db/household.ts)). Locally, run
    `npx inngest-cli@latest dev` and set `INNGEST_DEV=1`. Without Inngest everything else
    works, and `refresh_cas` runs Cas straight away instead.
 5. In claude.ai, go to **Settings → Connectors → Add custom connector** twice:

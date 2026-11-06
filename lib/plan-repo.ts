@@ -247,7 +247,7 @@ export async function planDeps(actor: Actor, opts: { quiet?: boolean } = {}): Pr
     onChange: opts.quiet
       ? undefined
       : async (change) => {
-          await emit({
+          await emit(db, {
             name: "plan/changed",
             data: { householdId: await getOwnerId(db), changeId: change.id, actor: change.actor, action: change.action },
           })

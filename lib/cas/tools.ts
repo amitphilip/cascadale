@@ -727,7 +727,10 @@ export const TOOLS: CasTool[] = [
         const { snapshot } = await runCasNow({ deep })
         return { queued: false, ranNow: true, snapshotId: snapshot.id, status: snapshot.status, model: snapshot.model }
       }
-      const sent = await emit({ name: "cas/refresh", data: { householdId: await getOwnerId(), reason, deep } })
+      const sent = await emit(await getDb(), {
+        name: "cas/refresh",
+        data: { householdId: await getOwnerId(), reason, deep },
+      })
       return { queued: sent.sent, ...(sent.sent ? { debounce: "90s" } : { error: sent.reason }) }
     },
   }),

@@ -28,9 +28,12 @@ doesn't match the repo. Each phase ships as its own commit with its migration an
 2. **Cas doesn't run in Supabase.** It runs in the Next.js app (`lib/cas/agent.ts`).
    The background worker therefore runs there too, as an Inngest function.
 3. **Background work has no user session.** Everything reads through row level
-   security as the signed-in user. The worker signs in as the household owner with a
-   one-off session minted by the admin API (`SUPABASE_SECRET_KEY`, server only), so
-   every existing query and policy works unchanged. This is the one new secret.
+   security as the signed-in user. The app holds no admin key: whatever triggers a run
+   creates a ticket (`cas_tickets`) as the person who triggered it, or the sync function
+   does with the key it already has. The event carries the ticket, and the `cas-session`
+   edge function exchanges it for a short session as that person (never anyone else),
+   so every existing query and policy works unchanged. A ticket lasts 30 minutes and
+   three uses (the run and its retries).
 4. **The tool layer is already shared.** Cas and MCP call the same `TOOLS` entries,
    so they can't disagree on code path. The real disagreements are in the *figures*:
    - goal gap is worked out separately on the Plan page (`app/plan/page.tsx`) and in
@@ -141,7 +144,7 @@ none were pushed to a real project.
 
 Still to check against a running stack (not possible here):
 - Inngest end to end: the edge function's `feeds/synced` post, the debounce in practice,
-  and `asHousehold` minting a session with the real admin API.
+  and `cas-session` minting a session from a ticket with the real admin API.
 - Haiku 5.5 with structured output on a real snapshot, and the token and latency numbers.
 - The Plan page's proposals card and the account dialog's new fields, in a browser.
 

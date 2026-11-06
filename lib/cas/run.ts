@@ -6,7 +6,7 @@ import { FIGURE_SOURCE, proposalTools } from "@/lib/cas/tools"
 import { loadDataHealth } from "@/lib/data-health"
 import type { MatchTx } from "@/lib/action-matching"
 import { getDb, must } from "@/lib/db"
-import { asHousehold } from "@/lib/db/household"
+import { withTicket } from "@/lib/db/household"
 import { planDeps } from "@/lib/plan-repo"
 import { todayLocal } from "@/supabase/functions/_shared/akahu"
 
@@ -42,7 +42,7 @@ export async function runCasNow(opts: { deep?: boolean } = {}) {
   })
 }
 
-/** Cas's background run for a household, signed in as its owner. */
-export function runCasFor(householdId: string, opts: { deep?: boolean } = {}) {
-  return asHousehold(householdId, () => runCasNow(opts))
+/** Cas's background run, as whoever created the event's ticket. */
+export function runCasWithTicket(ticket: string, opts: { deep?: boolean } = {}) {
+  return withTicket(ticket, () => runCasNow(opts))
 }
