@@ -134,7 +134,7 @@ export const COLUMNS = {
   checkIns:
     "id, periodStart:period_start, periodEnd:period_end, stats, result, createdAt:created_at",
   casNotes:
-    "id, kind, content, dueDate:due_date, affectsPlan:affects_plan, appliedAt:applied_at, createdAt:created_at, resolvedAt:resolved_at, resolution",
+    "id, kind, content, dueDate:due_date, affectsPlan:affects_plan, appliedAt:applied_at, ref, createdAt:created_at, resolvedAt:resolved_at, resolution",
 } as const
 
 export { schema }

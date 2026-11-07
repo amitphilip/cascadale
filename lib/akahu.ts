@@ -93,6 +93,8 @@ export async function runAkahuSync(db: Db, accountId?: number) {
     /** accounts created for, or matched by name to, Akahu accounts that had none */
     created: number
     matched: number
+    /** Cas to-dos it raised for uncategorized merchants */
+    todos?: number
   }>(
     "akahu-sync",
     { body: accountId === undefined ? {} : { accountId } }

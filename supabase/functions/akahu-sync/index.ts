@@ -29,11 +29,19 @@ import {
   type AkahuApi,
   type AkahuTokens,
 } from "../_shared/akahu.ts"
-import { buildMatcher, type RuleLike } from "../_shared/rules.ts"
+import { buildMatcher, merchantKey, type RuleLike } from "../_shared/rules.ts"
 import { pairTransfers } from "../_shared/transfers.ts"
+import {
+  UNCATEGORIZED_REF,
+  todoChanges,
+  uncategorizedTodos,
+  type RefNote,
+} from "../_shared/uncategorized-todos.ts"
 
 /** Days back that transfers between your accounts are paired after a sync. */
 const PAIR_DAYS = 120
+/** Resolved to-dos looked at so one the user dismissed isn't raised again (as in the app). */
+const DISMISSED_DAYS = 90
 /** Re-read this many days before the last synced transaction, for ones the bank posts late. */
 const OVERLAP_DAYS = 7
 const DAY = 24 * 60 * 60 * 1000
@@ -384,7 +392,78 @@ async function syncUser(userId: string, runBy: RunBy, onlyAccountId?: number) {
     }
   }
   const transfers = inserted > 0 ? await categorizeTransfers(userId) : 0
-  return { inserted, categorized: categorized + transfers, failed, ...adopted }
+  // Best effort: the sync has succeeded either way.
+  const todos = await syncUncategorizedTodos(userId).catch((err) => {
+    console.error(userId, err)
+    return 0
+  })
+  return { inserted, categorized: categorized + transfers, failed, todos, ...adopted }
+}
+
+/**
+ * Bring Cas's to-dos for uncategorized synced transactions up to date, as
+ * lib/uncategorized-todos.ts does in the app: one per merchant, so Cas asks which
+ * category it is, resolved once it's categorized. Returns how many it added.
+ */
+async function syncUncategorizedTodos(userId: string) {
+  const since = new Date(Date.now() - DISMISSED_DAYS * DAY).toISOString()
+  const [rows, settings, notes] = await Promise.all([
+    selectAll<{ description: string; amount: number }>((from, to) =>
+      db
+        .from("transactions")
+        .select("description, amount")
+        .eq("user_id", userId)
+        .eq("source", "akahu")
+        .is("category_id", null)
+        .or("category_source.is.null,category_source.neq.manual")
+        .order("id")
+        .range(from, to)
+    ),
+    must<{ key: string; value: string }[]>(
+      db.from("settings").select("key, value").eq("user_id", userId).in("key", ["currency", "locale"])
+    ),
+    must<(RefNote & { resolvedAt: string | null })[]>(
+      db
+        .from("cas_notes")
+        .select("id, ref, content, resolvedAt:resolved_at")
+        .eq("user_id", userId)
+        .like("ref", `${UNCATEGORIZED_REF}%`)
+        .or(`resolved_at.is.null,resolved_at.gte.${since}`)
+    ),
+  ])
+  const get = (key: string) => settings.find((s) => s.key === key)?.value
+  const money = new Intl.NumberFormat(get("locale") ?? "en-NZ", {
+    style: "currency",
+    currency: get("currency") ?? "NZD",
+  })
+  const wanted = uncategorizedTodos(
+    rows.map((r) => ({ ...r, amount: Number(r.amount) })),
+    merchantKey,
+    (n) => money.format(n)
+  )
+  const changes = todoChanges(
+    wanted,
+    notes.filter((n) => n.resolvedAt === null),
+    notes.filter((n) => n.resolvedAt !== null)
+  )
+  if (changes.insert.length > 0) {
+    await must(
+      db.from("cas_notes").insert(changes.insert.map((t) => ({ user_id: userId, kind: "todo", ...t })))
+    )
+  }
+  for (const u of changes.update) {
+    await must(db.from("cas_notes").update({ content: u.content }).eq("id", u.id))
+  }
+  if (changes.resolve.length > 0) {
+    await must(
+      db
+        .from("cas_notes")
+        .update({ resolved_at: new Date().toISOString(), resolution: "No longer uncategorised" })
+        .eq("user_id", userId)
+        .in("id", changes.resolve)
+    )
+  }
+  return changes.insert.length
 }
 
 /**

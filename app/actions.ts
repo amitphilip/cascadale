@@ -38,6 +38,7 @@ import {
 } from "@/lib/plan-service"
 import { planDeps } from "@/lib/plan-repo"
 import { categorizeInternalTransfers } from "@/lib/transfers"
+import { syncUncategorizedTodos } from "@/lib/uncategorized-todos"
 import { runCheckIn } from "@/lib/checkin"
 import {
   COLUMNS,
@@ -305,6 +306,15 @@ function manualCategory(categoryId: number | null) {
   }
 }
 
+/** Resolve or update Cas's sync to-dos for uncategorized merchants; best effort. */
+async function refreshTodos(db: Db) {
+  try {
+    await syncUncategorizedTodos(db)
+  } catch (err) {
+    console.error("uncategorized to-dos", err)
+  }
+}
+
 /**
  * Remember a correction as a merchant rule at 100% confidence, move the
  * other auto-categorized transactions of that merchant along with it, and
@@ -338,7 +348,9 @@ export async function setTransactionCategory(
         .select("description")
     )
     if (!tx) throw new Error("Transaction not found")
-    return { updatedSimilar: await learn(db, tx.description, catId) }
+    const updatedSimilar = await learn(db, tx.description, catId)
+    await refreshTodos(db)
+    return { updatedSimilar }
   })
 }
 
@@ -439,7 +451,11 @@ export async function resetRules() {
 
 /** Rules first, then the LLM for whatever is left. */
 export async function runAutoCategorize() {
-  return run(() => autoCategorize())
+  return run(async () => {
+    const result = await autoCategorize()
+    await refreshTodos(await getDb())
+    return result
+  })
 }
 
 /** Move a rule — and everything it auto-categorized — to another category. */
@@ -505,7 +521,9 @@ export async function categorizeMerchant(key: string, categoryId: number) {
           })
         : 0
     // The new rule may also fuzzy-match other uncategorized merchants.
-    return { updated: updated + (await applyRulesToUncategorized(db)) }
+    const more = await applyRulesToUncategorized(db)
+    await refreshTodos(db)
+    return { updated: updated + more }
   })
 }
 
@@ -764,6 +782,8 @@ export async function syncAkahu() {
         aiError = err instanceof Error ? err.message : "Auto-categorization failed"
       }
     }
+    // The edge function raised to-dos before AI ran; settle them on what's left.
+    await refreshTodos(db)
     return {
       inserted,
       categorized,

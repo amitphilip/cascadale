@@ -228,6 +228,8 @@ export type CasNote = {
   /** a decision that changes the plan; it stays unapplied until a plan change carries it out */
   affectsPlan: boolean
   appliedAt: string | null
+  /** set on notes the app raises itself, e.g. "uncategorized:<merchant key>" from a sync */
+  ref: string | null
   createdAt: string
   resolvedAt: string | null
   resolution: string | null

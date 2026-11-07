@@ -451,7 +451,7 @@ export const TOOLS: CasTool[] = [
     title: "Save a note",
     access: "memory",
     description:
-      "Remember something for later conversations: an observation worth tracking, a decision or preference you stated, or a to-do (with a due date if it has one). One fact per note; don't save what the data already shows. Set affectsPlan on a decision that changes the plan (a pot, an amount, a skipped or extra payment): the Plan page then lists it as waiting until a plan change carries it out.",
+      "Remember something for later conversations: an observation worth tracking, a decision or preference you stated, or a to-do (with a due date if it has one). Write a to-do as one short line, action — why — how. One fact per note; don't save what the data already shows. Set affectsPlan on a decision that changes the plan (a pot, an amount, a skipped or extra payment): the Plan page then lists it as waiting until a plan change carries it out.",
     input: {
       kind: z.enum(NOTE_KINDS),
       content: z.string().trim().min(1).max(1000),
