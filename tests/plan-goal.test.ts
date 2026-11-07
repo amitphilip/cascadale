@@ -49,11 +49,11 @@ describe("planGoal", () => {
     expect(g.target).toBe(1000)
     expect(g.endDate).toBe("2026-12-29")
     expect(g.days.slice(0, 5)).toEqual([
-      { date: "2026-09-30", planned: 1000, actual: 1000, forecast: null },
-      { date: "2026-10-01", planned: 1000, actual: 1000, forecast: null },
-      { date: "2026-10-02", planned: 1000, actual: 800, forecast: null },
-      { date: "2026-10-03", planned: 1000, actual: 800, forecast: 800 },
-      { date: "2026-10-04", planned: 1000, actual: null, forecast: 800 },
+      { date: "2026-09-30", planned: 1000, actual: 1000, forecast: null, offPlan: 0 },
+      { date: "2026-10-01", planned: 1000, actual: 1000, forecast: null, offPlan: 0 },
+      { date: "2026-10-02", planned: 1000, actual: 800, forecast: null, offPlan: -200 },
+      { date: "2026-10-03", planned: 1000, actual: 800, forecast: 800, offPlan: -200 },
+      { date: "2026-10-04", planned: 1000, actual: null, forecast: 800, offPlan: null },
     ])
     expect(g.forecast).toBe(800)
     expect(g.gap).toBe(-200)
@@ -61,9 +61,11 @@ describe("planGoal", () => {
       date: "2026-10-03",
       planned: 1000,
       actual: 800,
+      offPlan: -200,
       cash: 800,
       owed: 0,
     })
+    expect(g.debt).toBeNull()
     expect(g.tone).toBe("off_track")
   })
 
@@ -90,9 +92,54 @@ describe("planGoal", () => {
       date: "2026-10-02",
       planned: -17000,
       actual: -17000,
+      offPlan: 0,
       cash: 2200,
       owed: -19200,
     })
+    expect(g.gap).toBe(0)
+    expect(g.tone).toBe("on_track")
+  })
+
+  test("a flexi account is debt: out of the day by day, tracked apart, and paying it down isn't falling behind", () => {
+    const accounts = [
+      { id: 1, name: "Everyday", type: "checking", balance: 3000 },
+      { id: 3, name: "Joint", type: "checking", balance: -20000 },
+    ]
+    // retyped as revolving credit after the goal was set
+    const now = [
+      { id: 1, name: "Everyday", type: "checking", balance: 2200 },
+      { id: 3, name: "Joint", type: "credit_line", balance: -19200 },
+    ]
+    const g = planGoal({
+      goal: { snapshot: snapshot({ accounts }), plan },
+      latest: plan,
+      current: snapshot({ start: "2026-10-03", dataEnd: "2026-10-02", accounts: now }),
+      balances: new Map([
+        [1, 2200],
+        [3, -19200],
+      ]),
+      txs: [
+        { accountId: 1, date: "2026-10-02", amount: -800 },
+        { accountId: 3, date: "2026-10-02", amount: 800 },
+      ],
+    })
+    expect(g.target).toBe(3000)
+    expect(g.latest).toEqual({
+      date: "2026-10-02",
+      planned: 3000,
+      actual: 2200,
+      offPlan: 0,
+      cash: 2200,
+      owed: 0,
+    })
+    expect(g.debt).toEqual({
+      accounts: ["Joint"],
+      startedAt: 20000,
+      now: 19200,
+      target: 20000,
+      forecast: 19200,
+    })
+    expect(g.forecast).toBe(2200)
     expect(g.gap).toBe(0)
     expect(g.tone).toBe("on_track")
   })

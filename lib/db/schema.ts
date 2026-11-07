@@ -10,6 +10,7 @@ export const ACCOUNT_TYPES = [
   "checking",
   "savings",
   "credit_card",
+  "credit_line",
   "investment",
   "loan",
   "cash",

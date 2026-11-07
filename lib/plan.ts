@@ -422,9 +422,16 @@ export function buildSnapshot({
 
 // ── Simulation ───────────────────────────────────────────────────────────────
 
+/**
+ * Debt paid down over months rather than spent from day to day: loans, and revolving
+ * credit (a flexi or home-loan revolving facility) even when the bank calls it a cheque
+ * account. Its balance is a liability, so it's tracked apart from the cash you run on.
+ */
+export const isDebtAccount = (type: string) => type === "loan" || type === "credit_line"
+
 /** Accounts whose balance can't go below zero without trouble. */
 export const isCashAccount = (type: string) =>
-  !["credit_card", "loan"].includes(type)
+  !["credit_card", "loan", "credit_line"].includes(type)
 
 export type PotSummary = {
   name: string
@@ -836,12 +843,12 @@ export function describeSimulation(snap: PlanSnapshot, sim: Simulation) {
 }
 
 /**
- * The lowest point of everything you hold except loans, combined. Transfers between your own
+ * The lowest point of everything you hold except loans and revolving credit, combined. Transfers between your own
  * accounts aren't projected, so a single account can look like it drains while the money
  * that tops it up sits elsewhere; the combined balance doesn't have that problem.
  */
 export function combinedLow(snap: PlanSnapshot, sim: Simulation) {
-  const ids = snap.accounts.filter((a) => a.type !== "loan").map((a) => a.id)
+  const ids = snap.accounts.filter((a) => !isDebtAccount(a.type)).map((a) => a.id)
   if (ids.length === 0 || sim.days.length === 0) return null
   const totals = sim.days.map((_, i) =>
     ids.reduce((s, id) => s + (sim.balances[id]?.[i] ?? 0), 0)

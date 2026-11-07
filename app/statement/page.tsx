@@ -49,7 +49,7 @@ import { todayLocal } from "@/supabase/functions/_shared/akahu"
 
 export const metadata: Metadata = { title: "Statement" }
 
-const LIABILITY_TYPES = new Set(["credit_card", "loan"])
+const LIABILITY_TYPES = new Set(["credit_card", "credit_line", "loan"])
 
 export default async function StatementPage({
   searchParams,

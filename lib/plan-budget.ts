@@ -1,6 +1,6 @@
 import { getDaysInMonth, parseISO } from "date-fns"
 
-import type { PlanSnapshot, Simulation } from "@/lib/plan"
+import { isDebtAccount, type PlanSnapshot, type Simulation } from "@/lib/plan"
 
 // This month's spending against the plan, category by category, and how much cash is
 // genuinely spare. Shared by the Plan page and Cas's check_purchase, so both say the same.
@@ -164,13 +164,13 @@ export function monthBudget(
 
 /**
  * What you could spend today and still pay every bill and set-aside over the projection:
- * the lowest point of everything you hold except loans, less what sits in savings pots
- * (money that's been put away isn't spare). What you already owe on cards and revolving
- * credit is set aside, since paying it down is the goal's job; new spending on them
- * still counts. Null without accounts.
+ * the lowest point of everything you hold except loans and revolving credit (debt, tracked
+ * apart), less what sits in savings pots (money that's been put away isn't spare). What
+ * you already owe on cards is set aside, since paying it down is the goal's job; new
+ * spending on them still counts. Null without accounts.
  */
 export function spareCash(snap: PlanSnapshot, sim: Simulation) {
-  const held = snap.accounts.filter((a) => a.type !== "loan")
+  const held = snap.accounts.filter((a) => !isDebtAccount(a.type))
   if (held.length === 0 || sim.days.length === 0) return null
   const owed = held.reduce((s, a) => s + Math.min(0, a.balance), 0)
   const savings = sim.potSummaries.filter((p) => p.covers.length === 0)

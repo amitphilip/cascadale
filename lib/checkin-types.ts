@@ -52,13 +52,13 @@ export type CheckInStats = {
     amount: number
     account: string | null
   }[]
-  /** lowest projected combined balance (all accounts but loans) over the next 60 days */
+  /** lowest projected combined balance (all accounts but loans and revolving credit) over the next 60 days */
   low: { date: string; balance: number } | null
   plan: {
     summary: string
     setAsides: { pot: string; amount: number; when: string; to: string }[]
   } | null
-  /** the plan's end goal as a net position (cash less cards and revolving credit, loans left out); missing on old check-ins */
+  /** the plan's end goal as a net position (cash less cards; loans and revolving credit left out); missing on old check-ins */
   goal?: {
     endDate: string
     target: number
@@ -73,6 +73,16 @@ export type CheckInStats = {
       actual: number
       cash: number
       owed: number
+      /** actual against the plan, revolving credit included */
+      offPlan?: number
+    } | null
+    /** what's owed on revolving credit (flexi), left out of the net figures; missing on old check-ins */
+    debt?: {
+      accounts: string[]
+      startedAt: number
+      now: number
+      target: number
+      forecast: number
     } | null
   } | null
 }

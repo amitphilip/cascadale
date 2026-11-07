@@ -41,6 +41,7 @@ export const ACCOUNT_TYPE_LABELS: Record<string, string> = {
   checking: "Checking",
   savings: "Savings",
   credit_card: "Credit card",
+  credit_line: "Flexi / revolving credit",
   investment: "Investment",
   loan: "Loan",
   cash: "Cash",

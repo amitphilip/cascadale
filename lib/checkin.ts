@@ -270,6 +270,7 @@ export async function buildStats(snap: PlanSnapshot): Promise<CheckInStats> {
       forecastSplit: goal.forecastSplit,
       gap: goal.gap,
       latest: goal.latest,
+      debt: goal.debt,
     },
   }
 }
@@ -284,7 +285,7 @@ The data (amounts in the stated currency):
 - upcomingBills: recurring bills in the next 30 days. upcomingOneOffs: one-off expenses they told the app about, in the next 90 days.
 - low: the lowest projected combined balance of all accounts except loans over the next 60 days if spending keeps its usual pace, with the date. Transfers between their own accounts aren't projected, so judge affordability on this combined figure. Below zero means they can't cover what's coming.
 - plan: their current plan's summary and set-asides (pot, amount, when, where the money goes), or null if they have none.
-- goal: the plan's end goal as a net position: cash held less what's owed on cards, overdrafts and revolving credit (any account below zero), home and other loans left out. target: what the plan they started said it would be by endDate; forecast: where today's plan now lands; gap: the difference, below zero means short. targetSplit and forecastSplit give the cash and owed parts, so a fall in cash that pays debt down isn't a shortfall. latest: planned against actual net on the last day with data, with its cash and owed. Null without a plan. Never call the net figure a cash balance.
+- goal: the plan's end goal as a net position: cash held less what's owed on cards and overdrafts. Loans and revolving credit (flexi) accounts are debt and are left out; goal.debt tracks what's owed on revolving credit (startedAt, now, target and forecast for the end date), so paying it down shows there, not as a fall in the goal. target: what the plan they started said it would be by endDate; forecast: where today's plan now lands; gap: forecast less target plus any revolving credit paid down beyond the plan, below zero means short. targetSplit and forecastSplit give the cash and owed parts, so a fall in cash that pays debt down isn't a shortfall. latest: planned against actual net on the last day with data, with its cash and owed; offPlan is the difference with revolving credit counted. Null without a plan. Never call the net figure a cash balance.
 
 How to answer:
 - paragraph: name what actually happened, e.g. "Your salary of 4,200 landed on 1 Oct, but spending ran 380 over the usual pace, mostly Dining." Then what is coming and whether the money is there for it.
