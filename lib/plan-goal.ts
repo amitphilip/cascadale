@@ -70,7 +70,14 @@ export type PlanGoal = {
   gap: number
   /** the last day with data: planned against actual */
   latest:
-    | ({ date: string; planned: number; actual: number; offPlan: number } & Split)
+    | ({
+        date: string
+        planned: number
+        actual: number
+        offPlan: number
+        /** what the plan you started expected the two parts to be that day */
+        expected: Split
+      } & Split)
     | null
   tone: GoalTone
   days: GoalDay[]
@@ -241,6 +248,7 @@ export function planGoal({
           planned: last.planned,
           actual: last.actual!,
           offPlan: last.offPlan!,
+          expected: splitOf(cashOf(plannedOn(last.date))),
           ...splitOf(cashOf(actual.get(last.date)!)),
         }
       : null,

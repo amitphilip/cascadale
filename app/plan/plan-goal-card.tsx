@@ -99,6 +99,8 @@ export function PlanGoalCard({
         </CardDescription>
       </CardHeader>
       <CardContent className="grid grid-cols-[minmax(0,1fr)] gap-5">
+        {goal.latest && <CashLine latest={goal.latest} date={date} money={money} />}
+
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
           <Figure
             label={
@@ -164,6 +166,36 @@ export function PlanGoalCard({
         )}
       </CardContent>
     </Card>
+  )
+}
+
+/** Cash in hand on the last day with data, against what the plan expected by then. */
+function CashLine({
+  latest,
+  date,
+  money,
+}: {
+  latest: NonNullable<PlanGoal["latest"]>
+  date: (iso: string) => string
+  money: (n: number, signed?: boolean) => string
+}) {
+  const diff = latest.cash - latest.expected.cash
+  return (
+    <div className="grid gap-1 rounded-lg border p-3 text-sm">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+        <span className="font-medium">Cash in hand · {date(latest.date)}</span>
+        <span className="font-heading text-base font-semibold tabular-nums">
+          {money(latest.cash)}
+        </span>
+      </div>
+      <div className="text-xs text-pretty text-muted-foreground tabular-nums">
+        Plan expected {money(latest.expected.cash)} by now{" "}
+        <span className={diff >= 0 ? GOOD : BAD}>
+          ({money(diff, true)} {diff >= 0 ? "ahead" : "behind"})
+        </span>
+        {" · "}owed on cards {money(-latest.owed)} (plan {money(-latest.expected.owed)})
+      </div>
+    </div>
   )
 }
 

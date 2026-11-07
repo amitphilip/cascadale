@@ -64,6 +64,7 @@ describe("planGoal", () => {
       offPlan: -200,
       cash: 800,
       owed: 0,
+      expected: { cash: 1000, owed: 0 },
     })
     expect(g.debt).toBeNull()
     expect(g.tone).toBe("off_track")
@@ -95,6 +96,7 @@ describe("planGoal", () => {
       offPlan: 0,
       cash: 2200,
       owed: -19200,
+      expected: { cash: 3000, owed: -20000 },
     })
     expect(g.gap).toBe(0)
     expect(g.tone).toBe("on_track")
@@ -131,6 +133,7 @@ describe("planGoal", () => {
       offPlan: 0,
       cash: 2200,
       owed: 0,
+      expected: { cash: 3000, owed: 0 },
     })
     expect(g.debt).toEqual({
       accounts: ["Joint"],
