@@ -5,23 +5,33 @@ import { buildDataHealth } from "@/lib/health"
 import type { PlanSnapshot } from "@/lib/plan"
 import type { PlanDeps } from "@/lib/plan-service"
 
-import { currentSnapshot, healthInput, previousPlan } from "./fixtures/october-2026"
-import { memoryRepo } from "./memory-repo"
+import { currentSnapshot, healthInput, previousPlan, TODAY } from "./fixtures/october-2026"
+import { memoryRepo, type MemoryTx } from "./memory-repo"
 
 /**
  * The plan's MCP tools over the October 2026 fixture and an in-memory repo, wired as
  * lib/cas/tools.ts wires them (acting as "mcp"). Arguments go through each tool's input
  * schema, as the MCP server does.
  */
-export function harness(opts: { seedPlan?: boolean; decisions?: string[]; snapshot?: () => PlanSnapshot } = {}) {
+export function harness(
+  opts: {
+    seedPlan?: boolean
+    decisions?: string[]
+    snapshot?: () => PlanSnapshot
+    transactions?: MemoryTx[]
+    today?: string
+  } = {}
+) {
   const store = memoryRepo({
     plan: opts.seedPlan === false ? undefined : previousPlan(),
     decisions: opts.decisions,
+    transactions: opts.transactions,
   })
   const deps: PlanDeps = {
     repo: store.repo,
     loadSnapshot: async () => (opts.snapshot ?? currentSnapshot)(),
     actor: "mcp",
+    today: () => opts.today ?? TODAY,
   }
   const tools = planTools({
     deps: async () => deps,

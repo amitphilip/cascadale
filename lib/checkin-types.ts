@@ -1,5 +1,7 @@
 import { z } from "zod"
 
+import type { PotHealth } from "@/lib/pots"
+
 /**
  * A check-in: what changed since you last logged statements, measured against what the
  * plan expects, and the model's advice on staying on track. Shared by the server (which
@@ -35,6 +37,10 @@ export type CheckInStats = {
   }[]
   /** spending per category against its projection for the same number of days */
   categories: { name: string; spent: number; expected: number }[]
+  /** payments drawn from a sinking fund, left out of spending and categories; missing on old check-ins */
+  potDraws?: { date: string; description: string; amount: number; category: string; pot: string }[]
+  /** each sinking fund's health; missing on old check-ins */
+  pots?: PotHealth[]
   /** change: how much the balance moved between from and to, transfers included */
   accounts: { name: string; type: string; balance: number; change: number }[]
   cashNow: number

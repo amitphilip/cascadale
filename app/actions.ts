@@ -32,10 +32,16 @@ import {
 } from "@/lib/akahu"
 import { API_KEY_SETTING } from "@/lib/anthropic"
 import {
+  addPotEntry,
+  linkTransactionToPot,
   removeAdjustment,
   removePot,
+  removePotEntry,
+  unlinkTransactionFromPot,
+  upsertPot,
   withInstructions,
 } from "@/lib/plan-service"
+import { RESET_MODES } from "@/lib/pots"
 import { planDeps } from "@/lib/plan-repo"
 import { categorizeInternalTransfers } from "@/lib/transfers"
 import { syncUncategorizedTodos } from "@/lib/uncategorized-todos"
@@ -1094,6 +1100,110 @@ export async function removePlanAdjustment(adjustmentId: number) {
       operationId: crypto.randomUUID(),
       adjustmentId: id.parse(adjustmentId),
       reason: "Removed on the Plan page",
+    })
+    return {}
+  })
+}
+
+// ── Sinking funds ───────────────────────────────────────────────────────────
+
+const optionalMoney = z
+  .union([z.literal(""), z.null(), z.undefined(), money.positive("Enter an amount above zero")])
+  .transform((v) => (typeof v === "number" ? v : null))
+const optionalDate = z
+  .union([z.literal(""), z.null(), z.undefined(), isoDate])
+  .transform((v) => v || null)
+
+const fundSchema = z.object({
+  name: z.string().trim().min(1, "Name is required").max(60),
+  amount: z.union([z.literal(""), money.nonnegative("The amount can't be below zero")]).transform((v) => (v === "" ? 0 : v)),
+  frequency: z.enum(FREQUENCIES),
+  fromAccountId: optionalId,
+  toAccountId: optionalId,
+  cap: optionalMoney,
+  endDate: optionalDate,
+  resetDate: optionalDate,
+  resetMode: z.enum(RESET_MODES),
+  startDate: optionalDate,
+  note: optionalText,
+})
+
+/** Add a sinking fund, or change the one with this name. */
+export async function saveSinkingFund(form: FormData) {
+  return run(async () => {
+    const f = fundSchema.parse(Object.fromEntries(form))
+    await upsertPot(await planDeps("website"), {
+      operationId: crypto.randomUUID(),
+      reason: "Set on the Plan page",
+      type: "sinking_fund",
+      name: f.name,
+      amount: f.amount,
+      frequency: f.frequency,
+      fromAccountId: f.fromAccountId,
+      toAccountId: f.toAccountId,
+      cap: f.cap,
+      endDate: f.endDate,
+      resetDate: f.resetDate,
+      resetMode: f.resetMode,
+      startDate: f.startDate ?? undefined,
+      note: f.note ?? null,
+    })
+    return {}
+  })
+}
+
+const fundEntrySchema = z.object({
+  pot: z.string().trim().min(1),
+  kind: z.enum(["planned_draw", "contribution"]),
+  name: optionalText,
+  amount: money.positive("Enter an amount above zero"),
+  date: isoDate,
+})
+
+/** Plan a draw on a sinking fund, or record a top-up into it. */
+export async function addSinkingFundEntry(form: FormData) {
+  return run(async () => {
+    const e = fundEntrySchema.parse(Object.fromEntries(form))
+    await addPotEntry(await planDeps("website"), {
+      operationId: crypto.randomUUID(),
+      reason: "Added on the Plan page",
+      ...e,
+      name: e.name ?? (e.kind === "contribution" ? "Top-up" : null),
+    })
+    return {}
+  })
+}
+
+export async function removeSinkingFundEntry(entryId: number) {
+  return run(async () => {
+    await removePotEntry(await planDeps("website"), {
+      operationId: crypto.randomUUID(),
+      entryId: id.parse(entryId),
+      reason: "Removed on the Plan page",
+    })
+    return {}
+  })
+}
+
+/** Pay a transaction from a sinking fund (or count money in towards it). */
+export async function linkTransactionToFund(transactionId: number, pot: string) {
+  return run(async () => {
+    await linkTransactionToPot(await planDeps("website"), {
+      operationId: crypto.randomUUID(),
+      transactionId: id.parse(transactionId),
+      pot: z.string().trim().min(1).parse(pot),
+      reason: "Linked on the Transactions page",
+    })
+    return {}
+  })
+}
+
+export async function unlinkTransactionFromFund(transactionId: number) {
+  return run(async () => {
+    await unlinkTransactionFromPot(await planDeps("website"), {
+      operationId: crypto.randomUUID(),
+      transactionId: id.parse(transactionId),
+      reason: "Unlinked on the Transactions page",
     })
     return {}
   })

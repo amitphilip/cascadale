@@ -12,8 +12,13 @@ describe("tool definitions", () => {
     const writes = tools.filter((t) => t.access === "action")
     expect(writes.map((t) => t.name).sort()).toEqual([
       "add_plan_adjustment",
+      "add_pot_contribution",
+      "add_pot_planned_draw",
+      "link_transaction_to_pot",
       "remove_plan_adjustment",
       "remove_pot",
+      "remove_pot_planned_draw",
+      "unlink_transaction_from_pot",
       "upsert_pot",
     ])
     for (const t of writes) {

@@ -27,6 +27,7 @@ import {
   type Allocation,
 } from "./plan-summary-cards"
 import { PlanTodoCard, type Suggestion } from "./plan-todo-card"
+import { SinkingFundsCard, type FundDraft } from "./sinking-funds-card"
 import { PlanAsk } from "./plan-ask"
 import { type ChatMessage } from "./plan-chat"
 import { PageHeader } from "@/components/page-header"
@@ -227,10 +228,34 @@ export default async function PlanPage({
   }
 
   // the plan as it stands: today's data, with every pot and adjustment in it
-  const { snapshot: snap, plan } = await withInstructions(deps.repo, current, {
-    snapshot: thread.snapshot,
-    plan: base,
-  })
+  const { snapshot: snap, plan, ledgers } = await withInstructions(
+    deps.repo,
+    current,
+    { snapshot: thread.snapshot, plan: base },
+    todayLocal()
+  )
+  const fundDrafts: Record<string, FundDraft> = Object.fromEntries(
+    state.pots
+      .filter((p) => p.type === "sinking_fund")
+      .map((p) => [
+        p.name,
+        {
+          name: p.name,
+          amount: p.amount,
+          frequency: p.frequency,
+          fromAccountId: p.fromAccountId,
+          toAccountId: p.toAccountId,
+          cap: p.capAmount,
+          endDate: p.endDate,
+          resetDate: p.resetDate,
+          resetMode: p.resetMode,
+          note: p.note,
+        },
+      ])
+  )
+  const fundAccounts = accounts
+    .filter((a) => !a.archived)
+    .map((a) => ({ id: a.id, name: a.name }))
   const today = todayLocal()
   const sim = simulate(snap, plan)
   const colors = potColors(sim)
@@ -430,6 +455,12 @@ export default async function PlanPage({
               budgets={plannedBudgets}
               fmt={fmt}
             />
+            <SinkingFundsCard
+              ledgers={ledgers}
+              drafts={fundDrafts}
+              accounts={fundAccounts}
+              fmt={fmt}
+            />
             <PlanTodoCard
               actions={actions}
               suggestions={suggestions}
@@ -491,6 +522,13 @@ export default async function PlanPage({
               owned={worth.owned}
               owed={worth.totals.debts}
               fmt={fmt}
+            />
+            <SinkingFundsCard
+              ledgers={ledgers}
+              drafts={fundDrafts}
+              accounts={fundAccounts}
+              fmt={fmt}
+              showEmpty
             />
             <PotsCard snap={snap} sim={sim} colors={colors} fmt={fmt} />
             <BalancesCard snap={snap} sim={sim} fmt={fmt} />

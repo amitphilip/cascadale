@@ -77,6 +77,7 @@ The data you get (amounts in the stated currency):
 - otherIncome: income not on a schedule, per month.
 - budgets: per expense category, the person's budget (if set) and the app's projection.
 - upcoming: one-off expenses the person expects, with an id (U1, U2…), date, amount and account (null if undecided). They are not recurring: plan for them by temporarily raising a set-aside in the paydays before, or by drawing on a buffer, and mention it in focus or warnings.
+- potFunds: sinking funds, pots that lumpy known costs are paid out of: each one's balance today, account, end date (until) and planned draws (one-offs it pays). Their draws are already left out of variable spending and are paid from the fund in the simulation. Keep the fund's own set-aside as the person set it; don't put its draws in another pot or plan for them again.
 Transfers between the person's own accounts are excluded from all of this, including credit card repayments. Bills and spending charged to a credit card still have to be paid from a cash account.
 
 How to build the plan:

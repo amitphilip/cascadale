@@ -23,7 +23,8 @@ import {
 import { latestPlan, loadSnapshot } from "@/lib/planner"
 import { goalPlan, planGoal } from "@/lib/plan-goal"
 import { supabasePlanRepo } from "@/lib/plan-repo"
-import { withInstructions } from "@/lib/plan-service"
+import { potLedgers, withInstructions } from "@/lib/plan-service"
+import { potHealth } from "@/lib/pots"
 import {
   getAccountsWithBalances,
   getGoalThread,
@@ -51,6 +52,8 @@ type Row = {
   accountId: number
   categoryName: string | null
   categoryKind: string | null
+  /** the sinking fund it was drawn from, if any */
+  pot: string | null
 }
 
 /**
@@ -114,8 +117,10 @@ export async function buildStats(snap: PlanSnapshot): Promise<CheckInStats> {
   const days = differenceInCalendarDays(parseISO(to), parseISO(from)) + 1
   const share = days / DAYS_PER_MONTH
 
+  // a fund's draws were planned for: they're reported with the fund, not against the pace
+  const potRows = rows.filter((r) => r.pot && !isIncome(r))
   const incomeRows = rows.filter(isIncome)
-  const expenseRows = rows.filter((r) => !isIncome(r))
+  const expenseRows = rows.filter((r) => !isIncome(r) && !r.pot)
   const income = round2(incomeRows.reduce((s, r) => s + r.amount, 0))
   const spending = round2(-expenseRows.reduce((s, r) => s + r.amount, 0))
 
@@ -164,6 +169,7 @@ export async function buildStats(snap: PlanSnapshot): Promise<CheckInStats> {
   const oneOffsUntil = toIso(addDays(parseISO(snap.start), ONE_OFFS_AHEAD))
   const low = combinedLow(snap, sim)
 
+  const funds = await potLedgers({ repo: supabasePlanRepo(db), loadSnapshot: async () => snap })
   const base = thread && latestPlan(thread.messages)
   const startedPlan = started && latestPlan(started.messages)
   const live =
@@ -223,6 +229,14 @@ export async function buildStats(snap: PlanSnapshot): Promise<CheckInStats> {
         category: r.categoryName ?? "Uncategorized",
       })),
     categories: categoryStats,
+    potDraws: potRows.map((r) => ({
+      date: r.date,
+      description: r.description,
+      amount: -r.amount,
+      category: r.categoryName ?? "Uncategorized",
+      pot: r.pot!,
+    })),
+    pots: funds.ledgers.map(potHealth),
     accounts: snap.accounts.map((a) => ({
       name: a.name,
       type: a.type,
@@ -281,6 +295,8 @@ The data (amounts in the stated currency):
 - from/to/days: the dates the new transactions cover. basis "new" means logged since the last check-in; "recent" means nothing new was logged, so it is the last 30 days.
 - income/spending/net: totals over those days, transfers between their own accounts excluded. expectedIncome/expectedSpending: what their usual pattern predicts for the same number of days.
 - incomeItems, bigExpenses: the largest money in and out. categories: spending per category against its expectation for those days.
+- potDraws: payments drawn from a sinking fund (planned, lumpy costs such as air tickets or invoices). They are left out of spending and categories, so don't call them overspending.
+- pots: each sinking fund's health: balance, contributed and spent this cycle, cap and capUsedPct, capRemaining, plannedTotal, the next planned draw, shortfall (how far the balance falls short of a planned draw), suggestedContribution per period (frequency) to reach the cap or planned total by endDate, and warnings. Report on each fund briefly; when it's over its cap or short of its next draw, say so and give the fix (top up, raise the contribution to the suggested amount, or move the draw).
 - accounts: balances now (credit cards and loans negative when owed) and how much each balance moved between from and to, transfers included. cashNow: total in cash accounts.
 - upcomingBills: recurring bills in the next 30 days. upcomingOneOffs: one-off expenses they told the app about, in the next 90 days.
 - low: the lowest projected combined balance of all accounts except loans over the next 60 days if spending keeps its usual pace, with the date. Transfers between their own accounts aren't projected, so judge affordability on this combined figure. Below zero means they can't cover what's coming.

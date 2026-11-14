@@ -131,6 +131,25 @@ export type PlanSnapshot = {
   upcoming?: PlanOneOff[]
   /** one-off changes to the plan in effect when it was built */
   adjustments?: PlanAdjustmentEvent[]
+  /** sinking fund pots: their balance today and the one-offs planned on them */
+  potFunds?: PlanPotFund[]
+}
+
+/**
+ * A sinking fund as the simulation takes it: its pot starts at the fund's balance, its
+ * set-asides stop after `until`, and its planned draws are paid from it (and from its
+ * account), not from day-to-day spending.
+ */
+export type PlanPotFund = {
+  pot: string
+  balance: number
+  /** the day the balance is as of: set-asides up to then are in it already */
+  asOf: string
+  /** where the fund's money sits; null for the cash account with the most in it */
+  accountId: number | null
+  /** the fund's last day; null for open-ended */
+  until: string | null
+  draws: { id: string; name: string; date: string; amount: number }[]
 }
 
 // ── The plan the model returns ───────────────────────────────────────────────
@@ -277,6 +296,31 @@ function occurrence(anchor: string, cadence: Cadence, n: number) {
     case "yearly":
       return toIso(addMonths(d, 12 * n))
   }
+}
+
+/**
+ * Every occurrence of a flow in [from, to], before its anchor as well as after: the past
+ * dates of a schedule, e.g. for a sinking fund's contributions since it started.
+ */
+export function flowDates(anchor: string, cadence: Cadence, from: string, to: string) {
+  const out: string[] = []
+  const gap = CADENCE_DAYS[cadence].days
+  let n =
+    Math.floor(differenceInCalendarDays(parseISO(from), parseISO(anchor)) / gap) - 1
+  for (; ; n++) {
+    const date = occurrence(anchor, cadence, n)
+    if (date > to) return out
+    if (date >= from) out.push(date)
+  }
+}
+
+/** The 1st of each month in [from, to]. */
+export function firstsOfMonth(from: string, to: string) {
+  const out: string[] = []
+  const d = parseISO(from)
+  let m = new Date(d.getFullYear(), d.getMonth() + (d.getDate() === 1 ? 0 : 1), 1)
+  for (; toIso(m) <= to; m = addMonths(m, 1)) out.push(toIso(m))
+  return out
 }
 
 /** Every occurrence of a flow in [from, to]. */
@@ -511,9 +555,13 @@ export function simulate(
   for (const s of setAsides)
     for (const b of s.covers) if (!billPot.has(b)) billPot.set(b, s.pot)
 
+  const funds = snap.potFunds ?? []
+  const fundOf = new Map(funds.map((f) => [f.pot, f]))
   const events: ScheduledEvent[] = []
   const setAsideOn = (date: string, incomeId: string) => {
     for (const s of setAsides.filter((x) => x.income_id === incomeId)) {
+      const fund = fundOf.get(s.pot)
+      if (fund && ((fund.until && date > fund.until) || date <= fund.asOf)) continue
       events.push({
         date,
         kind: "set-aside",
@@ -590,6 +638,26 @@ export function simulate(
       oneOff: true,
     })
   }
+  // a fund's planned draws are paid from the fund (overdue ones on day one)
+  for (const f of funds) {
+    const setAside = setAsides.find((s) => s.pot === f.pot)
+    const accountId =
+      f.accountId ?? setAside?.to_account_id ?? setAside?.from_account_id ?? fallbackAccount
+    if (accountId === undefined) continue
+    for (const d of f.draws) {
+      const date = d.date < snap.start ? snap.start : d.date
+      if (date > end) continue
+      events.push({
+        date,
+        kind: "bill",
+        name: `${f.pot}: ${d.name}`,
+        amount: d.amount,
+        accountId,
+        pot: f.pot,
+        oneOff: true,
+      })
+    }
+  }
   applyAdjustments(events, snap, setAsides, end)
   // income first, then set-asides, then bills on the same day
   const order = { income: 0, "set-aside": 1, bill: 2 }
@@ -609,9 +677,14 @@ export function simulate(
       v.accountId,
       (daily.get(v.accountId) ?? 0) + v.monthly / DAYS_PER_MONTH
     )
-  const potNames = [...new Set(setAsides.map((s) => s.pot))]
-  const pot = new Map(potNames.map((p) => [p, 0]))
-  const potMin = new Map(potNames.map((p) => [p, 0]))
+  const potNames = [
+    ...new Set([...setAsides.map((s) => s.pot), ...funds.map((f) => f.pot)]),
+  ]
+  const startBalance = new Map(funds.map((f) => [f.pot, f.balance]))
+  const pot = new Map(potNames.map((p) => [p, startBalance.get(p) ?? 0]))
+  const potMin = new Map(
+    potNames.map((p) => [p, Math.min(0, startBalance.get(p) ?? 0)])
+  )
 
   const dayList: string[] = []
   const balances: Record<number, number[]> = Object.fromEntries(
@@ -654,11 +727,14 @@ export function simulate(
     const covers = [...new Set(entries.flatMap((s) => s.covers))].filter(
       (b) => billPot.get(b) === name
     )
-    const seed = round2(-potMin.get(name)!)
+    const seed = Math.max(0, round2(-potMin.get(name)!))
     potRuns[name] = potRuns[name].map((v) => round2(v + seed))
+    const fund = funds.find((f) => f.pot === name)
     return {
       name,
-      accountId: entries[0].to_account_id ?? entries[0].from_account_id,
+      accountId: entries[0]
+        ? (entries[0].to_account_id ?? entries[0].from_account_id)
+        : (fund?.accountId ?? fallbackAccount ?? 0),
       monthlyIn: round2(
         entries.reduce(
           (s, x) => s + x.amount * timesPerMonth(snap, x.income_id),
@@ -794,7 +870,7 @@ function adjustmentEvent(
 }
 
 /** Where the fortnightly schedule starts: a fortnightly payday, else the first payday, else day one. */
-function fortnightAnchor(snap: PlanSnapshot) {
+export function fortnightAnchor(snap: PlanSnapshot) {
   const pays = snap.incomes.toSorted((a, b) =>
     a.nextDate.localeCompare(b.nextDate)
   )
@@ -834,6 +910,12 @@ export function describeSimulation(snap: PlanSnapshot, sim: Simulation) {
       (u) =>
         `One-off ${u.id} "${u.name}" of ${u.amount} on ${u.date}${u.accountId ? ` from ${name(u.accountId)}` : ""}.`
     ),
+    ...(snap.potFunds ?? []).flatMap((f) => [
+      `Sinking fund "${f.pot}" holds ${f.balance}${f.until ? ` and runs to ${f.until}` : ""}.`,
+      ...f.draws.map(
+        (d) => `Planned draw "${d.name}" of ${d.amount} on ${d.date}, paid from ${f.pot}.`
+      ),
+    ]),
     ...sim.overdrafts.map(
       (o) =>
         `${name(o.accountId)} goes below zero on ${o.date}, lowest ${o.lowest}.`
