@@ -11,6 +11,7 @@ import {
   type PlanFlow,
   type PlanSnapshot,
 } from "@/lib/plan"
+import type { PotType, ResetMode } from "@/lib/pots"
 import { similarity } from "@/lib/rules"
 
 /**
@@ -33,7 +34,9 @@ export const ACTOR_LABELS: Record<Actor, string> = {
 export type PotInstruction = {
   id: number
   name: string
-  /** set aside each time it's funded */
+  /** set_aside: money put by for bills or saving; sinking_fund: also drawn from, with a ledger */
+  type: PotType
+  /** set aside each time it's funded; 0 for a sinking fund with no schedule yet */
   amount: number
   frequency: Frequency
   /** account the money is taken from; null for the funding income's account */
@@ -47,6 +50,16 @@ export type PotInstruction = {
   /** series keys of the bills it pays */
   covers: string[]
   note: string | null
+  /** sinking funds: the most paid out per cycle, null for no cap */
+  capAmount: number | null
+  /** sinking funds: the last day it runs, null for open-ended */
+  endDate: string | null
+  /** sinking funds: totals and cap start again every year on this date's day and month */
+  resetDate: string | null
+  /** sinking funds: at a reset, what's left carries over or is released */
+  resetMode: ResetMode
+  /** sinking funds: scheduled contributions count from this date (earlier ones are entries) */
+  scheduledFrom: string | null
   /** a tombstone: take this pot out of the plan, even one the planner made */
   removed: boolean
   updatedBy: Actor
@@ -104,6 +117,8 @@ export const emptyPlan = (): Plan => ({
 
 /** A pot's set-aside entry in a snapshot, or why it can't be placed. */
 export function potSetAside(pot: PotInstruction, snap: PlanSnapshot) {
+  // a sinking fund with no schedule yet is only drawn from
+  if (pot.type === "sinking_fund" && !(pot.amount > 0)) return { entry: null, warnings: [] }
   const income = pot.incomeKey || pot.incomeName
     ? findFlow(snap.incomes, { key: pot.incomeKey, name: pot.incomeName })
     : undefined

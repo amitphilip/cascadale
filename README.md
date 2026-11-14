@@ -131,6 +131,20 @@ Two MCP servers (Streamable HTTP), each added to claude.ai as its own connector:
 - **Cas in the Plan page's chat** has the same read and memory tools plus the
   plan's action tools, and changes the plan when you ask. It sees the last few
   messages; its notes carry the rest.
+- **Sinking funds** are pots that lumpy, known costs are paid out of (air tickets,
+  invoices): money goes in on the pot's schedule and as top-ups, transactions are
+  linked to the fund as draws, and expected one-offs are planned on it. Each has a
+  ledger with a running balance, an optional cap, an end date or a yearly reset (the
+  leftover carries over or is released) and a suggested contribution: (cap or planned
+  total less balance less spent) over the periods left. A linked draw keeps its
+  category but leaves that category's budget (`category_spend`), the planner's
+  day-to-day spending and the check-in's pacing; the simulation pays planned draws
+  from the fund instead. Warnings (over the cap, can't cover the next draw) show on
+  the Plan page, in the plan's warnings and in check-ins. The logic is in
+  [lib/pots.ts](lib/pots.ts); `upsert_pot` (with `type: "sinking_fund"`),
+  `link_transaction_to_pot`, `unlink_transaction_from_pot`, `add_pot_planned_draw`,
+  `remove_pot_planned_draw`, `add_pot_contribution` and `get_pot_ledger` are its
+  tools, and `check_purchase` takes a `pot`.
 - **Data health:** `get_briefing`, `get_overview`, `get_plan`, `run_check_in`
   and `ask_cas` return `data_health`: each account's last sync and Akahu refresh
   time, drift between Cascadale's balance and the bank's, pending transactions

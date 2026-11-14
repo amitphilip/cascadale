@@ -1,6 +1,6 @@
 import type { Metadata } from "next"
 import Link from "next/link"
-import { ListBulletsIcon, NoteIcon, PlusIcon } from "@phosphor-icons/react/ssr"
+import { ListBulletsIcon, NoteIcon, PiggyBankIcon, PlusIcon } from "@phosphor-icons/react/ssr"
 
 import { TransactionFilters } from "./filters"
 import { InlineCategory, TransactionRowActions } from "./transaction-row-actions"
@@ -33,6 +33,7 @@ import {
   getCategories,
   getSettings,
   getTransactionMonths,
+  getFundLinks,
   getTransactions,
 } from "@/lib/queries"
 import { cn } from "@/lib/utils"
@@ -64,6 +65,20 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
     getTransactionMonths(),
     getSettings(),
   ])
+  const { funds, links } = await getFundLinks(data.rows.map((t) => t.id))
+  const fundBadge = (id: number) => {
+    const link = links.get(id)
+    if (!link) return null
+    return (
+      <Badge
+        variant="secondary"
+        className="shrink-0"
+        title={link.kind === "draw" ? "Paid from this sinking fund, so it's left out of the category's budget" : "Counted as money into this sinking fund"}
+      >
+        <PiggyBankIcon /> {link.kind === "draw" ? `From ${link.pot}` : `Into ${link.pot}`}
+      </Badge>
+    )
+  }
   const accountOptions = accounts
     .filter((a) => !a.archived)
     .map((a) => ({ id: a.id, name: a.name }))
@@ -181,6 +196,7 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
                       {t.notes && (
                         <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{t.notes}</p>
                       )}
+                      {links.has(t.id) && <div className="mt-1">{fundBadge(t.id)}</div>}
                     </div>
                     <div className="flex shrink-0 items-center gap-0.5">
                       <span
@@ -195,6 +211,8 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
                         transaction={t}
                         accounts={allAccounts}
                         categories={categoryOptions}
+                        funds={funds}
+                        fund={links.get(t.id)?.pot ?? null}
                       />
                     </div>
                   </div>
@@ -260,6 +278,7 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
                               Manual
                             </Badge>
                           )}
+                          {fundBadge(t.id)}
                         </div>
                       </TableCell>
                       <TableCell className="whitespace-nowrap text-muted-foreground">
@@ -294,6 +313,8 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
                           transaction={t}
                           accounts={allAccounts}
                           categories={categoryOptions}
+                          funds={funds}
+                          fund={links.get(t.id)?.pot ?? null}
                         />
                       </TableCell>
                     </TableRow>

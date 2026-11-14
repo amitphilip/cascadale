@@ -359,6 +359,35 @@ export async function getTransactions(f: TransactionFilters) {
   }
 }
 
+/**
+ * The live sinking funds by name, and which of these transactions each one is linked to
+ * (drawn from or paid into).
+ */
+export async function getFundLinks(transactionIds: number[]) {
+  const d = await db()
+  const funds = await must<{ id: number; name: string }[]>(
+    d.from("plan_pots").select("id, name").eq("type", "sinking_fund").eq("removed", false).order("name")
+  )
+  const rows = transactionIds.length
+    ? await must<{ transactionId: number; potId: number; kind: string }[]>(
+        d
+          .from("pot_entries")
+          .select("transactionId:transaction_id, potId:pot_id, kind")
+          .in("transaction_id", transactionIds)
+      )
+    : []
+  const nameOf = new Map(funds.map((f) => [f.id, f.name]))
+  return {
+    funds: funds.map((f) => f.name),
+    links: new Map(
+      rows.flatMap((r) => {
+        const pot = nameOf.get(r.potId)
+        return pot ? [[r.transactionId, { pot, kind: r.kind as "draw" | "contribution" }] as const] : []
+      })
+    ),
+  }
+}
+
 export async function getTransactionMonths() {
   return must<string[]>((await db()).rpc("transaction_months"))
 }

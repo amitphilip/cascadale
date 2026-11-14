@@ -1,4 +1,5 @@
 import type { Actor, AdjustmentInstruction, PotInstruction } from "@/lib/plan-instructions"
+import type { PotEntry } from "@/lib/pots"
 import type { PlanChange, PlanDecision, PlanRecord, PlanRepo } from "@/lib/plan-service"
 
 /**
@@ -13,7 +14,19 @@ function without<T extends object, K extends keyof T>(row: T, key: K): Omit<T, K
   return out
 }
 
-export function memoryRepo(seed: { plan?: Omit<PlanRecord, "id" | "threadId">; decisions?: string[] } = {}) {
+/** A transaction a fund can be linked to. */
+export type MemoryTx = {
+  id: number
+  date: string
+  description: string
+  amount: number
+  accountId: number
+  category: string | null
+}
+
+export function memoryRepo(
+  seed: { plan?: Omit<PlanRecord, "id" | "threadId">; decisions?: string[]; transactions?: MemoryTx[] } = {}
+) {
   let clock = Date.parse("2026-10-28T09:00:00Z")
   const now = () => new Date((clock += 1000)).toISOString()
   let ids = 0
@@ -23,6 +36,16 @@ export function memoryRepo(seed: { plan?: Omit<PlanRecord, "id" | "threadId">; d
   const pots: PotInstruction[] = []
   const adjustments: (AdjustmentInstruction & { removedAt: string | null })[] = []
   const plans: PlanRecord[] = []
+  const entries: Omit<PotEntry, "transaction">[] = []
+  const transactions = structuredClone(seed.transactions ?? [])
+  // the linked transaction as it is now, as the database join reads it
+  const withTx = (e: Omit<PotEntry, "transaction">): PotEntry => {
+    const t = e.transactionId === null ? undefined : transactions.find((x) => x.id === e.transactionId)
+    return structuredClone({
+      ...e,
+      transaction: t ? { date: t.date, description: t.description, amount: t.amount, accountId: t.accountId } : null,
+    })
+  }
   const decisions = (seed.decisions ?? []).map((content) => ({
     id: nextId(),
     content,
@@ -71,6 +94,28 @@ export function memoryRepo(seed: { plan?: Omit<PlanRecord, "id" | "threadId">; d
       else pots.push(row)
       return structuredClone(row)
     },
+    async listPotEntries() {
+      return entries
+        .toSorted((a, b) => a.date.localeCompare(b.date) || a.id - b.id)
+        .map(withTx)
+    },
+    async addPotEntry(e) {
+      if (e.transactionId !== null && entries.some((x) => x.transactionId === e.transactionId))
+        throw new Error("duplicate transaction link")
+      const row = { ...e, id: nextId(), createdAt: now() }
+      entries.push(row)
+      return withTx(row)
+    },
+    async removePotEntry(id) {
+      const i = entries.findIndex((x) => x.id === id)
+      if (i < 0) return null
+      const [row] = entries.splice(i, 1)
+      return withTx(row)
+    },
+    async getTransaction(id) {
+      const t = transactions.find((x) => x.id === id)
+      return t ? structuredClone(t) : null
+    },
     async listAdjustments() {
       return adjustments
         .filter((a) => a.removedAt === null)
@@ -100,7 +145,7 @@ export function memoryRepo(seed: { plan?: Omit<PlanRecord, "id" | "threadId">; d
       return out.map((d) => without(d, "appliedAt"))
     },
   }
-  return { repo, changes, pots, adjustments, plans, decisions }
+  return { repo, changes, pots, adjustments, plans, decisions, entries, transactions }
 }
 
 export const ACTOR: Actor = "mcp"

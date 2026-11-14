@@ -2,6 +2,7 @@ import "server-only"
 
 import { DbError, getDb, must, type Db } from "@/lib/db"
 import type { PlanSnapshot } from "@/lib/plan"
+import type { PotEntry } from "@/lib/pots"
 import type { Actor, AdjustmentInstruction, PotInstruction } from "@/lib/plan-instructions"
 import { getPlanThread } from "@/lib/queries"
 import type { PlanChange, PlanDeps, PlanRepo } from "@/lib/plan-service"
@@ -12,13 +13,24 @@ import { loadSnapshot } from "@/lib/planner"
 // household, exactly as the Plan page reads them.
 
 const POT_COLUMNS =
-  "id, name, amount, frequency, fromAccountId:from_account_id, toAccountId:to_account_id, incomeKey:income_key, incomeName:income_name, covers, note, removed, updatedBy:updated_by, updatedAt:updated_at, reason"
+  "id, name, type, amount, frequency, fromAccountId:from_account_id, toAccountId:to_account_id, incomeKey:income_key, incomeName:income_name, covers, note, capAmount:cap_amount, endDate:end_date, resetDate:reset_date, resetMode:reset_mode, scheduledFrom:scheduled_from, removed, updatedBy:updated_by, updatedAt:updated_at, reason"
+const ENTRY_COLUMNS =
+  "id, potId:pot_id, kind, amount, date, transactionId:transaction_id, note, scheduled, createdBy:created_by, createdAt:created_at, transaction:transactions(date, description, amount, accountId:account_id)"
 const ADJUSTMENT_COLUMNS =
   "id, date, kind, target, ref, name, amount, fromAccountId:from_account_id, toAccountId:to_account_id, createdBy:created_by, createdAt:created_at, reason"
 const CHANGE_COLUMNS =
   "id, operationId:operation_id, actor, action, reason, summary, result, createdAt:created_at, completedAt:completed_at"
 
-const pot = (r: PotInstruction): PotInstruction => ({ ...r, amount: Number(r.amount) })
+const pot = (r: PotInstruction): PotInstruction => ({
+  ...r,
+  amount: Number(r.amount),
+  capAmount: r.capAmount === null ? null : Number(r.capAmount),
+})
+const entry = (r: PotEntry): PotEntry => ({
+  ...r,
+  amount: Number(r.amount),
+  transaction: r.transaction && { ...r.transaction, amount: Number(r.transaction.amount) },
+})
 const adjustment = (r: AdjustmentInstruction): AdjustmentInstruction => ({
   ...r,
   amount: r.amount === null ? null : Number(r.amount),
@@ -76,6 +88,12 @@ export function supabasePlanRepo(db: Db): PlanRepo {
         income_name: p.incomeName,
         covers: p.covers,
         note: p.note,
+        type: p.type,
+        cap_amount: p.capAmount,
+        end_date: p.endDate,
+        reset_date: p.resetDate,
+        reset_mode: p.resetMode,
+        scheduled_from: p.scheduledFrom,
         removed: p.removed,
         updated_by: p.updatedBy,
         updated_at: new Date().toISOString(),
@@ -85,6 +103,47 @@ export function supabasePlanRepo(db: Db): PlanRepo {
         ? db.from("plan_pots").update(row).eq("id", id)
         : db.from("plan_pots").insert(row)
       return pot(await must<PotInstruction>(query.select(POT_COLUMNS).single()))
+    },
+
+    async listPotEntries() {
+      return (
+        await must<PotEntry[]>(db.from("pot_entries").select(ENTRY_COLUMNS).order("date").order("id"))
+      ).map(entry)
+    },
+    async addPotEntry(e) {
+      return entry(
+        await must<PotEntry>(
+          db
+            .from("pot_entries")
+            .insert({
+              pot_id: e.potId,
+              kind: e.kind,
+              amount: e.amount,
+              date: e.date,
+              transaction_id: e.transactionId,
+              note: e.note,
+              scheduled: e.scheduled,
+              created_by: e.createdBy,
+            })
+            .select(ENTRY_COLUMNS)
+            .single()
+        )
+      )
+    },
+    async removePotEntry(id) {
+      const [row] = await must<PotEntry[]>(db.from("pot_entries").delete().eq("id", id).select(ENTRY_COLUMNS))
+      return row ? entry(row) : null
+    },
+    async getTransaction(id) {
+      const [row] = await must<
+        { id: number; date: string; description: string; amount: number; accountId: number; category: { name: string } | null }[]
+      >(
+        db
+          .from("transactions")
+          .select("id, date, description, amount, accountId:account_id, category:categories(name)")
+          .eq("id", id)
+      )
+      return row ? { ...row, amount: Number(row.amount), category: row.category?.name ?? null } : null
     },
 
     async listAdjustments() {

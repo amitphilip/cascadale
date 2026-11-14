@@ -155,6 +155,34 @@ export function CheckInView({
         </div>
       )}
 
+      {(stats.pots ?? []).length > 0 && (
+        <div className="grid gap-2">
+          <h3 className="text-sm font-medium">Sinking funds</h3>
+          <ul className="grid gap-2">
+            {stats.pots!.map((p) => (
+              <li key={p.pot} className="grid gap-1 rounded-lg border p-3 text-sm">
+                <div className="flex flex-wrap items-baseline justify-between gap-x-2">
+                  <span className="font-medium">{p.pot}</span>
+                  <span className={cn("tabular-nums", p.balance < 0 && "text-destructive")}>
+                    {money(p.balance)}
+                  </span>
+                </div>
+                <p className="text-muted-foreground">
+                  {money(p.spent)} spent
+                  {p.cap !== null && ` · ${p.capUsedPct}% of ${money(p.cap)} cap`}
+                  {p.nextDraw && ` · next ${p.nextDraw.name} ${money(p.nextDraw.amount)} on ${date(p.nextDraw.date)}`}
+                </p>
+                {p.warnings.map((w) => (
+                  <p key={w} className="text-destructive">
+                    {w}
+                  </p>
+                ))}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <details className="group text-sm">
         <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
           Analytics behind this check-in
@@ -178,6 +206,17 @@ export function CheckInView({
                 <Row
                   key={i}
                   left={`${date(r.date)} · ${r.description}`}
+                  right={money(r.amount)}
+                />
+              ))}
+            </Section>
+          )}
+          {(stats.potDraws ?? []).length > 0 && (
+            <Section title="Paid from sinking funds (not counted as spending)">
+              {stats.potDraws!.map((r, i) => (
+                <Row
+                  key={i}
+                  left={`${date(r.date)} · ${r.description} · ${r.pot}`}
                   right={money(r.amount)}
                 />
               ))}
