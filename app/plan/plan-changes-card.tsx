@@ -23,7 +23,10 @@ import type { getPlanState } from "@/lib/plan-service"
 import { cn } from "@/lib/utils"
 import { localDate } from "@/supabase/functions/_shared/akahu"
 
-type PlanState = Awaited<ReturnType<typeof getPlanState>>
+type PlanState = Pick<
+  Awaited<ReturnType<typeof getPlanState>>,
+  "pots" | "adjustments" | "recentChanges" | "unappliedDecisions"
+>
 
 const FREQUENCY_TEXT = {
   payday: "every payday",

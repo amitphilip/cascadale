@@ -36,8 +36,6 @@ import {
   InOutCard,
   PotsMonthCard,
 } from "./this-month"
-import { PlanAsk } from "./plan-ask"
-import { type ChatMessage } from "./plan-chat"
 import { PageHeader } from "@/components/page-header"
 import { TimelineChart, type Series } from "@/components/plan-charts"
 import { Badge } from "@/components/ui/badge"
@@ -88,12 +86,13 @@ import {
 } from "@/lib/plan-month"
 import { goalPlan, planGoal, type PlanGoal } from "@/lib/plan-goal"
 import { planStanding, planVerdict, withGoal } from "@/lib/plan-verdict"
-import { getPlanState, withInstructions } from "@/lib/plan-service"
+import { assemble } from "@/lib/plan-service"
 import { planDeps } from "@/lib/plan-repo"
-import { chatMessages, latestPlan, loadSnapshot } from "@/lib/planner"
+import { latestPlan, loadSnapshot } from "@/lib/planner"
 import {
   getAccountsWithBalances,
   getAssets,
+  getAverageWindow,
   getCategories,
   getAccountHolders,
   getCategorySpend,
@@ -118,7 +117,7 @@ import { localDate, todayLocal } from "@/supabase/functions/_shared/akahu"
 
 export const metadata: Metadata = { title: "Plan" }
 
-/** Cas can take a few minutes over a question in the chat. */
+/** Cas can take a few minutes over a request sent from the page. */
 export const maxDuration = 300
 
 /** Days of upcoming bills and paydays listed. */
@@ -129,8 +128,6 @@ const MIN_PAYDAY = 50
 const HISTORY_MONTHS = 12
 /** How far back the verdict compares net worth and debts. */
 const TREND_MONTHS = 3
-/** Chat messages shown; older ones stay stored. */
-const MAX_CHAT = 40
 /** Cas notes shown on the status card. */
 const MAX_NOTES = 4
 /** Pots and accounts beyond this many share a neutral color, never a sixth hue. */
@@ -146,13 +143,45 @@ export default async function PlanPage({
 }: {
   searchParams: Promise<{ view?: string }>
 }) {
-  const userId = await getUserId()
-  const thisWeek = weekOf(todayLocal())
+  const today = todayLocal()
+  const thisMonth = today.slice(0, 7)
+  const thisWeek = weekOf(today)
+  // everything starts at once; what depends on another read is chained onto it
+  const { repo } = await planDeps("website")
+  const userP = getUserId()
+  const prefsP = userP.then(getMyPrefs)
+  const holdersP = getAccountHolders()
+  const viewP = Promise.all([searchParams, prefsP]).then(
+    // you open on your own view or the family's, as you chose in Settings
+    ([params, prefs]) => parseView(params.view) ?? prefs.homeView
+  )
+  const mineP = Promise.all([userP, holdersP]).then(
+    ([userId, holders]) =>
+      new Set([...holders].filter(([, h]) => h === userId).map(([id]) => id))
+  )
+  const currentP = loadSnapshot()
+  const threadP = getPlanThread()
+  const startedP = getGoalThread()
+  // only as far back as the net-worth history and the goal look
+  const txsP = Promise.all([getAverageWindow(), threadP, startedP]).then(
+    ([window, thread, started]) => {
+      const after = window && thread && historyStart(window.last, thread, started, today)
+      return after ? getTransactionAmounts(after) : []
+    }
+  )
+  // your own month only shows on your view
+  const mineOnlyP = Promise.all([viewP, mineP]).then(([view, mine]) =>
+    view === "me" && mine.size > 0
+      ? Promise.all([
+          getCategorySpendFor(thisMonth, [...mine]),
+          getMonthCashflow(thisMonth, [...mine]),
+        ])
+      : null
+  )
   const [
     fmt,
     thread,
     current,
-    deps,
     accounts,
     assets,
     txs,
@@ -163,39 +192,49 @@ export default async function PlanPage({
     categories,
     spend,
     people,
+    userId,
     prefs,
     holders,
-    params,
+    view,
+    mine,
     weekSpend,
     cashflow,
+    mineOnly,
+    pots,
+    adjustments,
+    potEntries,
+    decisions,
+    changes,
   ] = await Promise.all([
     getSettings(),
-    getPlanThread(),
-    loadSnapshot(),
-    planDeps("website"),
+    threadP,
+    currentP,
     getAccountsWithBalances(),
     getAssets(),
-    getTransactionAmounts(),
+    txsP,
     getPlanActions(),
     getCheckIns(1),
     getOpenCasNotes(),
-    getGoalThread(),
+    startedP,
     getCategories(),
-    getCategorySpend(todayLocal().slice(0, 7)),
+    getCategorySpend(thisMonth),
     getPeople(),
-    getMyPrefs(userId),
-    getAccountHolders(),
-    searchParams,
+    userP,
+    prefsP,
+    holdersP,
+    viewP,
+    mineP,
     getCategorySpendBetween(thisWeek.start, thisWeek.end),
-    getMonthCashflow(todayLocal().slice(0, 7)),
+    getMonthCashflow(thisMonth),
+    mineOnlyP,
+    repo.listPots(),
+    repo.listAdjustments(),
+    repo.listPotEntries(),
+    repo.openDecisions(),
+    repo.listChanges(20),
   ])
-  // you open on your own view or the family's, as you chose in Settings
-  const view = parseView(params.view) ?? prefs.homeView
   const me = people.find((p) => p.id === userId)
   const myName = prefs.name ?? me?.name ?? "Me"
-  const mine = new Set(
-    [...holders].filter(([, holder]) => holder === userId).map(([id]) => id)
-  )
 
   if (!current) {
     return (
@@ -222,7 +261,6 @@ export default async function PlanPage({
   }
 
   const base = thread && latestPlan(thread.messages)
-  const state = await getPlanState(deps)
 
   if (!thread || !base) {
     return (
@@ -249,14 +287,16 @@ export default async function PlanPage({
   }
 
   // the plan as it stands: today's data, with every pot and adjustment in it
-  const { snapshot: snap, plan, ledgers } = await withInstructions(
-    deps.repo,
+  const { snapshot: snap, plan, ledgers, pots: livePots } = assemble(
     current,
     { snapshot: thread.snapshot, plan: base },
-    todayLocal()
+    pots,
+    adjustments,
+    potEntries,
+    today
   )
   const fundDrafts: Record<string, FundDraft> = Object.fromEntries(
-    state.pots
+    livePots
       .filter((p) => p.type === "sinking_fund")
       .map((p) => [
         p.name,
@@ -277,7 +317,6 @@ export default async function PlanPage({
   const fundAccounts = accounts
     .filter((a) => !a.archived)
     .map((a) => ({ id: a.id, name: a.name }))
-  const today = todayLocal()
   const sim = simulate(snap, plan)
   const colors = potColors(sim)
   const worth = buildNetWorth(accounts, assets)
@@ -324,12 +363,8 @@ export default async function PlanPage({
     categories.filter((c) => c.kind === "expense").map((c) => [c.name, c.id])
   )
   const myCosts = categoryCosts(snap, mine)
-  const myMonth = monthBudget(
-    myCosts,
-    await getCategorySpendFor(today.slice(0, 7), [...mine]),
-    today
-  )
-  const myCashflow = await getMonthCashflow(today.slice(0, 7), [...mine])
+  const [mySpend, myCashflow] = mineOnly ?? [[], cashflow]
+  const myMonth = monthBudget(myCosts, mySpend, today)
   const inOut = monthInOut({ actual: cashflow, snap, sim, today })
   const myInOut = monthInOut({ actual: myCashflow, snap, sim, today, accounts: mine })
   // the last transaction a couple of days back or more: "so far" is likely missing some
@@ -396,16 +431,6 @@ export default async function PlanPage({
       })),
   ]
 
-  const messages: ChatMessage[] = chatMessages(thread, thread.messages)
-    .slice(-MAX_CHAT)
-    .map((m) => ({
-      id: m.id,
-      role: m.role,
-      content: m.content,
-      // a thread's first reply is the plan itself, not a change to it
-      changed: m.role === "assistant" && m.plan !== null && m !== thread.messages[1],
-    }))
-
   return (
     <>
       <PageHeader
@@ -429,7 +454,7 @@ export default async function PlanPage({
 
       <ViewSwitcher view={view} me={myName} />
 
-      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] items-start gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] items-start gap-6">
         {view === "me" && (
           <div className="grid min-w-0 gap-6">
             {mine.size === 0 ? (
@@ -487,7 +512,7 @@ export default async function PlanPage({
           <div className="grid min-w-0 gap-6">
             <CasLine
               standing={standing}
-              waiting={state.unappliedDecisions.length}
+              waiting={decisions.length}
               todo={openTodos}
             />
             <InOutCard inOut={inOut} fmt={fmt} stale={stale} />
@@ -508,7 +533,12 @@ export default async function PlanPage({
             />
             <PlanGoalCard summary={plan.summary} goal={goal} fmt={fmt} />
             <PlanChangesCard
-              state={state}
+              state={{
+                pots: livePots,
+                adjustments,
+                recentChanges: changes.filter((c) => c.completedAt !== null),
+                unappliedDecisions: decisions,
+              }}
               snap={snap}
               checkIn={checkIn}
               today={today}
@@ -580,12 +610,34 @@ export default async function PlanPage({
             </div>
           </div>
         )}
-
-        <PlanAsk threadId={thread.id} messages={messages} />
       </div>
-      <div className="h-14 xl:hidden" aria-hidden />
     </>
   )
+}
+
+type Thread = NonNullable<Awaited<ReturnType<typeof getPlanThread>>>
+
+/**
+ * The earliest date the page steps balances back to: the first month-end of the net-worth
+ * history, or the goal plan's last day of data if that's earlier.
+ */
+function historyStart(
+  /** the last day with transactions, the snapshot's dataEnd */
+  dataEnd: string,
+  thread: Thread,
+  started: Thread | null,
+  today: string
+) {
+  const base = latestPlan(thread.messages)
+  if (!base) return null
+  const startedPlan = started && latestPlan(started.messages)
+  const goal = goalPlan(
+    startedPlan && { snapshot: started.snapshot, plan: startedPlan },
+    { snapshot: thread.snapshot, plan: base },
+    today
+  )
+  const [first] = monthEnds(dataEnd, HISTORY_MONTHS)
+  return goal.snapshot.dataEnd < first ? goal.snapshot.dataEnd : first
 }
 
 type Colors = Map<string, string>

@@ -110,6 +110,26 @@ export async function selectAll<T>(page: (from: number, to: number) => PromiseLi
 }
 
 /**
+ * Every row of a query that may exceed the API's row limit, with the pages after the first
+ * fetched at once: the first page asks for the total count. The query must have a stable
+ * order and pass `count` to its `select`.
+ */
+export async function selectAllAtOnce<T>(
+  page: (from: number, to: number, count?: "exact") => PromiseLike<Result & { count?: number | null }>
+) {
+  const first = await page(0, PAGE - 1, "exact")
+  if (first.error) throw new DbError(first.error)
+  const rows = first.data as T[]
+  const total = first.count ?? rows.length
+  const rest = await Promise.all(
+    Array.from({ length: Math.ceil((total - rows.length) / PAGE) }, (_, i) =>
+      must<T[]>(page(PAGE * (i + 1), PAGE * (i + 2) - 1))
+    )
+  )
+  return rows.concat(...rest)
+}
+
+/**
  * Column lists that select a table's rows in the app's camelCase shape (see schema.ts).
  * PostgREST returns numeric columns as JSON numbers and dates as ISO strings.
  */

@@ -58,11 +58,12 @@ export function monthEnds(last: string, months: number) {
 }
 
 /**
- * Net worth at each date, rebuilt from every account's opening balance and transactions.
+ * Net worth at each date: each account's balance today, stepped back by the transactions
+ * after that date, so `txs` only has to reach back to the earliest date.
  * Assets aren't dated, so their value today counts at every point.
  */
 export function netWorthHistory(
-  accounts: { id: number; openingBalance: number; archived: boolean }[],
+  accounts: { id: number; balance: number; archived: boolean }[],
   txs: { accountId: number; date: string; amount: number }[],
   assetsTotal: number,
   dates: string[]
@@ -72,8 +73,8 @@ export function netWorthHistory(
   return dates.map((date) => {
     const balances = active.map((a) =>
       (byAccount.get(a.id) ?? [])
-        .filter((t) => t.date <= date)
-        .reduce((s, t) => s + t.amount, a.openingBalance)
+        .filter((t) => t.date > date)
+        .reduce((s, t) => s - t.amount, a.balance)
     )
     return {
       date,

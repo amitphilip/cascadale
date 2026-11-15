@@ -38,9 +38,9 @@ describe("buildNetWorth", () => {
 
 describe("netWorthHistory", () => {
   const accounts = [
-    { id: 1, openingBalance: 100, archived: false },
-    { id: 2, openingBalance: -1000, archived: false },
-    { id: 3, openingBalance: 5000, archived: true },
+    { id: 1, balance: 150, archived: false },
+    { id: 2, balance: -800, archived: false },
+    { id: 3, balance: 5999, archived: true },
   ]
   const txs = [
     { accountId: 1, date: "2026-09-15", amount: 50 },
@@ -48,7 +48,7 @@ describe("netWorthHistory", () => {
     { accountId: 3, date: "2026-10-15", amount: 999 },
   ]
 
-  test("balances on each date, with assets at today's value", () => {
+  test("balances on each date, stepped back from today's, with assets at today's value", () => {
     expect(netWorthHistory(accounts, txs, 500, ["2026-08-31", "2026-09-30", "2026-10-30"])).toEqual([
       { date: "2026-08-31", netWorth: -400, debts: -1000 },
       { date: "2026-09-30", netWorth: -350, debts: -1000 },

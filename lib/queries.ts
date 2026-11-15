@@ -1,8 +1,9 @@
 import "server-only"
 
+import { cache } from "react"
 import { connection } from "next/server"
 
-import { COLUMNS, DbError, getDb, must, selectAll } from "@/lib/db"
+import { COLUMNS, DbError, getDb, must, selectAll, selectAllAtOnce } from "@/lib/db"
 import type {
   AccountType,
   Asset,
@@ -35,7 +36,7 @@ async function db() {
   return getDb()
 }
 
-export async function getSettings(): Promise<MoneyFormat> {
+export const getSettings = cache(async function getSettings(): Promise<MoneyFormat> {
   const rows = await must<{ key: string; value: string }[]>(
     (await db()).from("settings").select("key, value")
   )
@@ -44,9 +45,9 @@ export async function getSettings(): Promise<MoneyFormat> {
     currency: map.currency ?? DEFAULT_MONEY.currency,
     locale: map.locale ?? DEFAULT_MONEY.locale,
   }
-}
+})
 
-export async function getAccountsWithBalances() {
+export const getAccountsWithBalances = cache(async function getAccountsWithBalances() {
   const rows = await must<
     {
       id: number
@@ -73,7 +74,7 @@ export async function getAccountsWithBalances() {
     balance:
       Math.round((Number(r.opening_balance) + Number(r.tx_total)) * 100) / 100,
   }))
-}
+})
 
 export async function getAssets() {
   const rows = await must<Asset[]>(
@@ -92,24 +93,24 @@ export async function getPlanActions() {
   )
 }
 
-/** Every transaction's account, date and amount, for rebuilding balances over time. */
-export async function getTransactionAmounts() {
+/**
+ * Every transaction's account, date and amount, for rebuilding balances over time; with
+ * `after`, only those after that date.
+ */
+export async function getTransactionAmounts(after?: string) {
   const client = await db()
-  const rows = await selectAll<{
+  const rows = await selectAllAtOnce<{
     accountId: number
     date: string
     amount: number
-  }>((from, to) =>
-    client
-      .from("transactions")
-      .select("accountId:account_id, date, amount")
-      .order("id")
-      .range(from, to)
-  )
+  }>((from, to, count) => {
+    const q = client.from("transactions").select("accountId:account_id, date, amount", { count })
+    return (after ? q.gt("date", after) : q).order("id").range(from, to)
+  })
   return rows.map((t) => ({ ...t, amount: Number(t.amount) }))
 }
 
-export async function getCategories() {
+export const getCategories = cache(async function getCategories() {
   return must<Category[]>(
     (await db())
       .from("categories")
@@ -117,7 +118,7 @@ export async function getCategories() {
       .order("kind")
       .order("name")
   )
-}
+})
 
 export async function getCategoriesWithUsage() {
   const rows = await must<
@@ -579,7 +580,7 @@ export type AverageWindow = {
  * transaction, starting no earlier than the first one. It doesn't depend on the month being
  * viewed, so averages stay put while browsing months.
  */
-export async function getAverageWindow(
+export const getAverageWindow = cache(async function getAverageWindow(
   months = 12
 ): Promise<AverageWindow | null> {
   const [r] = await must<
@@ -597,7 +598,7 @@ export async function getAverageWindow(
     last: r.last_date,
     days: Math.max(Number(r.days), 1),
   }
-}
+})
 
 /**
  * Income statement lines for a month, plus totals over the averaging window.
@@ -764,22 +765,16 @@ export async function getGoalThread() {
 }
 
 async function planThread(startedOnly: boolean) {
-  const d = await db()
-  const query = d.from("plan_threads").select(COLUMNS.planThreads)
-  const [thread] = await must<PlanThread[]>(
+  const query = (await db())
+    .from("plan_threads")
+    .select(`${COLUMNS.planThreads}, messages:plan_messages(${COLUMNS.planMessages})`)
+  const [thread] = await must<(PlanThread & { messages: PlanMessage[] })[]>(
     (startedOnly ? query.is("made_by", null) : query)
       .order("id", { ascending: false })
+      .order("id", { referencedTable: "plan_messages" })
       .limit(1)
   )
-  if (!thread) return null
-  const messages = await must<PlanMessage[]>(
-    d
-      .from("plan_messages")
-      .select(COLUMNS.planMessages)
-      .eq("thread_id", thread.id)
-      .order("id")
-  )
-  return { ...thread, messages }
+  return thread ?? null
 }
 
 /** One-off expenses from today on, soonest first. */

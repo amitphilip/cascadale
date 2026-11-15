@@ -40,6 +40,9 @@ export async function loadSnapshot(): Promise<PlanSnapshot | null> {
 
 /** The snapshot plus the recurring series and transactions it was built from. */
 export async function loadPlanData() {
+  // it doesn't need the window, so it loads alongside it
+  const recurring = getRecurringInputs(null)
+  recurring.catch(() => {}) // awaited below; unhandled only if we return early
   const [window, categories, accounts, fmt, upcoming] = await Promise.all([
     getAverageWindow(),
     getCategories(),
@@ -50,7 +53,7 @@ export async function loadPlanData() {
   if (!window) return null
   const [txs, { overrides, projections }] = await Promise.all([
     getPlanTransactions(window),
-    getRecurringInputs(null),
+    recurring,
   ])
   return snapshotFromData({
     window,

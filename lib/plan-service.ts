@@ -232,7 +232,7 @@ export function sinkingFundLedgers(
  * A plan for a snapshot with these instructions applied: your adjustments and sinking funds
  * (balances and planned draws) in the snapshot, their warnings in the plan's.
  */
-function assemble(
+export function assemble(
   snapshot: PlanSnapshot,
   base: { plan: Plan; snapshot: PlanSnapshot } | null,
   pots: PotInstruction[],
