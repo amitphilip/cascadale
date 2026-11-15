@@ -52,6 +52,28 @@ describe("get_plan", () => {
   })
 })
 
+describe("get_month", () => {
+  test("gives the Plan page's front: in and out, weekly and monthly budgets, and pots", async () => {
+    // 28 October 2026 is a Wednesday
+    const out = await harness().call("get_month")
+    expect(out.status).toBe("current")
+    expect(out.inOut.month).toBe("2026-10")
+    expect(out.inOut.in.received).toBe(3100)
+    expect(out.inOut.out.spent).toBe(2200)
+    expect(out.inOut.net).toBeCloseTo(out.inOut.in.expected - out.inOut.out.expected, 2)
+    expect(out.budgets.week).toMatchObject({ start: "2026-10-26", budget: 150, spent: 90 })
+    expect(out.budgets.month.rows.map((r: { category: string }) => r.category)).toEqual(["Dining Out"])
+    expect(out.budgets.unbudgeted).toEqual([{ category: "Hobbies", spent: 30 }])
+    expect(Array.isArray(out.pots)).toBe(true)
+    expect(out.data_health).toBeDefined()
+  })
+
+  test("says when there's no plan yet", async () => {
+    const out = await harness({ seedPlan: false }).call("get_month")
+    expect(out.status).toBe("no_plan")
+  })
+})
+
 describe("upsert_pot", () => {
   test("puts a pot in the plan straight away", async () => {
     const h = harness()

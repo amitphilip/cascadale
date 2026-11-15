@@ -20,7 +20,8 @@ import {
   type ActionResult,
 } from "@/app/actions"
 import { getAkahuOverview, type AkahuOverview } from "@/lib/akahu"
-import { planTools } from "@/lib/cas/plan-tools"
+import { planTools, type MonthData } from "@/lib/cas/plan-tools"
+import { weekOf } from "@/lib/plan-month"
 import { tool, isoDate, type CasTool } from "@/lib/cas/tool"
 import { loadDataHealth } from "@/lib/data-health"
 import { buildStats } from "@/lib/checkin"
@@ -41,12 +42,15 @@ import {
   getAccountsWithBalances,
   getAssets,
   getAverageWindow,
+  getCategories,
   getCategoriesWithUsage,
   getCategorizationStats,
   getCategorySpend,
+  getCategorySpendBetween,
   getCheckIns,
   getIncomeStatement,
   getLatestMonth,
+  getMonthCashflow,
   getMonthlyCashflow,
   getRuleReview,
   getSettings,
@@ -184,7 +188,29 @@ const PLAN_TOOLS = planTools({
   deps: () => planDeps("mcp"),
   health: () => loadDataHealth(),
   categorySpend: getCategorySpend,
+  monthData,
 })
+
+/** The budgets and spending the Plan page's front reads, for get_month. */
+async function monthData(today: string): Promise<MonthData> {
+  const week = weekOf(today)
+  const [categories, weekSpend, monthSpend, cashflow] = await Promise.all([
+    getCategories(),
+    getCategorySpendBetween(week.start, week.end),
+    getCategorySpend(today.slice(0, 7)),
+    getMonthCashflow(today.slice(0, 7)),
+  ])
+  return {
+    categories: categories.map((c) => ({
+      ...c,
+      monthlyBudget: c.monthlyBudget === null ? null : Number(c.monthlyBudget),
+      weeklyBudget: c.weeklyBudget === null ? null : Number(c.weeklyBudget),
+    })),
+    weekSpend,
+    monthSpend,
+    cashflow,
+  }
+}
 
 export const TOOLS: CasTool[] = [
   tool({
