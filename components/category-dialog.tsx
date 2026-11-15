@@ -23,16 +23,20 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { useServerAction } from "@/hooks/use-server-action"
-import { CATEGORY_KINDS, type Category } from "@/lib/db/schema"
+import { BUDGET_PERIODS, CATEGORY_KINDS, type Category } from "@/lib/db/schema"
 import { CATEGORY_KIND_LABELS } from "@/lib/format"
 
 const kindItems = CATEGORY_KINDS.map((k) => ({ value: k, label: CATEGORY_KIND_LABELS[k] }))
+const periodItems = BUDGET_PERIODS.map((p) => ({
+  value: p,
+  label: p === "week" ? "a week" : "a month",
+}))
 
 export function CategoryDialog({
   category,
   trigger,
 }: {
-  category?: Pick<Category, "id" | "name" | "kind" | "monthlyBudget">
+  category?: Pick<Category, "id" | "name" | "kind" | "monthlyBudget" | "weeklyBudget">
   trigger: React.ReactElement
 }) {
   const [open, setOpen] = useState(false)
@@ -81,17 +85,38 @@ export function CategoryDialog({
               </Select>
             </Field>
             <Field>
-              <FieldLabel htmlFor="cat-budget">Monthly budget</FieldLabel>
-              <Input
-                id="cat-budget"
-                name="monthlyBudget"
-                type="number"
-                step="0.01"
-                min="0"
-                defaultValue={category?.monthlyBudget ?? ""}
-                placeholder="No budget"
-              />
-              <FieldDescription>Only used for expense categories.</FieldDescription>
+              <FieldLabel htmlFor="cat-budget">Budget</FieldLabel>
+              <div className="flex gap-2">
+                <Input
+                  id="cat-budget"
+                  name="monthlyBudget"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  className="min-w-0 flex-1"
+                  defaultValue={category?.weeklyBudget ?? category?.monthlyBudget ?? ""}
+                  placeholder="No budget"
+                />
+                <Select
+                  name="budgetPeriod"
+                  items={periodItems}
+                  defaultValue={category?.weeklyBudget ? "week" : "month"}
+                >
+                  <SelectTrigger className="w-32" aria-label="Budget period">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {periodItems.map((p) => (
+                      <SelectItem key={p.value} value={p.value}>
+                        {p.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <FieldDescription>
+                Only used for expense categories. A weekly budget runs Monday to Sunday.
+              </FieldDescription>
             </Field>
           </FieldGroup>
           <DialogFooter>

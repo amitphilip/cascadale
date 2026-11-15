@@ -126,6 +126,7 @@ export async function getCategoriesWithUsage() {
       name: string
       kind: CategoryKind
       monthly_budget: number | null
+      weekly_budget: number | null
       tx_count: number
     }[]
   >((await db()).rpc("categories_with_usage"))
@@ -134,6 +135,7 @@ export async function getCategoriesWithUsage() {
     name: r.name,
     kind: r.kind,
     monthlyBudget: r.monthly_budget === null ? null : Number(r.monthly_budget),
+    weeklyBudget: r.weekly_budget === null ? null : Number(r.weekly_budget),
     txCount: r.tx_count,
   }))
 }
@@ -449,13 +451,13 @@ export async function getLatestMonth() {
 /** Net spending per expense category for a month (refunds reduce spend). */
 export async function getCategorySpend(month: string) {
   const { start, end } = monthRange(month)
+  return getCategorySpendBetween(start, end)
+}
+
+/** Net spending per expense category over [start, end), e.g. this week (refunds reduce spend). */
+export async function getCategorySpendBetween(start: string, end: string) {
   const rows = await must<
-    {
-      id: number | null
-      name: string | null
-      budget: number | null
-      spent: number
-    }[]
+    { id: number | null; name: string | null; budget: number | null; spent: number }[]
   >((await db()).rpc("category_spend", { p_start: start, p_end: end }))
   return rows.map((r) => ({
     id: r.id,
@@ -463,6 +465,23 @@ export async function getCategorySpend(month: string) {
     budget: r.budget === null ? null : Number(r.budget),
     spent: Number(r.spent),
   }))
+}
+
+/**
+ * Money in and out over a month, transfers left out; with `accountIds`, only what landed
+ * in or left those accounts.
+ */
+export async function getMonthCashflow(month: string, accountIds?: number[]) {
+  if (accountIds && accountIds.length === 0) return { income: 0, expense: 0 }
+  const { start, end } = monthRange(month)
+  const [row] = await must<{ income: number; expense: number }[]>(
+    (await db()).rpc("cashflow_between", {
+      p_start: start,
+      p_end: end,
+      p_accounts: accountIds ?? null,
+    })
+  )
+  return { income: Number(row?.income ?? 0), expense: Number(row?.expense ?? 0) }
 }
 
 /** Like getCategorySpend, for spending from these accounts only. */

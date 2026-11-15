@@ -36,6 +36,19 @@ export function harness(
   const tools = planTools({
     deps: async () => deps,
     health: async () => buildDataHealth(healthInput()),
+    monthData: async () => ({
+      categories: [
+        { id: 3, name: "Groceries", kind: "expense", monthlyBudget: 650, weeklyBudget: 150 },
+        { id: 7, name: "Dining Out", kind: "expense", monthlyBudget: 200, weeklyBudget: null },
+      ],
+      weekSpend: [{ id: 3, name: "Groceries", spent: 90 }],
+      monthSpend: [
+        { id: 3, name: "Groceries", spent: 480 },
+        { id: 7, name: "Dining Out", spent: 120 },
+        { id: 9, name: "Hobbies", spent: 30 },
+      ],
+      cashflow: { income: 3100, expense: 2200 },
+    }),
   })
   // results are checked as JSON, the way an MCP client reads them
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

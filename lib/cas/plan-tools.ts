@@ -2,7 +2,8 @@ import { z } from "zod"
 
 import { CHANGES_DATA, isoDate, tool, type CasTool } from "@/lib/cas/tool"
 import type { DataHealth } from "@/lib/health"
-import type { CategorySpend } from "@/lib/plan-budget"
+import { categoryCosts, type CategorySpend } from "@/lib/plan-budget"
+import { budgetsNow, monthInOut, potsThisMonth } from "@/lib/plan-month"
 import { ADJUSTMENT_KINDS, ADJUSTMENT_TARGETS, FREQUENCIES, simulate } from "@/lib/plan"
 import { endPosition } from "@/lib/plan-goal"
 import { POT_TYPES, RESET_MODES, potHealth } from "@/lib/pots"
@@ -37,6 +38,22 @@ export type PlanToolContext = {
   health: () => Promise<DataHealth>
   /** this month's spend per category, for check_purchase's budget line */
   categorySpend?: (month: string) => Promise<CategorySpend[]>
+  /** what the Plan page's front reads besides the plan, for get_month */
+  monthData?: (today: string) => Promise<MonthData>
+}
+
+/** The budgets, this week's and this month's spending, and the month's money in and out so far. */
+export type MonthData = {
+  categories: {
+    id: number
+    name: string
+    kind: string
+    monthlyBudget: number | null
+    weeklyBudget: number | null
+  }[]
+  weekSpend: CategorySpend[]
+  monthSpend: CategorySpend[]
+  cashflow: { income: number; expense: number }
 }
 
 const operationId = z
@@ -138,6 +155,38 @@ export function planTools(ctx: PlanToolContext): CasTool[] {
           end: live ? endPosition(live.snapshot, live.plan) : null,
           sinkingFunds: live?.ledgers.map(potHealth) ?? [],
           ...rest,
+          data_health: health,
+        }
+      },
+    }),
+
+    tool({
+      name: "get_month",
+      title: "This month",
+      access: "read",
+      description:
+        "What the front of the Plan page shows, the household's month at a glance. inOut: money in and out this month so far (transfers between their accounts left out), what the plan still expects before the month ends (income to land, bills and one-offs due, day-to-day spending), each of those items, and the net left over or short by month end. budgets: every weekly budget (Monday to Sunday) against this week's spending and every monthly budget against this month's, each with spent, left, an even pace to today and a status (over, ahead of pace, ok), plus spending in categories without a budget and what's uncategorised. pots: each sinking fund's money in and out this month, what's still to come in and planned to come out, its balance, cap left, next draw and any shortfall. Use it for how this month or week is going. Includes data_health.",
+      run: async () => {
+        if (!ctx.monthData) throw new Error("This month's figures aren't available here")
+        const [deps, health] = await Promise.all([ctx.deps(), ctx.health()])
+        const live = await livePlan(deps)
+        if (!live) return { status: "no_plan", data_health: health }
+        const today = deps.today?.() ?? todayLocal()
+        const data = await ctx.monthData(today)
+        const sim = simulate(live.snapshot, live.plan)
+        return {
+          status: "current",
+          today,
+          dataEnd: live.snapshot.dataEnd,
+          inOut: monthInOut({ actual: data.cashflow, snap: live.snapshot, sim, today }),
+          budgets: budgetsNow({
+            categories: data.categories,
+            weekSpend: data.weekSpend,
+            monthSpend: data.monthSpend,
+            costs: categoryCosts(live.snapshot),
+            today,
+          }),
+          pots: potsThisMonth({ ledgers: live.ledgers, sim, today }),
           data_health: health,
         }
       },

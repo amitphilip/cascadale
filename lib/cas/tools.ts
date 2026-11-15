@@ -20,12 +20,19 @@ import {
   type ActionResult,
 } from "@/app/actions"
 import { getAkahuOverview, type AkahuOverview } from "@/lib/akahu"
-import { planTools } from "@/lib/cas/plan-tools"
+import { planTools, type MonthData } from "@/lib/cas/plan-tools"
+import { weekOf } from "@/lib/plan-month"
 import { tool, isoDate, type CasTool } from "@/lib/cas/tool"
 import { loadDataHealth } from "@/lib/data-health"
 import { buildStats } from "@/lib/checkin"
 import { COLUMNS, getDb, must } from "@/lib/db"
-import { ASSET_KINDS, NOTE_KINDS, type CasNote, type PlanAction } from "@/lib/db/schema"
+import {
+  ASSET_KINDS,
+  BUDGET_PERIODS,
+  NOTE_KINDS,
+  type CasNote,
+  type PlanAction,
+} from "@/lib/db/schema"
 import { buildNetWorth } from "@/lib/net-worth"
 import { describeSimulation, simulate } from "@/lib/plan"
 import { livePlan, planStatus } from "@/lib/plan-service"
@@ -35,12 +42,15 @@ import {
   getAccountsWithBalances,
   getAssets,
   getAverageWindow,
+  getCategories,
   getCategoriesWithUsage,
   getCategorizationStats,
   getCategorySpend,
+  getCategorySpendBetween,
   getCheckIns,
   getIncomeStatement,
   getLatestMonth,
+  getMonthCashflow,
   getMonthlyCashflow,
   getRuleReview,
   getSettings,
@@ -178,7 +188,29 @@ const PLAN_TOOLS = planTools({
   deps: () => planDeps("mcp"),
   health: () => loadDataHealth(),
   categorySpend: getCategorySpend,
+  monthData,
 })
+
+/** The budgets and spending the Plan page's front reads, for get_month. */
+async function monthData(today: string): Promise<MonthData> {
+  const week = weekOf(today)
+  const [categories, weekSpend, monthSpend, cashflow] = await Promise.all([
+    getCategories(),
+    getCategorySpendBetween(week.start, week.end),
+    getCategorySpend(today.slice(0, 7)),
+    getMonthCashflow(today.slice(0, 7)),
+  ])
+  return {
+    categories: categories.map((c) => ({
+      ...c,
+      monthlyBudget: c.monthlyBudget === null ? null : Number(c.monthlyBudget),
+      weeklyBudget: c.weeklyBudget === null ? null : Number(c.weeklyBudget),
+    })),
+    weekSpend,
+    monthSpend,
+    cashflow,
+  }
+}
 
 export const TOOLS: CasTool[] = [
   tool({
@@ -318,7 +350,7 @@ export const TOOLS: CasTool[] = [
     title: "Categories",
     access: "read",
     description:
-      "Every category with its kind (expense, income or transfer), monthly budget and number of transactions. Use the ids to filter or recategorize transactions.",
+      "Every category with its kind (expense, income or transfer), budget (monthlyBudget, plus weeklyBudget when the budget is weekly) and number of transactions. Use the ids to filter or recategorize transactions.",
     run: getCategoriesWithUsage,
   }),
 
@@ -534,10 +566,17 @@ export const TOOLS: CasTool[] = [
     name: "set_category_budgets",
     title: "Set budgets",
     access: "action",
-    description: "Set the monthly budget of one or more expense categories.",
+    description:
+      "Set the budget of one or more expense categories, weekly (Monday to Sunday) or monthly (the default). An amount of 0 clears it.",
     input: {
       budgets: z
-        .array(z.object({ categoryId: z.number().int().positive(), amount: z.number().nonnegative() }))
+        .array(
+          z.object({
+            categoryId: z.number().int().positive(),
+            amount: z.number().nonnegative(),
+            period: z.enum(BUDGET_PERIODS).optional(),
+          })
+        )
         .min(1),
     },
     run: ({ budgets }) => act(setCategoryBudgets(budgets)),

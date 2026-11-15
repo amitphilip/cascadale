@@ -8,7 +8,9 @@ import { z } from "zod"
 import {
   ACCOUNT_TYPES,
   ASSET_KINDS,
+  BUDGET_PERIODS,
   CATEGORY_KINDS,
+  type BudgetPeriod,
   type PlanMessage,
   type PlanThread,
   type RuleKind,
@@ -378,15 +380,19 @@ const categorySchema = z.object({
     .union([z.literal(""), money.nonnegative()])
     .optional()
     .transform((v) => (v === "" || v === undefined || v === 0 ? null : v)),
+  budgetPeriod: z.enum(BUDGET_PERIODS).optional().default("month"),
 })
 
 export async function saveCategory(form: FormData) {
   return run(async () => {
     const data = categorySchema.parse(fields(form))
+    const weekly = data.budgetPeriod === "week" && data.monthlyBudget !== null
+    // a weekly budget's monthly figure is kept in step by the database
     const row = {
       name: data.name,
       kind: data.kind,
       monthly_budget: data.monthlyBudget,
+      weekly_budget: weekly ? data.monthlyBudget : null,
     }
     const db = await await getDb()
     const catId = form.get("id") ? id.parse(form.get("id")) : null
@@ -915,12 +921,18 @@ export async function resetRecurringOverride(key: string) {
 }
 
 const budgetsSchema = z
-  .array(z.object({ categoryId: id, amount: money.nonnegative() }))
+  .array(
+    z.object({
+      categoryId: id,
+      amount: money.nonnegative(),
+      period: z.enum(BUDGET_PERIODS).optional().default("month"),
+    })
+  )
   .min(1, "Nothing to apply")
 
-/** Set monthly budgets on expense categories, e.g. from the recurring projection. */
+/** Set weekly or monthly budgets on expense categories, e.g. from the recurring projection. */
 export async function setCategoryBudgets(
-  input: { categoryId: number; amount: number }[]
+  input: { categoryId: number; amount: number; period?: BudgetPeriod }[]
 ) {
   return run(async () => {
     const list = budgetsSchema.parse(input)
@@ -929,6 +941,7 @@ export async function setCategoryBudgets(
         p_budgets: list.map((b) => ({
           category_id: b.categoryId,
           amount: b.amount,
+          period: b.period,
         })),
       })
     )

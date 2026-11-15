@@ -11,7 +11,7 @@ export function CategoryActions({
   category,
   txCount,
 }: {
-  category: Pick<Category, "id" | "name" | "kind" | "monthlyBudget">
+  category: Pick<Category, "id" | "name" | "kind" | "monthlyBudget" | "weeklyBudget">
   txCount: number
 }) {
   const { execute } = useServerAction()
