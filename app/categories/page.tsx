@@ -17,7 +17,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { CATEGORY_KINDS } from "@/lib/db/schema"
-import { CATEGORY_KIND_LABELS, formatMoney } from "@/lib/format"
+import { CATEGORY_KIND_LABELS, formatMoney, PERIOD_SUFFIX } from "@/lib/format"
 import {
   getCategoriesWithUsage,
   getRules,
@@ -84,7 +84,11 @@ export default async function CategoriesPage() {
                         </TableCell>
                         {kind === "expense" && (
                           <TableCell className="text-right text-muted-foreground tabular-nums">
-                            {c.monthlyBudget ? formatMoney(c.monthlyBudget, fmt) : "—"}
+                            {c.weeklyBudget
+                              ? `${formatMoney(c.weeklyBudget, fmt)}${PERIOD_SUFFIX.week}`
+                              : c.monthlyBudget
+                                ? `${formatMoney(c.monthlyBudget, fmt)}${PERIOD_SUFFIX.month}`
+                                : "—"}
                           </TableCell>
                         )}
                         <TableCell className="text-right tabular-nums">{c.txCount}</TableCell>

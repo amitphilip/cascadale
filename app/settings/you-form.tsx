@@ -57,7 +57,7 @@ export function YouForm({ name, homeView }: { name: string; homeView: HomeView }
             </SelectContent>
           </Select>
           <FieldDescription>
-            The other views, and the accountant’s, are a tap away on the Plan page.
+            The other view, and the full plan Cas keeps in step, are a tap away on the Plan page.
           </FieldDescription>
         </Field>
       </FieldGroup>

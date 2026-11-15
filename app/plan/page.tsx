@@ -1,4 +1,5 @@
 import type { Metadata } from "next"
+import { differenceInCalendarDays, parseISO } from "date-fns"
 import Link from "next/link"
 import {
   ArrowDownLeftIcon,
@@ -28,6 +29,13 @@ import {
 } from "./plan-summary-cards"
 import { PlanTodoCard, type Suggestion } from "./plan-todo-card"
 import { SinkingFundsCard, type FundDraft } from "./sinking-funds-card"
+import {
+  BudgetsCard,
+  CasLine,
+  FullPlanLink,
+  InOutCard,
+  PotsMonthCard,
+} from "./this-month"
 import { PlanAsk } from "./plan-ask"
 import { type ChatMessage } from "./plan-chat"
 import { PageHeader } from "@/components/page-header"
@@ -72,6 +80,12 @@ import {
   pointBack,
 } from "@/lib/net-worth"
 import { categoryCosts, monthBudget, spareCash } from "@/lib/plan-budget"
+import {
+  budgetsNow,
+  monthInOut,
+  potsThisMonth,
+  weekOf,
+} from "@/lib/plan-month"
 import { goalPlan, planGoal, type PlanGoal } from "@/lib/plan-goal"
 import { planStanding, planVerdict, withGoal } from "@/lib/plan-verdict"
 import { getPlanState, withInstructions } from "@/lib/plan-service"
@@ -83,8 +97,10 @@ import {
   getCategories,
   getAccountHolders,
   getCategorySpend,
+  getCategorySpendBetween,
   getCategorySpendFor,
   getCheckIns,
+  getMonthCashflow,
   getMyPrefs,
   getPeople,
   getGoalThread,
@@ -131,6 +147,7 @@ export default async function PlanPage({
   searchParams: Promise<{ view?: string }>
 }) {
   const userId = await getUserId()
+  const thisWeek = weekOf(todayLocal())
   const [
     fmt,
     thread,
@@ -149,6 +166,8 @@ export default async function PlanPage({
     prefs,
     holders,
     params,
+    weekSpend,
+    cashflow,
   ] = await Promise.all([
     getSettings(),
     getPlanThread(),
@@ -167,6 +186,8 @@ export default async function PlanPage({
     getMyPrefs(userId),
     getAccountHolders(),
     searchParams,
+    getCategorySpendBetween(thisWeek.start, thisWeek.end),
+    getMonthCashflow(todayLocal().slice(0, 7)),
   ])
   // you open on your own view or the family's, as you chose in Settings
   const view = parseView(params.view) ?? prefs.homeView
@@ -267,7 +288,6 @@ export default async function PlanPage({
     monthEnds(snap.dataEnd, HISTORY_MONTHS)
   )
   const from = pointBack(history, TREND_MONTHS)
-  const waiting = state.unappliedDecisions.length > 0
   const startedPlan = started && latestPlan(started.messages)
   const goal = planGoal({
     goal: goalPlan(
@@ -309,6 +329,23 @@ export default async function PlanPage({
     await getCategorySpendFor(today.slice(0, 7), [...mine]),
     today
   )
+  const myCashflow = await getMonthCashflow(today.slice(0, 7), [...mine])
+  const inOut = monthInOut({ actual: cashflow, snap, sim, today })
+  const myInOut = monthInOut({ actual: myCashflow, snap, sim, today, accounts: mine })
+  // the last transaction a couple of days back or more: "so far" is likely missing some
+  const stale =
+    differenceInCalendarDays(parseISO(today), parseISO(snap.dataEnd)) > 1
+      ? formatDate(snap.dataEnd, fmt.locale)
+      : null
+  const budgets = budgetsNow({
+    categories,
+    weekSpend,
+    monthSpend: spend,
+    costs,
+    today,
+  })
+  const potMonths = potsThisMonth({ ledgers, sim, today })
+  const openTodos = actions.filter((a) => a.doneAt === null).length
   const myIncomes = new Set(
     snap.incomes.filter((i) => mine.has(i.accountId)).map((i) => i.id)
   )
@@ -400,8 +437,8 @@ export default async function PlanPage({
                 <EmptyHeader>
                   <EmptyTitle>No accounts are marked as yours yet</EmptyTitle>
                   <EmptyDescription>
-                    Say whose each account is in the accountant view, and this
-                    page shows your pay, your spending and your accounts.
+                    Say whose each account is in the full plan, and this page
+                    shows your pay, your spending and your accounts.
                   </EmptyDescription>
                 </EmptyHeader>
                 <EmptyContent>
@@ -416,6 +453,7 @@ export default async function PlanPage({
               </Empty>
             ) : (
               <>
+                <InOutCard inOut={myInOut} fmt={fmt} title="Your" stale={stale} />
                 <FamilyGoalLine goal={goal} fmt={fmt} />
                 <PaydayCards
                   snap={snap}
@@ -447,36 +485,15 @@ export default async function PlanPage({
 
         {view === "family" && (
           <div className="grid min-w-0 gap-6">
-            <PlanGoalCard summary={plan.summary} goal={goal} fmt={fmt} />
-            <PlanBudgetCard
-              budget={month}
-              spare={spareCash(snap, sim)}
-              goalGap={goal.gap}
-              budgets={plannedBudgets}
-              fmt={fmt}
+            <CasLine
+              standing={standing}
+              waiting={state.unappliedDecisions.length}
+              todo={openTodos}
             />
-            <SinkingFundsCard
-              ledgers={ledgers}
-              drafts={fundDrafts}
-              accounts={fundAccounts}
-              fmt={fmt}
-            />
-            <PlanTodoCard
-              actions={actions}
-              suggestions={suggestions}
-              today={today}
-              fmt={fmt}
-            />
-            <PaydayCards snap={snap} plan={plan} colors={colors} fmt={fmt} />
-            {waiting && (
-              <PlanChangesCard
-                state={state}
-                snap={snap}
-                checkIn={checkIn}
-                today={today}
-                fmt={fmt}
-              />
-            )}
+            <InOutCard inOut={inOut} fmt={fmt} stale={stale} />
+            <BudgetsCard budgets={budgets} planned={plannedBudgets} fmt={fmt} />
+            <PotsMonthCard pots={potMonths} fmt={fmt} />
+            <FullPlanLink />
           </div>
         )}
 
@@ -489,11 +506,26 @@ export default async function PlanPage({
               notes={observations}
               fmt={fmt}
             />
+            <PlanGoalCard summary={plan.summary} goal={goal} fmt={fmt} />
             <PlanChangesCard
               state={state}
               snap={snap}
               checkIn={checkIn}
               today={today}
+              fmt={fmt}
+            />
+            <PlanTodoCard
+              actions={actions}
+              suggestions={suggestions}
+              today={today}
+              fmt={fmt}
+            />
+            <PaydayCards snap={snap} plan={plan} colors={colors} fmt={fmt} />
+            <PlanBudgetCard
+              budget={month}
+              spare={spareCash(snap, sim)}
+              goalGap={goal.gap}
+              budgets={plannedBudgets}
               fmt={fmt}
             />
             <AllocationCard
@@ -523,13 +555,15 @@ export default async function PlanPage({
               owed={worth.totals.debts}
               fmt={fmt}
             />
-            <SinkingFundsCard
-              ledgers={ledgers}
-              drafts={fundDrafts}
-              accounts={fundAccounts}
-              fmt={fmt}
-              showEmpty
-            />
+            <div id="funds" className="scroll-mt-8">
+              <SinkingFundsCard
+                ledgers={ledgers}
+                drafts={fundDrafts}
+                accounts={fundAccounts}
+                fmt={fmt}
+                showEmpty
+              />
+            </div>
             <PotsCard snap={snap} sim={sim} colors={colors} fmt={fmt} />
             <BalancesCard snap={snap} sim={sim} fmt={fmt} />
             <div id="whose-accounts" className="scroll-mt-8">

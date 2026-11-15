@@ -60,11 +60,18 @@ export type Account = {
   createdAt: string
 }
 
+/** How often an expense category's budget resets. */
+export const BUDGET_PERIODS = ["week", "month"] as const
+export type BudgetPeriod = (typeof BUDGET_PERIODS)[number]
+
 export type Category = {
   id: number
   name: string
   kind: CategoryKind
+  /** the monthly budget; for a weekly one, the weekly amount's monthly equivalent */
   monthlyBudget: number | null
+  /** set when the budget is weekly: its weekly amount */
+  weeklyBudget: number | null
 }
 
 /** One uploaded statement file. The raw file lives in the "statements" storage bucket. */

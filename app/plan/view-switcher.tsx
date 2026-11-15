@@ -8,12 +8,15 @@ import {
 import { cn } from "@/lib/utils"
 import type { View } from "@/lib/views"
 
-/** Me, Family or Accountant: the same plan for one person, the household, or its books. */
+/**
+ * Me, Family or Full plan: one person's month, the household's month (in and out, budgets,
+ * pots), or the full plan with its workings, which Cas keeps in step.
+ */
 export function ViewSwitcher({ view, me }: { view: View; me: string }) {
   const items = [
     { view: "me", label: me, Icon: UserIcon },
     { view: "family", label: "Family", Icon: UsersThreeIcon },
-    { view: "accountant", label: "Accountant", Icon: BriefcaseIcon },
+    { view: "accountant", label: "Full plan", Icon: BriefcaseIcon },
   ] as const
   return (
     <nav
