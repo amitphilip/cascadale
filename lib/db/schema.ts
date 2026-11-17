@@ -2,8 +2,6 @@
 // Selects alias the snake_case columns into these names (see COLUMNS in lib/db/index.ts).
 // Timestamps arrive as ISO strings.
 
-import type { CheckInResult, CheckInStats } from "@/lib/checkin-types"
-import type { Plan, PlanSnapshot } from "@/lib/plan"
 import type { RecurringBasis } from "@/lib/recurring"
 
 export const ACCOUNT_TYPES = [
@@ -157,31 +155,6 @@ export type CategoryProjectionRow = {
   updatedAt: string
 }
 
-/**
- * One planning conversation with the model. The snapshot of your finances it was
- * started from is frozen here, so the conversation replays the same way later.
- */
-export type PlanThread = {
-  id: number
-  snapshot: PlanSnapshot
-  /** who rebuilt it, on threads from before the plan was worked out live; null otherwise */
-  madeBy: "website" | "mcp" | "cas" | null
-  createdAt: string
-}
-
-/** A turn in a planning conversation; assistant turns may carry a revised plan. */
-export type PlanMessage = {
-  id: number
-  threadId: number
-  role: "user" | "assistant"
-  /** what you wrote, or the model's reply */
-  content: string
-  /** data sent to the model ahead of your message: the snapshot, or a simulation of the plan */
-  context: string | null
-  plan: Plan | null
-  createdAt: string
-}
-
 /** A one-off expense you know is coming, e.g. a car service or a wedding gift. */
 export type UpcomingExpense = {
   id: number
@@ -195,31 +168,34 @@ export type UpcomingExpense = {
   createdAt: string
 }
 
-/** Something to do about the plan, ticked off when done. */
-export type PlanAction = {
-  id: number
-  title: string
-  detail: string | null
-  dueDate: string | null
-  /** the plan's focus item it was added from */
-  focusTitle: string | null
-  /** website: you added it; mcp: Claude did, on your say-so; cas: Cas did, in the Plan page's chat */
-  createdBy: "website" | "mcp" | "cas"
-  /** null while still to do */
-  doneAt: string | null
-  createdAt: string
-}
+/** How often a one-off's money goes in, or its parts are paid out. */
+export const ONE_OFF_FREQUENCIES = ["week", "fortnight", "month"] as const
+export type OneOffFrequency = (typeof ONE_OFF_FREQUENCIES)[number]
+
+/** single: paid in one go on the finish date; spread: in parts until it. */
+export const ONE_OFF_OUT_MODES = ["single", "spread"] as const
+export type OneOffOutMode = (typeof ONE_OFF_OUT_MODES)[number]
 
 /**
- * A check-in on the overview: analytics over what was logged since the last one, and the
- * model's read on what to do about it.
+ * A known total paid out by a finish date, with the money gathered in a tracking account
+ * first (see lib/one-offs.ts). Several can share an account.
  */
-export type CheckIn = {
+export type OneOff = {
   id: number
-  periodStart: string
-  periodEnd: string
-  stats: CheckInStats
-  result: CheckInResult
+  name: string
+  /** positive: the whole amount to pay */
+  total: number
+  accountId: number
+  startDate: string
+  finishDate: string
+  outMode: OneOffOutMode
+  /** for a spread one: how often a part is paid, the last on the finish date */
+  outEvery: OneOffFrequency | null
+  /** how often money goes in for it, counted from the start date */
+  inEvery: OneOffFrequency
+  /** already in the account for it when it was added */
+  setAside: number
+  note: string | null
   createdAt: string
 }
 
@@ -232,7 +208,7 @@ export type CasNote = {
   kind: NoteKind
   content: string
   dueDate: string | null
-  /** a decision that changes the plan; it stays unapplied until a plan change carries it out */
+  /** from the old plan: a decision that changed it; no longer read */
   affectsPlan: boolean
   appliedAt: string | null
   /** set on notes the app raises itself, e.g. "uncategorized:<merchant key>" from a sync */

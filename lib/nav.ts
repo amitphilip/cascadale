@@ -4,7 +4,6 @@ import {
   ChartPieSliceIcon,
   CoinsIcon,
   ListBulletsIcon,
-  PiggyBankIcon,
   ScalesIcon,
   SparkleIcon,
   TagIcon,
@@ -21,7 +20,6 @@ export const NAV = [
     label: "Recurring & budget",
     icon: ArrowsClockwiseIcon,
   },
-  { href: "/plan", label: "Plan", icon: PiggyBankIcon },
   { href: "/transactions", label: "Transactions", icon: ListBulletsIcon },
   { href: "/accounts", label: "Accounts", icon: BankIcon },
   { href: "/net-worth", label: "Net worth", icon: CoinsIcon },
@@ -31,4 +29,4 @@ export const NAV = [
 ]
 
 /** Pinned to the bottom bar on phones, in this order; everything else sits under More. */
-export const TAB_HREFS = ["/plan", "/overview", "/transactions", "/review"]
+export const TAB_HREFS = ["/overview", "/transactions", "/recurring", "/review"]

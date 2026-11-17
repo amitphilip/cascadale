@@ -23,7 +23,7 @@ export default function manifest(): MetadataRoute.Manifest {
       },
     ],
     shortcuts: [
-      { name: "Plan", url: "/plan" },
+      { name: "Overview", url: "/overview" },
       { name: "Transactions", url: "/transactions" },
       { name: "Review categories", url: "/review" },
       { name: "Import statements", url: "/import" },

@@ -11,10 +11,6 @@ import type {
   CategoryKind,
   CategoryProjectionRow,
   CategorySource,
-  CheckIn,
-  PlanAction,
-  PlanMessage,
-  PlanThread,
   RecurringOverrideRow,
   RuleKind,
   RuleSource,
@@ -28,7 +24,7 @@ import type {
 } from "@/lib/recurring"
 import { merchantKey } from "@/lib/rules"
 import type { HomeView, Person } from "@/lib/views"
-import type { PlanTx } from "@/lib/snapshot"
+import type { WindowTx } from "@/lib/counted-transactions"
 import { todayLocal } from "@/supabase/functions/_shared/akahu"
 
 async function db() {
@@ -81,16 +77,6 @@ export async function getAssets() {
     (await db()).from("assets").select(COLUMNS.assets).order("id")
   )
   return rows.map((a) => ({ ...a, value: Number(a.value) }))
-}
-
-export async function getPlanActions() {
-  return must<PlanAction[]>(
-    (await db())
-      .from("plan_actions")
-      .select(COLUMNS.planActions)
-      .order("done_at", { nullsFirst: true })
-      .order("id")
-  )
 }
 
 /**
@@ -359,35 +345,6 @@ export async function getTransactions(f: TransactionFilters) {
     outflow: Number(totals.outflow),
     page,
     pageCount: Math.max(1, Math.ceil(totals.count / PAGE_SIZE)),
-  }
-}
-
-/**
- * The live sinking funds by name, and which of these transactions each one is linked to
- * (drawn from or paid into).
- */
-export async function getFundLinks(transactionIds: number[]) {
-  const d = await db()
-  const funds = await must<{ id: number; name: string }[]>(
-    d.from("plan_pots").select("id, name").eq("type", "sinking_fund").eq("removed", false).order("name")
-  )
-  const rows = transactionIds.length
-    ? await must<{ transactionId: number; potId: number; kind: string }[]>(
-        d
-          .from("pot_entries")
-          .select("transactionId:transaction_id, potId:pot_id, kind")
-          .in("transaction_id", transactionIds)
-      )
-    : []
-  const nameOf = new Map(funds.map((f) => [f.id, f.name]))
-  return {
-    funds: funds.map((f) => f.name),
-    links: new Map(
-      rows.flatMap((r) => {
-        const pot = nameOf.get(r.potId)
-        return pot ? [[r.transactionId, { pot, kind: r.kind as "draw" | "contribution" }] as const] : []
-      })
-    ),
   }
 }
 
@@ -739,42 +696,15 @@ export async function getRecurringInputs(window: AverageWindow | null) {
   }
 }
 
-/** Every transaction in the averaging window, transfers included, for the planner. */
-export async function getPlanTransactions(window: AverageWindow) {
-  const rows = await must<PlanTx[]>(
+/** Every transaction in the averaging window, transfers included. */
+export async function getWindowTransactions(window: AverageWindow) {
+  const rows = await must<WindowTx[]>(
     (await db()).rpc("plan_transactions", {
       p_start: window.start,
       p_end: window.end,
     })
   )
-  return rows.map((r): PlanTx => ({ ...r, amount: Number(r.amount) }))
-}
-
-/** The latest planning conversation and its messages, oldest first. */
-export async function getPlanThread() {
-  return planThread(false)
-}
-
-/**
- * The latest plan you started yourself, whose plan sets the goal: threads with made_by are
- * rebuilds from before the plan was worked out live, and changes since move the path, not
- * the target.
- */
-export async function getGoalThread() {
-  return planThread(true)
-}
-
-async function planThread(startedOnly: boolean) {
-  const query = (await db())
-    .from("plan_threads")
-    .select(`${COLUMNS.planThreads}, messages:plan_messages(${COLUMNS.planMessages})`)
-  const [thread] = await must<(PlanThread & { messages: PlanMessage[] })[]>(
-    (startedOnly ? query.is("made_by", null) : query)
-      .order("id", { ascending: false })
-      .order("id", { referencedTable: "plan_messages" })
-      .limit(1)
-  )
-  return thread ?? null
+  return rows.map((r): WindowTx => ({ ...r, amount: Number(r.amount) }))
 }
 
 /** One-off expenses from today on, soonest first. */
@@ -786,17 +716,6 @@ export async function getUpcomingExpenses() {
       .gte("due_date", todayLocal())
       .order("due_date")
       .order("id")
-  )
-}
-
-/** Check-ins, newest first. */
-export async function getCheckIns(limit = 10) {
-  return must<CheckIn[]>(
-    (await db())
-      .from("check_ins")
-      .select(COLUMNS.checkIns)
-      .order("id", { ascending: false })
-      .limit(limit)
   )
 }
 

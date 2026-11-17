@@ -40,7 +40,7 @@ export default async function ConsentPage({
               </CardTitle>
               <CardDescription>
                 It will be able to see everything in Cascadale (accounts, transactions, bank
-                feeds, budgets and plans) and act on it as {data.user.email}: sync feeds,
+                feeds and budgets) and act on it as {data.user.email}: sync feeds,
                 categorize transactions, set budgets and add upcoming expenses.
               </CardDescription>
             </CardHeader>

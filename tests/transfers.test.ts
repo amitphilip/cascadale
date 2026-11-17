@@ -1,9 +1,9 @@
 import { describe, expect, test } from "vitest"
 
-import { planTransactions } from "@/lib/snapshot"
+import { countedTransactions } from "@/lib/counted-transactions"
 import { loanRepaymentIds, pairTransfers } from "@/supabase/functions/_shared/transfers"
 
-import { ACCOUNTS, inputs } from "./fixtures/october-2026"
+import { ACCOUNTS, transactions } from "./fixtures/october-2026"
 
 const t = (id: number, accountId: number, date: string, amount: number, description = "TFR") => ({
   id,
@@ -44,9 +44,9 @@ describe("pairTransfers", () => {
   })
 })
 
-describe("planTransactions", () => {
+describe("countedTransactions", () => {
   test("leaves out both sides of internal transfers but keeps loan repayments as bills", () => {
-    const { txs, pairs, loanRepayments } = planTransactions(inputs().txs, Object.values(ACCOUNTS))
+    const { txs, pairs, loanRepayments } = countedTransactions(transactions(), Object.values(ACCOUNTS))
     expect(txs.some((x) => /VISA|PAYMENT RECEIVED|STREAMLINE|TFR TO JOINT/.test(x.description))).toBe(false)
     expect(txs.some((x) => x.description === "TFR FROM JOINT")).toBe(false)
     const loans = txs.filter((x) => x.description === "TFR TO HOME LOAN 01")
@@ -58,7 +58,7 @@ describe("planTransactions", () => {
   })
 })
 
-describe("planTransactions on a loan account", () => {
+describe("countedTransactions on a loan account", () => {
   const tx = (id: number, accountId: number, description: string, amount: number) => ({
     id,
     date: "2026-10-29",
@@ -76,7 +76,7 @@ describe("planTransactions on a loan account", () => {
       { id: 1, type: "checking" },
       { id: 2, type: "loan" },
     ]
-    const { txs } = planTransactions(
+    const { txs } = countedTransactions(
       [tx(1, 2, "Principal payment", 222.22), tx(2, 2, "Interest", -620.85), tx(3, 1, "Salary", 5000)],
       accounts
     )

@@ -144,15 +144,10 @@ export const COLUMNS = {
     "key, basis, growthRate:growth_rate, amount, excluded, updatedAt:updated_at",
   categoryProjections:
     "categoryId:category_id, basis, growthRate:growth_rate, amount, updatedAt:updated_at",
-  planThreads: "id, snapshot, madeBy:made_by, createdAt:created_at",
-  planMessages:
-    "id, threadId:thread_id, role, content, context, plan, createdAt:created_at",
   upcomingExpenses:
     "id, name, amount, dueDate:due_date, accountId:account_id, note, createdAt:created_at",
-  planActions:
-    "id, title, detail, dueDate:due_date, focusTitle:focus_title, createdBy:created_by, doneAt:done_at, createdAt:created_at",
-  checkIns:
-    "id, periodStart:period_start, periodEnd:period_end, stats, result, createdAt:created_at",
+  oneOffs:
+    "id, name, total, accountId:account_id, startDate:start_date, finishDate:finish_date, outMode:out_mode, outEvery:out_every, inEvery:in_every, setAside:set_aside, note, createdAt:created_at",
   casNotes:
     "id, kind, content, dueDate:due_date, affectsPlan:affects_plan, appliedAt:applied_at, ref, createdAt:created_at, resolvedAt:resolved_at, resolution",
 } as const

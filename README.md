@@ -53,7 +53,7 @@ select vault.create_secret('<the same AKAHU_CRON_SECRET>', 'akahu_cron_secret');
 
 | Where                         | Contents                                   |
 | ----------------------------- | ------------------------------------------ |
-| Postgres (`public` schema)    | accounts, transactions, rules, plans, etc. |
+| Postgres (`public` schema)    | accounts, transactions, rules, budgets, etc. |
 | Storage bucket `statements`   | original statement files you imported      |
 
 Every row has a `user_id` (defaulting to the signed-in user) and row level
@@ -88,7 +88,7 @@ cookies. `proxy.ts` refreshes the session and sends anyone signed out to
 - **Manual input:** add cash transactions, edit anything, and attach notes.
 - **Internal transfers:** money out of one of your accounts matched to the same
   amount into another within three days is categorized as Transfer, both sides,
-  after every sync and import. The planner pairs them itself too, so they never
+  after every sync and import. Income and spending pair them too, so they never
   count as income or spending, and a transfer into a loan account counts as a
   loan repayment bill.
 - **Recurring income and bills** are matched on the counterparty (descriptions
@@ -105,55 +105,25 @@ Two MCP servers (Streamable HTTP), each added to claude.ai as its own connector:
 | **Cas**       | `/api/mcp/cas`       | Your financial advisor and accountant, as an agent            |
 
 - **Cascadale** has the read tools (`get_briefing`, `get_sync_status`,
-  `get_financial_picture`, `search_transactions`, …) and the action tools
+  `search_transactions`, …) and the action tools
   (`sync_bank_feeds`, `categorize_merchant`, `set_category_budgets`,
-  `add_upcoming_expense`, `run_check_in`, …). Actions change your data, and
+  `add_upcoming_expense`, …). Actions change your data, and
   Claude is told to ask you first.
 - **Cas** has `ask_cas`, which hands a question to the agent
   ([lib/cas/agent.ts](lib/cas/agent.ts), Claude Opus 5.5 with the
   Anthropic key from Settings). It works through the read tools on its own,
-  checks feed health, books, cash flow, budgets, bills and plan, and answers with
+  checks feed health, books, cash flow, budgets and bills, and answers with
   suggested actions for Claude to run on Cascadale. It never changes your finances
   itself; it keeps notes (`cas_notes`) to remember decisions and to-dos
   between conversations, which `get_notes` and `resolve_note` expose.
 
-- **The plan** is the one on the Plan page, through the same service
-  ([lib/plan-service.ts](lib/plan-service.ts)) the page and its actions use.
-  It's worked out when it's read: the last plan made with the model, carried
-  over to today's data with your pots and adjustments on top, so there's nothing
-  to rebuild. `get_plan` and `list_plan_adjustments` read it; `try_plan_change`
-  runs a change through the simulation without saving it; `upsert_pot`,
-  `remove_pot`, `add_plan_adjustment` and `remove_plan_adjustment` take effect at
-  once (who, when and why, idempotent on an `operationId`) and return what the
-  plan now does. Cas's decisions that affect the plan wait on the Plan page until
-  a change carries them out. New plan is the one step that asks the model for a
-  whole plan, and it sets a new goal.
-- **Cas in the Plan page's chat** has the same read and memory tools plus the
-  plan's action tools, and changes the plan when you ask. It sees the last few
-  messages; its notes carry the rest.
-- **Sinking funds** are pots that lumpy, known costs are paid out of (air tickets,
-  invoices): money goes in on the pot's schedule and as top-ups, transactions are
-  linked to the fund as draws, and expected one-offs are planned on it. Each has a
-  ledger with a running balance, an optional cap, an end date or a yearly reset (the
-  leftover carries over or is released) and a suggested contribution: (cap or planned
-  total less balance less spent) over the periods left. A linked draw keeps its
-  category but leaves that category's budget (`category_spend`), the planner's
-  day-to-day spending and the check-in's pacing; the simulation pays planned draws
-  from the fund instead. Warnings (over the cap, can't cover the next draw) show on
-  the Plan page, in the plan's warnings and in check-ins. The logic is in
-  [lib/pots.ts](lib/pots.ts); `upsert_pot` (with `type: "sinking_fund"`),
-  `link_transaction_to_pot`, `unlink_transaction_from_pot`, `add_pot_planned_draw`,
-  `remove_pot_planned_draw`, `add_pot_contribution` and `get_pot_ledger` are its
-  tools, and `check_purchase` takes a `pot`.
-- **Data health:** `get_briefing`, `get_overview`, `get_plan`, `run_check_in`
-  and `ask_cas` return `data_health`: each account's last sync and Akahu refresh
+- **Data health:** `get_briefing`, `get_overview` and `ask_cas` return `data_health`: each account's last sync and Akahu refresh
   time, drift between Cascadale's balance and the bank's, pending transactions
   (included in balances, flagged, and dropped once they post).
 - Every response carries the household's currency and locale (NZD and en-NZ
   unless Settings says otherwise).
 
-Tools are defined once in [lib/cas/tools.ts](lib/cas/tools.ts) (the plan tools in
-[lib/cas/plan-tools.ts](lib/cas/plan-tools.ts)). Both
+Tools are defined once in [lib/cas/tools.ts](lib/cas/tools.ts). Both
 servers sign in through Supabase Auth's OAuth 2.1 server, so clients act as you,
 and row level security still applies.
 

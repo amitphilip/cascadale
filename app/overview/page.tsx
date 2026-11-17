@@ -46,13 +46,10 @@ import {
   PERIOD_SUFFIX,
   type MoneyFormat,
 } from "@/lib/format"
-import { combinedLow, isCashAccount, simulate } from "@/lib/plan"
-import { loadSnapshot } from "@/lib/planner"
 import {
   getAccountsWithBalances,
   getCategories,
   getCategorySpend,
-  getCheckIns,
   getLatestMonth,
   getMonthlyCashflow,
   getSettings,
@@ -64,8 +61,9 @@ import { cn } from "@/lib/utils"
 import { todayLocal } from "@/supabase/functions/_shared/akahu"
 
 const MAX_CATEGORY_BARS = 10
-/** How far ahead the vitals look for bills and the lowest cash balance. */
-const AHEAD_DAYS = 30
+/** Accounts whose balance is money you hold, not money owed. */
+const isCashAccount = (type: string) =>
+  !["credit_card", "loan", "credit_line"].includes(type)
 
 export const metadata: Metadata = { title: "Overview" }
 
@@ -94,18 +92,14 @@ export default async function OverviewPage({
     spend,
     categories,
     uncategorized,
-    snapshot,
     upcoming,
-    checkIns,
   ] = await Promise.all([
     getAccountsWithBalances(),
     getMonthlyCashflow(month, 12),
     getCategorySpend(month),
     getCategories(),
     getUncategorizedCount(),
-    loadSnapshot(),
     getUpcomingExpenses(),
-    getCheckIns(),
   ])
 
   if (accounts.length === 0 || months.length === 0) {
@@ -132,15 +126,6 @@ export default async function OverviewPage({
     (m, a) => (a.lastDate && (!m || a.lastDate > m) ? a.lastDate : m),
     null
   )
-
-  // Next 30 days with no plan: recurring bills, your one-offs, and day-to-day spending.
-  const sim = snapshot && simulate(snapshot, null, AHEAD_DAYS)
-  const due = sim?.events.filter((e) => e.kind === "bill") ?? []
-  const dueTotal = due.reduce((s, e) => s + e.amount, 0)
-  const oneOffs = due.filter((e) => e.oneOff).length
-  const low = sim && combinedLow(snapshot, sim)
-  const accountName = (id: number) =>
-    accounts.find((a) => a.id === id)?.name ?? "Unknown account"
 
   const monthOptions = Array.from(new Set([month, ...months]))
     .sort()
@@ -227,21 +212,7 @@ export default async function OverviewPage({
           <StatCard
             label="Cash on hand"
             value={formatMoney(cashNow, fmt)}
-            hint={
-              low
-                ? `All accounts combined dip to ${formatMoney(low.balance, fmt)} on ${formatDate(low.date, fmt.locale)}`
-                : "Checking, savings and cash accounts"
-            }
-            tone={low && low.balance < 0 ? "bad" : undefined}
-          />
-          <StatCard
-            label={`Due in ${AHEAD_DAYS} days`}
-            value={formatMoney(dueTotal, fmt)}
-            hint={
-              due.length
-                ? `${due.length} payment${due.length === 1 ? "" : "s"}${oneOffs ? `, incl. ${oneOffs} one-off${oneOffs === 1 ? "" : "s"}` : ""}`
-                : "No bills detected"
-            }
+            hint="Checking, savings and cash accounts"
           />
           <StatCard
             label={`Income · ${formatMonth(month, fmt.locale, true)}${estimated ? ` · ${PERIOD_LABELS[period].toLowerCase()} est.` : ""}`}
@@ -276,15 +247,6 @@ export default async function OverviewPage({
           accountId: u.accountId,
           note: u.note,
         }))}
-        bills={due
-          .filter((e) => !e.oneOff)
-          .map((e) => ({
-            date: e.date,
-            name: e.name,
-            amount: e.amount,
-            account: accountName(e.accountId),
-          }))}
-        checkIns={checkIns}
       />
 
       <Card>

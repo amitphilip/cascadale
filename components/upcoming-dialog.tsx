@@ -77,8 +77,8 @@ export function UpcomingDialog({
               {expense ? "Edit upcoming expense" : "Add upcoming expense"}
             </DialogTitle>
             <DialogDescription>
-              A one-off cost you know is coming. Projections and check-ins plan
-              around it.
+              A one-off cost you know is coming. It shows under Coming up on
+              the Overview.
             </DialogDescription>
           </DialogHeader>
           {expense && <input type="hidden" name="id" value={expense.id} />}

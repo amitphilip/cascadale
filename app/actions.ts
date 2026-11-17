@@ -11,8 +11,6 @@ import {
   BUDGET_PERIODS,
   CATEGORY_KINDS,
   type BudgetPeriod,
-  type PlanMessage,
-  type PlanThread,
   type RuleKind,
   type RuleSource,
 } from "@/lib/db/schema"
@@ -33,23 +31,9 @@ import {
   setAkahuIgnored,
 } from "@/lib/akahu"
 import { API_KEY_SETTING } from "@/lib/anthropic"
-import {
-  addPotEntry,
-  linkTransactionToPot,
-  removeAdjustment,
-  removePot,
-  removePotEntry,
-  unlinkTransactionFromPot,
-  upsertPot,
-  withInstructions,
-} from "@/lib/plan-service"
-import { RESET_MODES } from "@/lib/pots"
-import { planDeps } from "@/lib/plan-repo"
 import { categorizeInternalTransfers } from "@/lib/transfers"
 import { syncUncategorizedTodos } from "@/lib/uncategorized-todos"
-import { runCheckIn } from "@/lib/checkin"
 import {
-  COLUMNS,
   DbError,
   getDb,
   getUserId,
@@ -59,15 +43,6 @@ import {
 } from "@/lib/db"
 import { deleteStored, readStoredRows } from "@/lib/import/files"
 import { applyMapping, detectStatementInfo, type Mapping } from "@/lib/import/parse"
-import { FREQUENCIES, type Frequency } from "@/lib/plan"
-import { HOME_VIEWS } from "@/lib/views"
-import {
-  chatMessages,
-  latestPlan,
-  loadSnapshot,
-  startPlan,
-  type NewTurn,
-} from "@/lib/planner"
 import { RECURRING_BASES } from "@/lib/recurring"
 import { buildMatcher, merchantKey } from "@/lib/rules"
 
@@ -1008,221 +983,7 @@ export async function removeApiKey() {
   })
 }
 
-// ── Plan ────────────────────────────────────────────────────────────────────
-
-async function saveTurn(db: Db, threadId: number, turn: NewTurn) {
-  await must(
-    db.from("plan_messages").insert([
-      {
-        thread_id: threadId,
-        role: "user",
-        content: turn.user.content,
-        context: turn.user.context || null,
-      },
-      {
-        thread_id: threadId,
-        role: "assistant",
-        content: turn.assistant.content,
-        plan: turn.assistant.plan,
-      },
-    ])
-  )
-}
-
-/** Start a new planning conversation from your current data. */
-export async function createPlan(goals: string, frequency: Frequency) {
-  return run(async () => {
-    const fresh = await loadSnapshot()
-    if (!fresh) throw new Error("Import some transactions first")
-    // your pots and adjustments stay as they are; the model plans around them
-    const { repo } = await planDeps("website")
-    const { snapshot } = await withInstructions(repo, fresh, null)
-    const turn = await startPlan(
-      snapshot,
-      z.string().trim().max(4000).parse(goals),
-      z.enum(FREQUENCIES).parse(frequency),
-      await repo.listPots()
-    )
-    const db = await await getDb()
-    await saveTurn(db, await insertId(db, "plan_threads", { snapshot }), turn)
-    return {}
-  })
-}
-
-/** Ask Cas a question or for a change, in the chat on the latest plan. */
-export async function askPlanner(threadId: number, message: string) {
-  return run(async () => {
-    const text = z
-      .string()
-      .trim()
-      .min(1, "Write a message")
-      .max(4000)
-      .parse(message)
-    const db = await await getDb()
-    const [thread] = await must<PlanThread[]>(
-      db
-        .from("plan_threads")
-        .select(COLUMNS.planThreads)
-        .eq("id", id.parse(threadId))
-    )
-    if (!thread) throw new Error("That plan no longer exists")
-    const messages = await must<PlanMessage[]>(
-      db
-        .from("plan_messages")
-        .select(COLUMNS.planMessages)
-        .eq("thread_id", threadId)
-        .order("id")
-    )
-    // loaded here because the agent's tools import this file
-    const { planChat } = await import("@/lib/cas/agent")
-    const userId = await getUserId(db)
-    const { getAccountHolders, getMyPrefs, getPeople } = await import("@/lib/queries")
-    const [people, prefs, holders, accounts] = await Promise.all([
-      getPeople(),
-      getMyPrefs(userId),
-      getAccountHolders(),
-      must<{ id: number; name: string }[]>(db.from("accounts").select("id, name")),
-    ])
-    const who = {
-      name: prefs.name ?? people.find((p) => p.id === userId)?.name ?? "them",
-      accounts: accounts.filter((a) => holders.get(a.id) === userId).map((a) => a.name),
-    }
-    const turn = await planChat(text, chatMessages(thread, messages), latestPlan(messages), who)
-    await saveTurn(db, threadId, {
-      user: { content: text, context: "" },
-      assistant: { content: turn.reply, plan: turn.plan },
-    })
-    return { changed: turn.plan !== null }
-  })
-}
-
-export async function removePlanPot(name: string) {
-  return run(async () => {
-    await removePot(await planDeps("website"), {
-      operationId: crypto.randomUUID(),
-      name: z.string().trim().min(1).parse(name),
-      reason: "Removed on the Plan page",
-    })
-    return {}
-  })
-}
-
-export async function removePlanAdjustment(adjustmentId: number) {
-  return run(async () => {
-    await removeAdjustment(await planDeps("website"), {
-      operationId: crypto.randomUUID(),
-      adjustmentId: id.parse(adjustmentId),
-      reason: "Removed on the Plan page",
-    })
-    return {}
-  })
-}
-
-// ── Sinking funds ───────────────────────────────────────────────────────────
-
-const optionalMoney = z
-  .union([z.literal(""), z.null(), z.undefined(), money.positive("Enter an amount above zero")])
-  .transform((v) => (typeof v === "number" ? v : null))
-const optionalDate = z
-  .union([z.literal(""), z.null(), z.undefined(), isoDate])
-  .transform((v) => v || null)
-
-const fundSchema = z.object({
-  name: z.string().trim().min(1, "Name is required").max(60),
-  amount: z.union([z.literal(""), money.nonnegative("The amount can't be below zero")]).transform((v) => (v === "" ? 0 : v)),
-  frequency: z.enum(FREQUENCIES),
-  fromAccountId: optionalId,
-  toAccountId: optionalId,
-  cap: optionalMoney,
-  endDate: optionalDate,
-  resetDate: optionalDate,
-  resetMode: z.enum(RESET_MODES),
-  startDate: optionalDate,
-  note: optionalText,
-})
-
-/** Add a sinking fund, or change the one with this name. */
-export async function saveSinkingFund(form: FormData) {
-  return run(async () => {
-    const f = fundSchema.parse(Object.fromEntries(form))
-    await upsertPot(await planDeps("website"), {
-      operationId: crypto.randomUUID(),
-      reason: "Set on the Plan page",
-      type: "sinking_fund",
-      name: f.name,
-      amount: f.amount,
-      frequency: f.frequency,
-      fromAccountId: f.fromAccountId,
-      toAccountId: f.toAccountId,
-      cap: f.cap,
-      endDate: f.endDate,
-      resetDate: f.resetDate,
-      resetMode: f.resetMode,
-      startDate: f.startDate ?? undefined,
-      note: f.note ?? null,
-    })
-    return {}
-  })
-}
-
-const fundEntrySchema = z.object({
-  pot: z.string().trim().min(1),
-  kind: z.enum(["planned_draw", "contribution"]),
-  name: optionalText,
-  amount: money.positive("Enter an amount above zero"),
-  date: isoDate,
-})
-
-/** Plan a draw on a sinking fund, or record a top-up into it. */
-export async function addSinkingFundEntry(form: FormData) {
-  return run(async () => {
-    const e = fundEntrySchema.parse(Object.fromEntries(form))
-    await addPotEntry(await planDeps("website"), {
-      operationId: crypto.randomUUID(),
-      reason: "Added on the Plan page",
-      ...e,
-      name: e.name ?? (e.kind === "contribution" ? "Top-up" : null),
-    })
-    return {}
-  })
-}
-
-export async function removeSinkingFundEntry(entryId: number) {
-  return run(async () => {
-    await removePotEntry(await planDeps("website"), {
-      operationId: crypto.randomUUID(),
-      entryId: id.parse(entryId),
-      reason: "Removed on the Plan page",
-    })
-    return {}
-  })
-}
-
-/** Pay a transaction from a sinking fund (or count money in towards it). */
-export async function linkTransactionToFund(transactionId: number, pot: string) {
-  return run(async () => {
-    await linkTransactionToPot(await planDeps("website"), {
-      operationId: crypto.randomUUID(),
-      transactionId: id.parse(transactionId),
-      pot: z.string().trim().min(1).parse(pot),
-      reason: "Linked on the Transactions page",
-    })
-    return {}
-  })
-}
-
-export async function unlinkTransactionFromFund(transactionId: number) {
-  return run(async () => {
-    await unlinkTransactionFromPot(await planDeps("website"), {
-      operationId: crypto.randomUUID(),
-      transactionId: id.parse(transactionId),
-      reason: "Unlinked on the Transactions page",
-    })
-    return {}
-  })
-}
-
-// ── Log: upcoming expenses & check-ins ──────────────────────────────────────
+// ── Upcoming expenses ───────────────────────────────────────────────────────
 
 const upcomingSchema = z.object({
   name: z.string().trim().min(1, "Name is required"),
@@ -1262,67 +1023,6 @@ export async function deleteUpcomingExpense(expenseId: number) {
     )
     return {}
   })
-}
-
-// ── Plan action items ───────────────────────────────────────────────────────
-
-const planActionSchema = z.object({
-  title: z.string().trim().min(1, "Describe the action").max(120),
-  detail: optionalText,
-  dueDate: z
-    .string()
-    .trim()
-    .transform((s) => s || null)
-    .pipe(isoDate.nullable()),
-  focusTitle: optionalText,
-  createdBy: z.enum(["website", "mcp", "cas"]).catch("website"),
-})
-
-export async function addPlanAction(form: FormData) {
-  return run(async () => {
-    const data = planActionSchema.parse(fields(form))
-    const db = await getDb()
-    // Adding what's already waiting to be done returns it, so a retry adds nothing twice.
-    const [same] = await must<{ id: number }[]>(
-      db.from("plan_actions").select("id").is("done_at", null).ilike("title", data.title.replace(/[\\%_]/g, "\\$&")).limit(1)
-    )
-    if (same) return { id: same.id }
-    return {
-      id: await insertId(db, "plan_actions", {
-        title: data.title,
-        detail: data.detail,
-        due_date: data.dueDate,
-        focus_title: data.focusTitle,
-        created_by: data.createdBy,
-      }),
-    }
-  })
-}
-
-export async function setPlanActionDone(actionId: number, done: boolean) {
-  return run(async () => {
-    await must(
-      (await getDb())
-        .from("plan_actions")
-        .update({ done_at: done ? new Date().toISOString() : null })
-        .eq("id", id.parse(actionId))
-    )
-    return {}
-  })
-}
-
-export async function deletePlanAction(actionId: number) {
-  return run(async () => {
-    await must(
-      (await getDb()).from("plan_actions").delete().eq("id", id.parse(actionId))
-    )
-    return {}
-  })
-}
-
-/** Analyse what was logged since the last check-in and ask the model what to do. */
-export async function checkIn() {
-  return run(() => runCheckIn())
 }
 
 // ── Auth ────────────────────────────────────────────────────────────────────
@@ -1419,21 +1119,15 @@ export async function decideAuthorization(authorizationId: string, approve: bool
   })
 }
 
-/** Your name and the view the app opens on for you. */
-export async function saveMyPrefs(prefs: { name: string; homeView: string }) {
+/** Your name, shown to the household and to Cas. */
+export async function saveMyPrefs(prefs: { name: string }) {
   return run(async () => {
-    const { name, homeView } = z
-      .object({
-        name: z.string().trim().max(40),
-        homeView: z.enum(HOME_VIEWS),
-      })
-      .parse(prefs)
+    const { name } = z.object({ name: z.string().trim().max(40) }).parse(prefs)
     const db = await getDb()
     await must(
       db.from("user_prefs").upsert({
         user_id: await getUserId(db),
         name: name || null,
-        home_view: homeView,
         updated_at: new Date().toISOString(),
       })
     )

@@ -38,7 +38,7 @@ export function ApiKeyForm({ status }: { status: ApiKeyStatus }) {
               ? "A key is saved. Enter a new one to replace it."
               : status?.source === "env"
                 ? "Using ANTHROPIC_API_KEY from the environment. A key saved here takes precedence."
-                : "Needed for auto-categorization and the planner. Get one at console.anthropic.com."}
+                : "Needed for auto-categorization and Cas. Get one at console.anthropic.com."}
           </FieldDescription>
         </Field>
       </FieldGroup>

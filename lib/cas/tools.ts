@@ -1,53 +1,38 @@
 import "server-only"
 
-import { differenceInCalendarDays, differenceInHours, parseISO } from "date-fns"
+import { differenceInHours, parseISO } from "date-fns"
 import { z } from "zod"
 
 import {
   categorizeMerchant,
-  checkIn,
-  addPlanAction,
   deleteAsset,
-  deletePlanAction,
   reconcileAccount,
   runAutoCategorize,
   saveAsset,
   saveUpcomingExpense,
   setCategoryBudgets,
-  setPlanActionDone,
   setTransactionCategory,
   syncAkahu,
   type ActionResult,
 } from "@/app/actions"
 import { getAkahuOverview, type AkahuOverview } from "@/lib/akahu"
-import { planTools, type MonthData } from "@/lib/cas/plan-tools"
-import { weekOf } from "@/lib/plan-month"
 import { tool, isoDate, type CasTool } from "@/lib/cas/tool"
 import { loadDataHealth } from "@/lib/data-health"
-import { buildStats } from "@/lib/checkin"
 import { COLUMNS, getDb, must } from "@/lib/db"
 import {
   ASSET_KINDS,
   BUDGET_PERIODS,
   NOTE_KINDS,
   type CasNote,
-  type PlanAction,
 } from "@/lib/db/schema"
 import { buildNetWorth } from "@/lib/net-worth"
-import { describeSimulation, simulate } from "@/lib/plan"
-import { livePlan, planStatus } from "@/lib/plan-service"
-import { planDeps } from "@/lib/plan-repo"
-import { loadSnapshot } from "@/lib/planner"
 import {
   getAccountsWithBalances,
   getAssets,
   getAverageWindow,
-  getCategories,
   getCategoriesWithUsage,
   getCategorizationStats,
   getCategorySpend,
-  getCategorySpendBetween,
-  getCheckIns,
   getIncomeStatement,
   getLatestMonth,
   getMonthCashflow,
@@ -60,15 +45,14 @@ import {
   getUpcomingExpenses,
   PAGE_SIZE,
 } from "@/lib/queries"
-import { localDate, todayLocal } from "@/supabase/functions/_shared/akahu"
+import { todayLocal } from "@/supabase/functions/_shared/akahu"
 
 export type { CasTool }
 
 // Every tool over your finances, defined once. Cascadale's MCP server (lib/mcp.ts) offers the
 // read and action tools to clients such as claude.ai; the Cas agent (lib/cas/agent.ts)
 // gets the read and memory tools, so it never changes your finances itself: changes go
-// through the MCP client, which asks you first. In the Plan page's chat, where you're
-// talking to it directly, it also gets the plan's own action tools.
+// through the MCP client, which asks you first.
 
 const yearMonth = z.string().regex(/^\d{4}-\d{2}$/, "Use yyyy-MM")
 const month = yearMonth
@@ -137,125 +121,39 @@ async function notes(includeResolved = false) {
   return must<CasNote[]>(query)
 }
 
-/** Days ahead a to-do counts as due soon. */
-const DUE_SOON_DAYS = 7
-
-/** The open plan action items, each flagged overdue or due soon against today. */
-async function openPlanActions() {
-  const today = todayLocal()
-  const actions = await must<PlanAction[]>(
-    (await getDb()).from("plan_actions").select(COLUMNS.planActions).is("done_at", null).order("id").limit(200)
-  )
-  return actions.map(({ id, title, detail, dueDate, createdBy, createdAt }) => {
-    const days = dueDate ? differenceInCalendarDays(parseISO(dueDate), parseISO(today)) : null
-    return {
-      actionId: id,
-      title,
-      detail,
-      dueDate,
-      status: days === null ? "no_due_date" : days < 0 ? "overdue" : days <= DUE_SOON_DAYS ? "due_soon" : "later",
-      addedBy: createdBy,
-      addedOn: localDate(createdAt),
-    }
-  })
-}
-
-/** add_plan_action, recording who added the item: Claude (mcp) or Cas in its chat. */
-export const addPlanActionTool = (by: "mcp" | "cas") =>
-  tool({
-    name: "add_plan_action",
-    title: "Add a plan action item",
-    access: "action",
-    description:
-      "Put an action item on the Plan page, e.g. 'Move $500 to the tax pot before 20 Nov'. Keep the title short and concrete, and put the numbers in the detail. Adding a title that's already open returns the existing item instead of a duplicate.",
-    input: {
-      title: z.string().trim().min(1).max(120),
-      detail: z.string().trim().optional().describe("One sentence of why or how, with the key number"),
-      dueDate: isoDate.optional(),
-    },
-    run: ({ title, detail, dueDate }) => {
-      const form = new FormData()
-      form.set("title", title)
-      if (detail) form.set("detail", detail)
-      if (dueDate) form.set("dueDate", dueDate)
-      form.set("createdBy", by)
-      return act(addPlanAction(form))
-    },
-  })
-
-/** The plan tools act as Claude (MCP); the Cas agent makes its own for the Plan page's chat. */
-const PLAN_TOOLS = planTools({
-  deps: () => planDeps("mcp"),
-  health: () => loadDataHealth(),
-  categorySpend: getCategorySpend,
-  monthData,
-})
-
-/** The budgets and spending the Plan page's front reads, for get_month. */
-async function monthData(today: string): Promise<MonthData> {
-  const week = weekOf(today)
-  const [categories, weekSpend, monthSpend, cashflow] = await Promise.all([
-    getCategories(),
-    getCategorySpendBetween(week.start, week.end),
-    getCategorySpend(today.slice(0, 7)),
-    getMonthCashflow(today.slice(0, 7)),
-  ])
-  return {
-    categories: categories.map((c) => ({
-      ...c,
-      monthlyBudget: c.monthlyBudget === null ? null : Number(c.monthlyBudget),
-      weeklyBudget: c.weeklyBudget === null ? null : Number(c.weeklyBudget),
-    })),
-    weekSpend,
-    monthSpend,
-    cashflow,
-  }
-}
-
 export const TOOLS: CasTool[] = [
   tool({
     name: "get_briefing",
     title: "Briefing",
     access: "read",
     description:
-      "Start here. Everything happening right now in one call: bank feed health, what came in and went out since the last check-in against the usual pattern, the projected low point of your balances over the next 60 days, upcoming bills and one-offs, what needs categorizing, the last check-in's verdict and the plan's goal, Cas decisions still to carry out in the plan, the Plan page's open action items (each overdue, due_soon, later or no_due_date), and Cas's open notes and to-dos. Includes data_health: check it before relying on the numbers.",
+      "Start here. Everything happening right now in one call: bank feed health, this month's money in and out so far, upcoming one-offs, what needs categorizing, and Cas's open notes and to-dos. Includes data_health: check it before relying on the numbers.",
     run: async () => {
-      const snap = await loadSnapshot()
       const overview = await getAkahuOverview().catch(
         (err: Error): AkahuOverview => ({ connected: true, error: err.message, accounts: [] })
       )
-      const [sync, sinceLastCheckIn, categorization, merchants, lowRules, [last], open, actions, health] =
+      const thisMonth = todayLocal().slice(0, 7)
+      const [sync, cashflow, upcoming, categorization, merchants, lowRules, open, health] =
         await Promise.all([
           syncStatus(overview).catch((err: Error) => ({ error: err.message })),
-          snap ? buildStats(snap) : null,
+          getMonthCashflow(thisMonth),
+          getUpcomingExpenses(),
           getCategorizationStats(),
           getUncategorizedMerchants(),
           getRuleReview("low"),
-          getCheckIns(1),
           notes(),
-          openPlanActions(),
           loadDataHealth(overview),
         ])
-      const plan = await planStatus(await planDeps("mcp"))
       return {
         today: todayLocal(),
         sync,
-        sinceLastCheckIn,
+        thisMonth: { month: thisMonth, ...cashflow },
+        upcomingOneOffs: upcoming,
         categorization: {
           ...categorization,
           topUncategorizedMerchants: merchants.slice(0, 10),
           lowConfidenceRules: lowRules.length,
         },
-        lastCheckIn: last
-          ? {
-              date: localDate(last.createdAt),
-              status: last.result.status,
-              headline: last.result.headline,
-              actions: last.result.actions,
-            }
-          : null,
-        plan,
-        planActions: actions,
         openNotes: open,
         data_health: health,
       }
@@ -327,23 +225,6 @@ export const TOOLS: CasTool[] = [
       "Each Akahu bank feed account: which account of yours it syncs into, when it last synced and how many transactions it added, Akahu's own refresh time, any problem, and the latest failed sync runs. Syncs run hourly.",
     run: () => syncStatus(),
   }),
-
-  tool({
-    name: "get_financial_picture",
-    title: "Financial picture",
-    access: "read",
-    description:
-      "How your money normally flows, as the planner sees it: balances, recurring incomes and bills with their cadence and next dates, typical day-to-day spending and irregular income per category, budgets against projections, and upcoming one-offs. Plus a 90-day cash simulation under your current plan (pots, overdrafts, bills no pot covers).",
-    run: async () => {
-      const snap = await loadSnapshot()
-      if (!snap) return { error: "Import some transactions first." }
-      const live = await livePlan(await planDeps("mcp"))
-      const simulated = live?.snapshot ?? snap
-      return { snapshot: simulated, simulation: describeSimulation(simulated, simulate(simulated, live?.plan ?? null)) }
-    },
-  }),
-
-  ...PLAN_TOOLS.filter((t) => t.access === "read"),
 
   tool({
     name: "list_categories",
@@ -443,22 +324,6 @@ export const TOOLS: CasTool[] = [
   }),
 
   tool({
-    name: "get_check_ins",
-    title: "Check-ins",
-    access: "read",
-    description:
-      "Past check-ins, newest first: the period each covered, its status (on_track, watch, off_track), headline, advice and actions.",
-    input: { limit: z.number().int().min(1).max(20).optional().describe("Default 5") },
-    run: async ({ limit }) =>
-      (await getCheckIns(limit ?? 5)).map((c) => ({
-        date: localDate(c.createdAt),
-        periodStart: c.periodStart,
-        periodEnd: c.periodEnd,
-        ...c.result,
-      })),
-  }),
-
-  tool({
     name: "list_imports",
     title: "Statement imports",
     access: "read",
@@ -483,18 +348,17 @@ export const TOOLS: CasTool[] = [
     title: "Save a note",
     access: "memory",
     description:
-      "Remember something for later conversations: an observation worth tracking, a decision or preference you stated, or a to-do (with a due date if it has one). Write a to-do as one short line, action — why — how. One fact per note; don't save what the data already shows. Set affectsPlan on a decision that changes the plan (a pot, an amount, a skipped or extra payment): the Plan page then lists it as waiting until a plan change carries it out.",
+      "Remember something for later conversations: an observation worth tracking, a decision or preference you stated, or a to-do (with a due date if it has one). Write a to-do as one short line, action — why — how. One fact per note; don't save what the data already shows. ",
     input: {
       kind: z.enum(NOTE_KINDS),
       content: z.string().trim().min(1).max(1000),
       dueDate: isoDate.optional(),
-      affectsPlan: z.boolean().optional().describe("Only for decisions that change the plan"),
     },
-    run: async ({ kind, content, dueDate, affectsPlan }) =>
+    run: async ({ kind, content, dueDate }) =>
       must<CasNote>(
         (await getDb())
           .from("cas_notes")
-          .insert({ kind, content, due_date: dueDate ?? null, affects_plan: kind === "decision" && !!affectsPlan })
+          .insert({ kind, content, due_date: dueDate ?? null })
           .select(COLUMNS.casNotes)
           .single()
       ),
@@ -634,50 +498,11 @@ export const TOOLS: CasTool[] = [
   }),
 
   tool({
-    name: "list_plan_actions",
-    title: "Plan action items",
-    access: "read",
-    description:
-      "The action items on the Plan page: things to do about the plan, each with an actionId, title, optional detail and dueDate, whether it's done (doneAt) and who added it. Check it before suggesting an action, so you don't repeat one that's already there. get_briefing already lists the open ones.",
-    input: { includeDone: z.boolean().optional().describe("Include finished items. Defaults to open ones only.") },
-    run: async ({ includeDone }) => {
-      let query = (await getDb())
-        .from("plan_actions")
-        .select(COLUMNS.planActions)
-        .order("id")
-        .limit(200)
-      if (!includeDone) query = query.is("done_at", null)
-      return { actions: await must<PlanAction[]>(query), today: todayLocal() }
-    },
-  }),
-
-  addPlanActionTool("mcp"),
-
-  tool({
-    name: "set_plan_action_done",
-    title: "Mark a plan action item done or not done",
-    access: "action",
-    description:
-      "Tick off a plan action item by its actionId from list_plan_actions, or reopen it with done false.",
-    input: { actionId: z.number().int().positive(), done: z.boolean() },
-    run: ({ actionId, done }) => act(setPlanActionDone(actionId, done)),
-  }),
-
-  tool({
-    name: "remove_plan_action",
-    title: "Remove a plan action item",
-    access: "action",
-    description: "Delete a plan action item by its actionId from list_plan_actions.",
-    input: { actionId: z.number().int().positive() },
-    run: ({ actionId }) => act(deletePlanAction(actionId)),
-  }),
-
-  tool({
     name: "add_upcoming_expense",
     title: "Add an upcoming expense",
     access: "action",
     description:
-      "Tell the app about a one-off expense coming up, so plans, check-ins and the cash simulation account for it.",
+      "Tell the app about a one-off expense coming up. It shows on the Overview's Coming up list.",
     input: {
       name: z.string().trim().min(1),
       amount: z.number().positive().describe("What you expect to pay, as a positive amount"),
@@ -696,18 +521,4 @@ export const TOOLS: CasTool[] = [
     },
   }),
 
-  tool({
-    name: "run_check_in",
-    title: "Run a check-in",
-    access: "action",
-    description:
-      "Run a check-in like the one on the home page: analyse what was logged since the last one against the plan, save it, and return its status, with data_health (stale feeds or drift make the check-in less reliable). Uses the Anthropic API key saved in Settings.",
-    run: async () => {
-      // checked first, so a check-in on stale data says so
-      const health = await loadDataHealth()
-      return { ...(await act(checkIn())), data_health: health }
-    },
-  }),
-
-  ...PLAN_TOOLS.filter((t) => t.access === "action"),
 ]

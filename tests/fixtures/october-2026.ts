@@ -1,14 +1,12 @@
 import type { HealthInput } from "@/lib/health"
-import type { Plan, PlanSnapshot } from "@/lib/plan"
-import { snapshotFromData, type PlanTx, type SnapshotInputs } from "@/lib/snapshot"
+import type { WindowTx } from "@/lib/counted-transactions"
 
 /**
  * A household as it stands on 28 October 2026, made up for the tests (no real data):
  * Mary's fortnightly pay from Wood Partners lands in Joint (its bank description changed in
  * July), the other partner's monthly pay lands in Everyday, Joint repays the home loan every
  * fortnight by transfer, Everyday pays the Visa off every month, and a few monthly bills.
- * Everyday shows 1,082.50 in Cascadale but 1,232.50 at the bank; the plan was built on
- * Joint at 18,825 and Joint is 22,945 now.
+ * Everyday shows 1,082.50 in Cascadale but 1,232.50 at the bank.
  */
 
 export const TODAY = "2026-10-28"
@@ -41,8 +39,8 @@ const addDays = (iso: string, n: number) =>
 export const MARY_PAY = 3100
 export const LOAN_REPAYMENT = 1817.54
 
-function transactions(): PlanTx[] {
-  const out: PlanTx[] = []
+export function transactions(): WindowTx[] {
+  const out: WindowTx[] = []
   const add = (
     date: string,
     accountId: number,
@@ -100,65 +98,6 @@ function transactions(): PlanTx[] {
   add("2026-07-08", ACCOUNTS.joint.id, "TFR FROM STREAMLINE", 500, null, null)
 
   return out.sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id)
-}
-
-export function inputs(): SnapshotInputs {
-  return {
-    window: { start: "2026-04-01", last: "2026-10-27", days: 210 },
-    accounts: Object.values(ACCOUNTS),
-    categories: CATEGORIES.map((c) => ({ id: c.id, name: c.name, monthlyBudget: c.monthlyBudget })),
-    txs: transactions(),
-    overrides: [],
-    projections: [],
-    upcoming: [],
-    currency: "NZD",
-    today: TODAY,
-  }
-}
-
-/** Today's snapshot, as loadSnapshot builds it. */
-export function currentSnapshot(): PlanSnapshot {
-  return snapshotFromData(inputs()).snapshot
-}
-
-/**
- * The plan made on 2 October, on Joint at 18,825: a Visa pot from Mary's pay every payday
- * and a Bills pot on the 1st covering power and internet.
- */
-export function previousPlan() {
-  const snap = currentSnapshot()
-  const snapshot: PlanSnapshot = {
-    ...snap,
-    accounts: snap.accounts.map((a) => (a.id === ACCOUNTS.joint.id ? { ...a, balance: 18825 } : a)),
-  }
-  const pay = snapshot.incomes.find((i) => i.name.includes("Wood Partners"))!
-  const bills = snapshot.bills.filter((b) => /MERCURY|ONE NZ/.test(b.name)).map((b) => b.id)
-  const plan: Plan = {
-    summary: "Fund the Visa every payday and the bills monthly.",
-    set_asides: [
-      {
-        pot: "Visa",
-        income_id: pay.id,
-        from_account_id: ACCOUNTS.joint.id,
-        to_account_id: ACCOUNTS.visa.id,
-        amount: 600,
-        covers: [],
-        note: "Pays the card off",
-      },
-      {
-        pot: "Bills",
-        income_id: "MONTHLY",
-        from_account_id: ACCOUNTS.joint.id,
-        to_account_id: null,
-        amount: 320,
-        covers: bills,
-        note: "Power and internet",
-      },
-    ],
-    focus: [],
-    warnings: [],
-  }
-  return { snapshot, plan, createdAt: "2026-10-02T08:00:00.000Z", madeBy: null }
 }
 
 /** What the bank feeds report right now. */

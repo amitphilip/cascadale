@@ -38,14 +38,12 @@ export default async function SettingsPage() {
         <CardHeader>
           <CardTitle>You</CardTitle>
           <CardDescription>
-            Everyone in the household sees the same money; you choose where
-            you start.
+            Everyone in the household sees the same money.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <YouForm
             name={prefs.name ?? people.find((p) => p.id === userId)?.name ?? ""}
-            homeView={prefs.homeView}
           />
         </CardContent>
       </Card>
@@ -121,7 +119,7 @@ export default async function SettingsPage() {
         </CardHeader>
         <CardContent className="grid gap-2 text-sm">
           <p>
-            Accounts, transactions, rules, plans and settings live in its
+            Accounts, transactions, rules, budgets and settings live in its
             Postgres database.
           </p>
           <p>
