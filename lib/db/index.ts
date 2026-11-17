@@ -137,7 +137,8 @@ export const COLUMNS = {
   accounts:
     "id, name, type, institution, openingBalance:opening_balance, archived, akahuId:akahu_id, akahuStart:akahu_start, createdAt:created_at",
   assets: "id, name, kind, value, valuedOn:valued_on, note",
-  categories: "id, name, kind, monthlyBudget:monthly_budget, weeklyBudget:weekly_budget",
+  categories:
+    "id, name, kind, monthlyBudget:monthly_budget, weeklyBudget:weekly_budget, budgetPercent:budget_percent",
   rules:
     "id, pattern, categoryId:category_id, kind, source, confidence, note, reason, createdAt:created_at",
   recurringOverrides:

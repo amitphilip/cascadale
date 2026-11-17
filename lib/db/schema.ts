@@ -70,6 +70,8 @@ export type Category = {
   monthlyBudget: number | null
   /** set when the budget is weekly: its weekly amount */
   weeklyBudget: number | null
+  /** set when the budget is a percentage of projected income; the amounts above are what it comes to */
+  budgetPercent: number | null
 }
 
 /** One uploaded statement file. The raw file lives in the "statements" storage bucket. */

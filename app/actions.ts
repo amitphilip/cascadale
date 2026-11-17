@@ -44,6 +44,7 @@ import {
 import { deleteStored, readStoredRows } from "@/lib/import/files"
 import { applyMapping, detectStatementInfo, type Mapping } from "@/lib/import/parse"
 import { RECURRING_BASES } from "@/lib/recurring"
+import { percentAmount, projectedMonthlyIncome } from "@/lib/budget-percent"
 import { buildMatcher, merchantKey } from "@/lib/rules"
 
 // Actions act as the signed-in user: the Supabase client carries their session, and row
@@ -897,26 +898,46 @@ export async function resetRecurringOverride(key: string) {
 
 const budgetsSchema = z
   .array(
-    z.object({
-      categoryId: id,
-      amount: money.nonnegative(),
-      period: z.enum(BUDGET_PERIODS).optional().default("month"),
-    })
+    z
+      .object({
+        categoryId: id,
+        /** the budget's amount for its period; leave out when it's a percent */
+        amount: money.nonnegative().optional(),
+        /** a percentage of projected monthly income, instead of an amount */
+        percent: z.coerce
+          .number({ message: "Enter a valid percentage" })
+          .positive("Enter a percentage above zero")
+          .max(100, "Enter a percentage up to 100")
+          .optional(),
+        period: z.enum(BUDGET_PERIODS).optional().default("month"),
+      })
+      .refine((b) => (b.amount === undefined) !== (b.percent === undefined), {
+        message: "Give each budget an amount or a percentage, not both",
+      })
   )
   .min(1, "Nothing to apply")
 
-/** Set weekly or monthly budgets on expense categories, e.g. from the recurring projection. */
+/**
+ * Set weekly or monthly budgets on expense categories, each a fixed amount (e.g. from the
+ * recurring projection) or a percentage of projected income. A percentage's amount is
+ * worked out now and kept in step as income moves.
+ */
 export async function setCategoryBudgets(
-  input: { categoryId: number; amount: number; period?: BudgetPeriod }[]
+  input: { categoryId: number; amount?: number; percent?: number; period?: BudgetPeriod }[]
 ) {
   return run(async () => {
     const list = budgetsSchema.parse(input)
+    const income = list.some((b) => b.percent !== undefined) ? await projectedMonthlyIncome() : null
+    if (!income && list.some((b) => b.percent !== undefined)) {
+      throw new Error("There's no projected income yet to take a percentage of")
+    }
     await must(
       (await getDb()).rpc("set_category_budgets", {
         p_budgets: list.map((b) => ({
           category_id: b.categoryId,
-          amount: b.amount,
+          amount: b.percent === undefined ? b.amount : percentAmount(b.percent, income!, b.period),
           period: b.period,
+          percent: b.percent ?? null,
         })),
       })
     )

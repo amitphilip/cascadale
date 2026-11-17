@@ -2,7 +2,8 @@ import type { Metadata } from "next"
 import Link from "next/link"
 import { PencilSimpleIcon } from "@phosphor-icons/react/ssr"
 
-import { ApplyAllBudgetsButton, UseAsBudgetButton } from "./budget-actions"
+import { ApplyAllBudgetsButton, BudgetEditor, type SavedBudget } from "./budget-actions"
+import { CategoryGroup, CollapsibleGroups, ExpandAllButton } from "./collapsible-rows"
 import { BasisPicker } from "@/components/basis-picker"
 import { PageHeader } from "@/components/page-header"
 import { PeriodPicker } from "@/components/period-picker"
@@ -35,6 +36,13 @@ import {
   type MoneyFormat,
   type Period,
 } from "@/lib/format"
+import {
+  budgetPeriod,
+  percentAmount,
+  projectedMonthlyIncome,
+  refreshPercentBudgets,
+} from "@/lib/budget-percent"
+import type { Category } from "@/lib/db/schema"
 import {
   getAverageWindow,
   getCategories,
@@ -103,6 +111,24 @@ export default async function RecurringPage({
   const totalExpense = total(expense)
   const net = totalIncome - totalExpense
 
+  // percentage budgets are of projected income on the default basis, whichever basis is shown
+  const monthlyIncome = !window
+    ? null
+    : basis === parseBasis(undefined)
+      ? totalIncome
+      : await projectedMonthlyIncome()
+  if (monthlyIncome) await refreshPercentBudgets(categories, monthlyIncome)
+  const savedBudget = (c: Category | undefined): SavedBudget => {
+    if (!c || c.monthlyBudget === null) return null
+    const period = budgetPeriod(c)
+    const percent = c.budgetPercent === null ? null : Number(c.budgetPercent)
+    const amount =
+      percent !== null && monthlyIncome
+        ? percentAmount(percent, monthlyIncome, period)
+        : Number(period === "week" ? c.weeklyBudget : c.monthlyBudget)
+    return { period, amount, percent }
+  }
+
   const budgets = expense
     .filter(
       (l): l is BudgetLine & { categoryId: number } => l.categoryId !== null
@@ -116,6 +142,7 @@ export default async function RecurringPage({
     formatMoney(fromMonthly(monthly, period), fmt, { signed })
   const ctx = {
     fmt,
+    monthlyIncome,
     period,
     basis,
     overrides: overrideByKey,
@@ -128,8 +155,8 @@ export default async function RecurringPage({
         title="Recurring & budget"
         description={
           <>
-            Each category projected forward to plan a budget, with its regular
-            income and bills broken out. Default:{" "}
+            Each category projected forward, with its regular income and bills
+            broken out, and its budget as an amount or a share of income. Default:{" "}
             {BASIS_DESCRIPTIONS[basis].toLowerCase()}.
           </>
         }
@@ -161,40 +188,49 @@ export default async function RecurringPage({
         />
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Income</CardTitle>
-          <CardDescription>
-            By category and source{windowLabel && `, from ${windowLabel}`}.
-            Click a basis to change it for a category or a single source.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="px-0">
-          <BudgetTable lines={income} nameOf={nameOf} kind="income" {...ctx} />
-        </CardContent>
-      </Card>
+      <CollapsibleGroups keys={income.map(groupKey)}>
+        <Card>
+          <CardHeader>
+            <CardTitle>Income</CardTitle>
+            <CardDescription>
+              By category and source{windowLabel && `, from ${windowLabel}`}.
+              Tap a basis to change it for a category or a single source.
+            </CardDescription>
+            <CardAction>
+              <ExpandAllButton />
+            </CardAction>
+          </CardHeader>
+          <CardContent className="px-0">
+            <BudgetTable lines={income} nameOf={nameOf} kind="income" {...ctx} />
+          </CardContent>
+        </Card>
+      </CollapsibleGroups>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Expenses</CardTitle>
-          <CardDescription>
-            Each category is its recurring items plus everything else. Items
-            that have stopped are left out.
-          </CardDescription>
-          <CardAction>
-            <ApplyAllBudgetsButton budgets={budgets} />
-          </CardAction>
-        </CardHeader>
-        <CardContent className="px-0">
-          <BudgetTable
-            lines={expense}
-            nameOf={nameOf}
-            kind="expense"
-            budgetOf={(id) => catById.get(id)?.monthlyBudget ?? null}
-            {...ctx}
-          />
-        </CardContent>
-      </Card>
+      <CollapsibleGroups keys={expense.map(groupKey)}>
+        <Card>
+          <CardHeader>
+            <CardTitle>Expenses</CardTitle>
+            <CardDescription>
+              Each category is its recurring items plus everything else. Items
+              that have stopped are left out. Tap a budget to set it as an
+              amount or a % of income.
+            </CardDescription>
+            <CardAction className="flex flex-wrap justify-end gap-1">
+              <ExpandAllButton />
+              <ApplyAllBudgetsButton budgets={budgets} />
+            </CardAction>
+          </CardHeader>
+          <CardContent className="px-0">
+            <BudgetTable
+              lines={expense}
+              nameOf={nameOf}
+              kind="expense"
+              budgetOf={(id) => savedBudget(catById.get(id))}
+              {...ctx}
+            />
+          </CardContent>
+        </Card>
+      </CollapsibleGroups>
     </>
   )
 }
@@ -225,8 +261,12 @@ function SummaryCard({
   )
 }
 
+/** A category's key for folding its rows: its id, so #budget-<id> links open it. */
+const groupKey = (l: BudgetLine) => String(l.categoryId ?? l.key)
+
 type Ctx = {
   fmt: MoneyFormat
+  monthlyIncome: number | null
   period: Period
   basis: DefaultBasis
   overrides: Map<string, RecurringOverride>
@@ -279,9 +319,9 @@ function BudgetTable({
   lines: BudgetLine[]
   nameOf: (l: BudgetLine) => string
   kind: "income" | "expense"
-  budgetOf?: (categoryId: number) => number | null
+  budgetOf?: (categoryId: number) => SavedBudget
 }) {
-  const { fmt, period, basis: pageBasis, savedByCategory } = ctx
+  const { fmt, period, basis: pageBasis, savedByCategory, monthlyIncome } = ctx
   const isExpense = kind === "expense"
   const total = lines.reduce((s, l) => s + l.projected, 0)
   const actual = lines.reduce((s, l) => s + l.actual, 0)
@@ -296,14 +336,14 @@ function BudgetTable({
   }
 
   return (
-    <Table className="min-w-[44rem]">
+    <Table className="sm:min-w-[44rem]">
       <TableHeader>
         <TableRow>
           <TableHead className="pl-(--card-spacing)">Item</TableHead>
-          <TableHead className="text-right">Latest</TableHead>
-          <TableHead className="text-right">Trend /yr</TableHead>
+          <TableHead className="text-right max-sm:hidden">Latest</TableHead>
+          <TableHead className="text-right max-sm:hidden">Trend /yr</TableHead>
           <TableHead>Basis</TableHead>
-          <TableHead className="text-right">
+          <TableHead className="text-right max-sm:hidden">
             Avg {PERIOD_SUFFIX[period]}
           </TableHead>
           <TableHead className={cn("text-right", last)}>
@@ -311,7 +351,7 @@ function BudgetTable({
           </TableHead>
           {isExpense && (
             <TableHead className="pr-(--card-spacing) text-right">
-              Budget /mo
+              Budget
             </TableHead>
           )}
         </TableRow>
@@ -319,152 +359,146 @@ function BudgetTable({
       <TableBody>
         {lines.map((l) => {
           const name = nameOf(l)
-          const budget = l.categoryId !== null ? budgetOf?.(l.categoryId) : null
+          const budget = l.categoryId !== null ? (budgetOf?.(l.categoryId) ?? null) : null
           // what this category's merchants inherit
           const inherited: DefaultBasis =
             l.basis === "custom" ? pageBasis : l.basis
-          return [
-            <TableRow key={l.key} className="bg-muted/40 font-medium">
-              <TableCell className="pl-(--card-spacing)">
-                <Link
-                  href={`/transactions?category=${l.categoryId ?? "none"}`}
-                  className="hover:underline hover:underline-offset-4"
-                >
-                  {name}
-                </Link>
-                <div className="text-xs font-normal text-muted-foreground">
-                  {formatMoney(fromMonthly(l.recurring, period), fmt)} recurring
-                  · {formatMoney(fromMonthly(l.other.monthly, period), fmt)}{" "}
-                  other
-                </div>
-              </TableCell>
-              <TableCell className="text-right font-normal text-muted-foreground tabular-nums">
-                {formatMoney(fromMonthly(l.previews.latest, period), fmt)}
-              </TableCell>
-              <TableCell
-                className="text-right font-normal text-muted-foreground tabular-nums"
-                title={
-                  l.growthRate !== null
-                    ? `Detected ${formatTrend(l.trend)}`
-                    : "Trend in monthly totals"
-                }
-              >
-                {formatTrend(l.growthRate ?? l.trend)}
-              </TableCell>
-              <TableCell>
-                {l.categoryId === null ? (
-                  <Badge variant="outline">{BASIS_LABELS[l.basis]}</Badge>
-                ) : (
-                  <ProjectionDialog
-                    target={{
-                      kind: "category",
-                      categoryId: l.categoryId,
-                      name,
-                    }}
-                    saved={savedByCategory.get(l.categoryId) ?? null}
-                    inherited={pageBasis}
-                    inheritedFrom="page default"
-                    inheritedRate={l.growthRate ?? l.trend}
-                    previews={l.previews}
-                    fmt={fmt}
-                    trigger={
-                      <BasisButton basis={l.basis} overridden={l.overridden} />
-                    }
-                  />
-                )}
-              </TableCell>
-              <TableCell className="text-right font-normal text-muted-foreground tabular-nums">
-                {formatMoney(fromMonthly(l.actual, period), fmt)}
-              </TableCell>
-              <TableCell className={cn("text-right tabular-nums", last)}>
-                {formatMoney(fromMonthly(l.projected, period), fmt)}
-              </TableCell>
-              {isExpense && (
-                <TableCell className="pr-(--card-spacing) text-right">
-                  <div className="flex items-center justify-end gap-1">
-                    <span
-                      className={cn(
-                        "tabular-nums",
-                        budget == null && "text-muted-foreground",
-                        budget != null &&
-                          budget < l.projected &&
-                          "text-destructive"
-                      )}
-                      title={
-                        budget != null && budget < l.projected
-                          ? "Budget is below the projection"
-                          : undefined
-                      }
-                    >
-                      {budget == null ? "—" : formatMoney(budget, fmt)}
-                    </span>
-                    {l.categoryId !== null &&
-                      Math.round(l.projected) !== budget && (
-                        <UseAsBudgetButton
-                          budget={{
-                            categoryId: l.categoryId,
-                            amount: l.projected,
-                          }}
-                          label={name}
-                        />
-                      )}
+          const hasOther = l.other.average !== 0 || l.other.recent !== 0
+          return (
+            <CategoryGroup
+              key={l.key}
+              groupKey={groupKey(l)}
+              anchor={l.categoryId !== null ? `budget-${l.categoryId}` : undefined}
+              detailCount={l.series.length + (hasOther ? 1 : 0)}
+              name={
+                <>
+                  <Link
+                    href={`/transactions?category=${l.categoryId ?? "none"}`}
+                    className="hover:underline hover:underline-offset-4"
+                  >
+                    {name}
+                  </Link>
+                  <div className="text-xs font-normal text-muted-foreground">
+                    {formatMoney(fromMonthly(l.recurring, period), fmt)} recurring
+                    · {formatMoney(fromMonthly(l.other.monthly, period), fmt)}{" "}
+                    other
                   </div>
-                </TableCell>
-              )}
-            </TableRow>,
-            ...l.series.map((s) => (
-              <SeriesRow
-                key={s.key}
-                s={s}
-                isExpense={isExpense}
-                category={name}
-                inherited={inherited}
-                inheritedRate={l.growthRate}
-                {...ctx}
-              />
-            )),
-            ...(l.other.average !== 0 || l.other.recent !== 0
-              ? [
-                  <TableRow key={`${l.key}:other`}>
-                    <TableCell className="pl-[calc(var(--card-spacing)+1rem)]">
+                </>
+              }
+              cells={
+                <>
+                  <TableCell className="text-right font-normal text-muted-foreground tabular-nums max-sm:hidden">
+                    {formatMoney(fromMonthly(l.previews.latest, period), fmt)}
+                  </TableCell>
+                  <TableCell
+                    className="text-right font-normal text-muted-foreground tabular-nums max-sm:hidden"
+                    title={
+                      l.growthRate !== null
+                        ? `Detected ${formatTrend(l.trend)}`
+                        : "Trend in monthly totals"
+                    }
+                  >
+                    {formatTrend(l.growthRate ?? l.trend)}
+                  </TableCell>
+                  <TableCell>
+                    {l.categoryId === null ? (
+                      <Badge variant="outline">{BASIS_LABELS[l.basis]}</Badge>
+                    ) : (
+                      <ProjectionDialog
+                        target={{
+                          kind: "category",
+                          categoryId: l.categoryId,
+                          name,
+                        }}
+                        saved={savedByCategory.get(l.categoryId) ?? null}
+                        inherited={pageBasis}
+                        inheritedFrom="page default"
+                        inheritedRate={l.growthRate ?? l.trend}
+                        previews={l.previews}
+                        fmt={fmt}
+                        trigger={
+                          <BasisButton basis={l.basis} overridden={l.overridden} />
+                        }
+                      />
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right font-normal text-muted-foreground tabular-nums max-sm:hidden">
+                    {formatMoney(fromMonthly(l.actual, period), fmt)}
+                  </TableCell>
+                  <TableCell className={cn("text-right tabular-nums", last)}>
+                    {formatMoney(fromMonthly(l.projected, period), fmt)}
+                  </TableCell>
+                  {isExpense && (
+                    <TableCell className="pr-(--card-spacing) text-right">
+                      {l.categoryId !== null ? (
+                        <BudgetEditor
+                          categoryId={l.categoryId}
+                          name={name}
+                          saved={budget}
+                          projected={l.projected}
+                          monthlyIncome={monthlyIncome}
+                          fmt={fmt}
+                        />
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                  )}
+                </>
+              }
+            >
+              {l.series.map((s) => (
+                <SeriesRow
+                  key={s.key}
+                  s={s}
+                  isExpense={isExpense}
+                  category={name}
+                  inherited={inherited}
+                  inheritedRate={l.growthRate}
+                  {...ctx}
+                />
+              ))}
+              {hasOther && (
+                <TableRow>
+                  <TableCell className="pl-[calc(var(--card-spacing)+2.25rem)]">
+                    {l.series.length
+                      ? "Everything else"
+                      : isExpense
+                        ? "All spending"
+                        : "All income"}
+                    <div className="text-xs text-muted-foreground">
                       {l.series.length
-                        ? "Everything else"
-                        : isExpense
-                          ? "All spending"
-                          : "All income"}
-                      <div className="text-xs text-muted-foreground">
-                        {l.series.length
-                          ? "Not on a regular schedule"
-                          : "Nothing on a regular schedule"}
-                        {" · latest is a typical recent month"}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {formatMoney(fromMonthly(l.other.recent, period), fmt)}
-                    </TableCell>
-                    <TableCell />
-                    <TableCell className="text-xs text-muted-foreground">
-                      {BASIS_LABELS[inherited]}
-                    </TableCell>
-                    <TableCell className="text-right text-muted-foreground tabular-nums">
-                      {formatMoney(fromMonthly(l.other.average, period), fmt)}
-                    </TableCell>
-                    <TableCell className={cn("text-right tabular-nums", last)}>
-                      {formatMoney(fromMonthly(l.other.monthly, period), fmt)}
-                    </TableCell>
-                    {isExpense && <TableCell className="pr-(--card-spacing)" />}
-                  </TableRow>,
-                ]
-              : []),
-          ]
+                        ? "Not on a regular schedule"
+                        : "Nothing on a regular schedule"}
+                      {" · latest is a typical recent month"}
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums max-sm:hidden">
+                    {formatMoney(fromMonthly(l.other.recent, period), fmt)}
+                  </TableCell>
+                  <TableCell className="max-sm:hidden" />
+                  <TableCell className="text-xs text-muted-foreground">
+                    {BASIS_LABELS[inherited]}
+                  </TableCell>
+                  <TableCell className="text-right text-muted-foreground tabular-nums max-sm:hidden">
+                    {formatMoney(fromMonthly(l.other.average, period), fmt)}
+                  </TableCell>
+                  <TableCell className={cn("text-right tabular-nums", last)}>
+                    {formatMoney(fromMonthly(l.other.monthly, period), fmt)}
+                  </TableCell>
+                  {isExpense && <TableCell className="pr-(--card-spacing)" />}
+                </TableRow>
+              )}
+            </CategoryGroup>
+          )
         })}
       </TableBody>
       <TableFooter>
         <TableRow className="font-medium">
-          <TableCell className="pl-(--card-spacing)" colSpan={4}>
-            Total {kind}
-          </TableCell>
-          <TableCell className="text-right text-muted-foreground tabular-nums">
+          <TableCell className="pl-(--card-spacing)">Total {kind}</TableCell>
+          <TableCell className="max-sm:hidden" colSpan={2} />
+          <TableCell />
+          <TableCell className="text-right text-muted-foreground tabular-nums max-sm:hidden">
             {formatMoney(fromMonthly(actual, period), fmt)}
           </TableCell>
           <TableCell className={cn("text-right tabular-nums", last)}>
@@ -501,10 +535,10 @@ function SeriesRow({
   const rate = inheritedRate ?? s.trend
   return (
     <TableRow className={cn(inactive && "text-muted-foreground")}>
-      <TableCell className="pl-[calc(var(--card-spacing)+1rem)]">
+      <TableCell className="pl-[calc(var(--card-spacing)+2.25rem)]">
         <div className="flex items-center gap-2">
           <span
-            className="max-w-72 truncate"
+            className="max-w-40 truncate sm:max-w-72"
             title={s.note ? `${s.example} — ${s.note}` : s.example}
           >
             {s.example}
@@ -518,11 +552,11 @@ function SeriesRow({
           {!s.ended && ` · next ~${formatDate(s.nextDate, fmt.locale)}`}
         </div>
       </TableCell>
-      <TableCell className="text-right tabular-nums">
+      <TableCell className="text-right tabular-nums max-sm:hidden">
         {formatMoney(s.latest, fmt)}
       </TableCell>
       <TableCell
-        className="text-right text-muted-foreground tabular-nums"
+        className="text-right text-muted-foreground tabular-nums max-sm:hidden"
         title={
           s.growthRate !== s.trend
             ? `Detected ${formatTrend(s.trend)}`
@@ -560,7 +594,7 @@ function SeriesRow({
       </TableCell>
       <TableCell
         className={cn(
-          "text-right tabular-nums",
+          "text-right tabular-nums max-sm:hidden",
           irregular && !inactive
             ? "font-medium text-foreground"
             : "text-muted-foreground"

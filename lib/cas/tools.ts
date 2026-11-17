@@ -431,13 +431,14 @@ export const TOOLS: CasTool[] = [
     title: "Set budgets",
     access: "action",
     description:
-      "Set the budget of one or more expense categories, weekly (Monday to Sunday) or monthly (the default). An amount of 0 clears it.",
+      "Set the budget of one or more expense categories, weekly (Monday to Sunday) or monthly (the default): a fixed amount, or a percent of projected monthly income that stays in step as income moves. An amount of 0 clears it.",
     input: {
       budgets: z
         .array(
           z.object({
             categoryId: z.number().int().positive(),
-            amount: z.number().nonnegative(),
+            amount: z.number().nonnegative().optional().describe("A fixed amount for the period; omit when giving percent"),
+            percent: z.number().positive().max(100).optional().describe("A percent of projected monthly income; omit when giving amount"),
             period: z.enum(BUDGET_PERIODS).optional(),
           })
         )
