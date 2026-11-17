@@ -29,7 +29,8 @@ const ACTION_NAMES = TOOLS.filter((t) => t.access === "action").map((t) => t.nam
 const TOOLS_INSTRUCTIONS = `Cascadale is the user's budgeting app: bank accounts synced from Akahu, transactions, categories and budgets, recurring bills and upcoming one-off expenses. These tools read that data and act on it directly, through the same services and database as the website.
 
 - get_briefing is the best single overview; the other read tools answer specific questions.
-- Budgets are weekly (Monday to Sunday) or monthly. set_category_budgets takes period "week" for a weekly one; list_categories shows weeklyBudget on those, and monthlyBudget stays the monthly equivalent everything else reads.
+- The plan on the website's Plan page is made by Cas from projected income, budgets, bills and one-off payments: get_plan reads it (verdict, allocations, to-do actions and today's figures), make_plan has Cas redo it from the goals the user gives, and set_plan_action_done ticks off an action.
+- Budgets are weekly (Monday to Sunday) or monthly, a fixed amount or a percent of projected income. set_category_budgets takes period "week" for a weekly one; list_categories shows weeklyBudget on those, and monthlyBudget stays the monthly equivalent everything else reads.
 - These tools change the user's real finances: ${ACTION_NAMES.join(", ")}. Confirm with the user before calling one, and tell them what changed from the tool's result.
 - Check data_health (on get_briefing and get_overview) before relying on numbers: name stale accounts and drift from the bank, rather than answering as if the data were current.
 - For advice (how am I doing, what should I do, can I afford X), use the Cas connector's ask_cas if it's connected; it recommends actions that you run here.
@@ -37,7 +38,7 @@ const TOOLS_INSTRUCTIONS = `Cascadale is the user's budgeting app: bank accounts
 
 const CAS_INSTRUCTIONS = `Cas is the user's financial advisor and accountant for their budgeting app, Cascadale. It investigates their accounts, bank feed syncs, transactions, budgets and recurring bills on its own, remembers earlier conversations through its notes, and answers with what's going on and what can or should be done.
 
-- Call ask_cas for open questions: how am I doing, what needs attention, can I afford X, explain my spending. Pass what you know from the conversation as context, and tell it about decisions the user makes.
+- Call ask_cas for open questions: how am I doing, what needs attention, can I afford X, explain my spending, is my plan realistic. Pass what you know from the conversation as context, and tell it about decisions the user makes.
 - Cas doesn't change the user's data. The actions it recommends (e.g. categorize_merchant, set_category_budgets) are tools on the Cascadale connector: offer them to the user and run them there once confirmed, then resolve the matching to-do here with resolve_note.
 - ask_cas returns data_health alongside the answer; mention stale or drifted data to the user.
 - get_notes shows its open to-dos, decisions and observations without running the agent.`

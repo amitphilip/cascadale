@@ -149,6 +149,10 @@ export const COLUMNS = {
     "id, name, amount, dueDate:due_date, accountId:account_id, note, createdAt:created_at",
   oneOffs:
     "id, name, total, accountId:account_id, startDate:start_date, finishDate:finish_date, outMode:out_mode, outEvery:out_every, inEvery:in_every, setAside:set_aside, note, createdAt:created_at",
+  plans:
+    "id, goals, summary, verdict, verdictNote:verdict_note, goalChecks:goal_checks, figures, madeBy:made_by, createdAt:created_at",
+  planItems:
+    "id, planId:plan_id, kind, purpose, title, detail, amount, every, categoryId:category_id, oneOffId:one_off_id, accountId:account_id, dueDate:due_date, doneAt:done_at, position",
   casNotes:
     "id, kind, content, dueDate:due_date, affectsPlan:affects_plan, appliedAt:applied_at, ref, createdAt:created_at, resolvedAt:resolved_at, resolution",
 } as const

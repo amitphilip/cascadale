@@ -1,9 +1,11 @@
 import {
   ArrowsClockwiseIcon,
   BankIcon,
+  CalendarCheckIcon,
   ChartPieSliceIcon,
   CoinsIcon,
   ListBulletsIcon,
+  PiggyBankIcon,
   ScalesIcon,
   SparkleIcon,
   TagIcon,
@@ -13,6 +15,7 @@ import {
 
 export const NAV = [
   { href: "/overview", label: "Overview", icon: ChartPieSliceIcon },
+  { href: "/plan", label: "Plan", icon: PiggyBankIcon },
   { href: "/statement", label: "Statement", icon: ScalesIcon },
   { href: "/income", label: "Income", icon: TrendUpIcon },
   {
@@ -20,6 +23,7 @@ export const NAV = [
     label: "Recurring & budget",
     icon: ArrowsClockwiseIcon,
   },
+  { href: "/one-offs", label: "One-off payments", icon: CalendarCheckIcon },
   { href: "/transactions", label: "Transactions", icon: ListBulletsIcon },
   { href: "/accounts", label: "Accounts", icon: BankIcon },
   { href: "/net-worth", label: "Net worth", icon: CoinsIcon },
@@ -29,4 +33,4 @@ export const NAV = [
 ]
 
 /** Pinned to the bottom bar on phones, in this order; everything else sits under More. */
-export const TAB_HREFS = ["/overview", "/transactions", "/recurring", "/review"]
+export const TAB_HREFS = ["/overview", "/plan", "/transactions", "/recurring"]

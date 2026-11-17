@@ -38,12 +38,14 @@ export default async function SettingsPage() {
         <CardHeader>
           <CardTitle>You</CardTitle>
           <CardDescription>
-            Everyone in the household sees the same money.
+            Everyone in the household sees the same money; you choose where
+            you start.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <YouForm
             name={prefs.name ?? people.find((p) => p.id === userId)?.name ?? ""}
+            homeView={prefs.homeView}
           />
         </CardContent>
       </Card>

@@ -11,6 +11,7 @@ import type {
   CategoryKind,
   CategoryProjectionRow,
   CategorySource,
+  OneOff,
   RecurringOverrideRow,
   RuleKind,
   RuleSource,
@@ -22,6 +23,7 @@ import type {
   RecurringOverride,
   RecurringTx,
 } from "@/lib/recurring"
+import type { LinkedTx } from "@/lib/one-offs"
 import { merchantKey } from "@/lib/rules"
 import type { HomeView, Person } from "@/lib/views"
 import type { WindowTx } from "@/lib/counted-transactions"
@@ -717,6 +719,75 @@ export async function getUpcomingExpenses() {
       .order("due_date")
       .order("id")
   )
+}
+
+/**
+ * Every one-off payment with the transactions linked to it, and the transactions in their
+ * accounts since the earliest start that no one-off has yet, to link.
+ */
+export async function getOneOffs() {
+  const client = await db()
+  const [rows, links] = await Promise.all([
+    must<OneOff[]>(
+      client.from("one_offs").select(COLUMNS.oneOffs).order("finish_date").order("id")
+    ),
+    selectAll<{ oneOffId: number; tx: LinkedTx }>((from, to) =>
+      client
+        .from("one_off_transactions")
+        .select("oneOffId:one_off_id, tx:transactions(id, date, description, amount)")
+        .order("transaction_id")
+        .range(from, to)
+    ),
+  ])
+  const oneOffs = rows.map((o) => ({
+    ...o,
+    total: Number(o.total),
+    setAside: Number(o.setAside),
+    linked: links
+      .filter((l) => l.oneOffId === o.id)
+      .map((l) => ({ ...l.tx, amount: Number(l.tx.amount) }))
+      .sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id),
+  }))
+  if (oneOffs.length === 0) return { oneOffs, unlinked: [] }
+
+  const linkedIds = new Set(links.map((l) => l.tx.id))
+  const since = oneOffs.reduce((min, o) => (o.startDate < min ? o.startDate : min), oneOffs[0].startDate)
+  const candidates = await must<(LinkedTx & { accountId: number })[]>(
+    client
+      .from("transactions")
+      .select("id, accountId:account_id, date, description, amount")
+      .in("account_id", [...new Set(oneOffs.map((o) => o.accountId))])
+      .gte("date", since)
+      .order("date", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(500)
+  )
+  const unlinked = candidates
+    .filter((t) => !linkedIds.has(t.id))
+    .map((t) => ({ ...t, amount: Number(t.amount) }))
+  return { oneOffs, unlinked }
+}
+
+// ── Overview views ──────────────────────────────────────────────────────────
+
+/** Like getCategorySpendBetween, for spending from these accounts only, over [start, end). */
+export async function getCategorySpendForBetween(start: string, end: string, accountIds: number[]) {
+  if (accountIds.length === 0) return []
+  const rows = await must<
+    { id: number | null; name: string | null; budget: number | null; spent: number }[]
+  >(
+    (await db()).rpc("category_spend_for", {
+      p_start: start,
+      p_end: end,
+      p_accounts: accountIds,
+    })
+  )
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name ?? "Uncategorized",
+    budget: r.budget === null ? null : Number(r.budget),
+    spent: Number(r.spent),
+  }))
 }
 
 /** Cas's unresolved notes, newest first: observations, to-dos, decisions and preferences. */

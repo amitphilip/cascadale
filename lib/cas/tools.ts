@@ -25,7 +25,10 @@ import {
   NOTE_KINDS,
   type CasNote,
 } from "@/lib/db/schema"
+import { makePlan } from "@/lib/cas/plan"
 import { buildNetWorth } from "@/lib/net-worth"
+import { getCurrentPlan } from "@/lib/plan-data"
+import { loadPlanInputs } from "@/lib/plan-inputs"
 import {
   getAccountsWithBalances,
   getAssets,
@@ -324,6 +327,30 @@ export const TOOLS: CasTool[] = [
   }),
 
   tool({
+    name: "get_plan",
+    title: "Plan",
+    access: "read",
+    description:
+      "The household's plan, as the Plan page shows it: Cas's verdict on whether it's realistic (realistic, stretch, unrealistic) with the reason and each goal weighed, where each pay goes (allocations, each with an amount per week, fortnight, month or once, and the budget category or one-off it's for), and the to-do actions (doneAt set when ticked off). Also today's figures it stands on: projected income, bills and budgets, one-off needs, what's left over, and budgets set well below how a category runs. plan is null before Cas has made one.",
+    run: async () => {
+      const [current, inputs] = await Promise.all([getCurrentPlan(), loadPlanInputs()])
+      return {
+        plan: current && {
+          ...current.plan,
+          allocations: current.allocations,
+          actions: current.actions,
+        },
+        today: inputs && {
+          figures: inputs.figures,
+          categories: inputs.categories,
+          oneOffs: inputs.oneOffs,
+          incomeSources: inputs.incomeSources,
+        },
+      }
+    },
+  }),
+
+  tool({
     name: "list_imports",
     title: "Statement imports",
     access: "read",
@@ -496,6 +523,42 @@ export const TOOLS: CasTool[] = [
     description: "Delete an asset by its assetId from get_net_worth, taking its value out of net worth.",
     input: { assetId: z.number().int().positive() },
     run: ({ assetId }) => act(deleteAsset(assetId)),
+  }),
+
+  tool({
+    name: "make_plan",
+    title: "Have Cas make the plan",
+    access: "action",
+    description:
+      "Have Cas make a new plan from today's income, budgets, bills and one-off payments and the goals given, replacing the current one on the Plan page (the old one is kept as history). Pass the goals in their words, with amounts and dates where they gave them; omit to keep the current plan's goals. Takes a minute or two and uses the Anthropic API key saved in Settings. Returns the verdict and the new plan.",
+    input: {
+      goals: z.string().trim().max(2000).optional().describe("What the plan should aim for; omit to keep the current goals"),
+    },
+    run: async ({ goals }) => {
+      const keep = goals === undefined ? ((await getCurrentPlan())?.plan.goals ?? null) : goals || null
+      const { planId, plan } = await makePlan(keep, "mcp")
+      return { planId, ...plan }
+    },
+  }),
+
+  tool({
+    name: "set_plan_action_done",
+    title: "Tick off a plan action",
+    access: "action",
+    description: "Mark one of the plan's to-do actions done (or not done again), by its id from get_plan.",
+    input: { actionId: z.number().int().positive(), done: z.boolean() },
+    run: async ({ actionId, done }) => {
+      const [item] = await must<{ id: number }[]>(
+        (await getDb())
+          .from("plan_items")
+          .update({ done_at: done ? new Date().toISOString() : null })
+          .eq("id", actionId)
+          .eq("kind", "action")
+          .select("id")
+      )
+      if (!item) throw new Error("Plan action not found")
+      return { actionId, done }
+    },
   }),
 
   tool({

@@ -10,6 +10,8 @@ import {
   ASSET_KINDS,
   BUDGET_PERIODS,
   CATEGORY_KINDS,
+  ONE_OFF_FREQUENCIES,
+  ONE_OFF_OUT_MODES,
   type BudgetPeriod,
   type RuleKind,
   type RuleSource,
@@ -43,6 +45,7 @@ import {
 } from "@/lib/db"
 import { deleteStored, readStoredRows } from "@/lib/import/files"
 import { applyMapping, detectStatementInfo, type Mapping } from "@/lib/import/parse"
+import { HOME_VIEWS } from "@/lib/views"
 import { RECURRING_BASES } from "@/lib/recurring"
 import { percentAmount, projectedMonthlyIncome } from "@/lib/budget-percent"
 import { buildMatcher, merchantKey } from "@/lib/rules"
@@ -1046,6 +1049,127 @@ export async function deleteUpcomingExpense(expenseId: number) {
   })
 }
 
+// ── One-off payments ────────────────────────────────────────────────────────
+
+const oneOffSchema = z
+  .object({
+    name: z.string().trim().min(1, "Name is required"),
+    total: money.positive("Enter a total above zero"),
+    accountId: id,
+    startDate: isoDate,
+    finishDate: isoDate,
+    outMode: z.enum(ONE_OFF_OUT_MODES),
+    outEvery: z.enum(ONE_OFF_FREQUENCIES).optional(),
+    inEvery: z.enum(ONE_OFF_FREQUENCIES),
+    setAside: z
+      .union([z.literal(""), money.nonnegative("Enter what's already set aside")])
+      .transform((v) => (v === "" ? 0 : v)),
+    note: optionalText,
+  })
+  .refine((o) => o.finishDate >= o.startDate, {
+    message: "The finish date can't be before the start",
+  })
+  .refine((o) => o.outMode === "single" || o.outEvery, {
+    message: "Choose how often it's paid out",
+  })
+
+export async function saveOneOff(form: FormData) {
+  return run(async () => {
+    const data = oneOffSchema.parse(fields(form))
+    const row = {
+      name: data.name,
+      total: data.total,
+      account_id: data.accountId,
+      start_date: data.startDate,
+      finish_date: data.finishDate,
+      out_mode: data.outMode,
+      out_every: data.outMode === "spread" ? data.outEvery : null,
+      in_every: data.inEvery,
+      set_aside: data.setAside,
+      note: data.note,
+    }
+    const db = await getDb()
+    const oneOffId = form.get("id") ? id.parse(form.get("id")) : null
+    if (oneOffId) {
+      const updated = await must<{ id: number }[]>(
+        db.from("one_offs").update(row).eq("id", oneOffId).select("id")
+      )
+      if (updated.length === 0) throw new Error("One-off payment not found")
+      // only transactions in its own account count, so moving it drops the others
+      const links = await must<{ transactionId: number; tx: { accountId: number } }[]>(
+        db
+          .from("one_off_transactions")
+          .select("transactionId:transaction_id, tx:transactions(accountId:account_id)")
+          .eq("one_off_id", oneOffId)
+      )
+      const stale = links.filter((l) => l.tx.accountId !== data.accountId)
+      if (stale.length > 0) {
+        await must(
+          db
+            .from("one_off_transactions")
+            .delete()
+            .in("transaction_id", stale.map((l) => l.transactionId))
+        )
+      }
+      return { id: oneOffId }
+    }
+    return { id: await insertId(db, "one_offs", row) }
+  })
+}
+
+export async function deleteOneOff(oneOffId: number) {
+  return run(async () => {
+    const deleted = await must<{ id: number }[]>(
+      (await getDb()).from("one_offs").delete().eq("id", id.parse(oneOffId)).select("id")
+    )
+    if (deleted.length === 0) throw new Error("One-off payment not found")
+    return {}
+  })
+}
+
+/** Count these transactions towards a one-off; each must be in its account. */
+export async function linkOneOffTransactions(oneOffId: number, transactionIds: number[]) {
+  return run(async () => {
+    const ids = z.array(id).min(1, "Choose a transaction").parse(transactionIds)
+    const db = await getDb()
+    const oneOff = await must<{ accountId: number } | null>(
+      db.from("one_offs").select("accountId:account_id").eq("id", id.parse(oneOffId)).maybeSingle()
+    )
+    if (!oneOff) throw new Error("One-off payment not found")
+    const txs = await must<{ id: number }[]>(
+      db.from("transactions").select("id").in("id", ids).eq("account_id", oneOff.accountId)
+    )
+    if (txs.length !== ids.length) {
+      throw new Error("Only transactions in the one-off's account can count towards it")
+    }
+    try {
+      await must(
+        db.from("one_off_transactions").insert(
+          ids.map((t) => ({ one_off_id: oneOffId, transaction_id: t }))
+        )
+      )
+    } catch (err) {
+      if (err instanceof DbError && err.code === "23505") {
+        throw new Error("A transaction already counts towards a one-off payment")
+      }
+      throw err
+    }
+    return { count: ids.length }
+  })
+}
+
+export async function unlinkOneOffTransaction(transactionId: number) {
+  return run(async () => {
+    await must(
+      (await getDb())
+        .from("one_off_transactions")
+        .delete()
+        .eq("transaction_id", id.parse(transactionId))
+    )
+    return {}
+  })
+}
+
 // ── Auth ────────────────────────────────────────────────────────────────────
 
 const signInSchema = z.object({
@@ -1140,15 +1264,21 @@ export async function decideAuthorization(authorizationId: string, approve: bool
   })
 }
 
-/** Your name, shown to the household and to Cas. */
-export async function saveMyPrefs(prefs: { name: string }) {
+/** Your name and the view the app opens on for you. */
+export async function saveMyPrefs(prefs: { name: string; homeView: string }) {
   return run(async () => {
-    const { name } = z.object({ name: z.string().trim().max(40) }).parse(prefs)
+    const { name, homeView } = z
+      .object({
+        name: z.string().trim().max(40),
+        homeView: z.enum(HOME_VIEWS),
+      })
+      .parse(prefs)
     const db = await getDb()
     await must(
       db.from("user_prefs").upsert({
         user_id: await getUserId(db),
         name: name || null,
+        home_view: homeView,
         updated_at: new Date().toISOString(),
       })
     )

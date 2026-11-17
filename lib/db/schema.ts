@@ -201,6 +201,57 @@ export type OneOff = {
   createdAt: string
 }
 
+export const PLAN_VERDICTS = ["realistic", "stretch", "unrealistic"] as const
+export type PlanVerdict = (typeof PLAN_VERDICTS)[number]
+
+export const PLAN_PURPOSES = ["bills", "budget", "one_off", "savings", "goal", "buffer"] as const
+export type PlanPurpose = (typeof PLAN_PURPOSES)[number]
+
+export const PLAN_EVERY = ["week", "fortnight", "month", "once"] as const
+export type PlanEvery = (typeof PLAN_EVERY)[number]
+
+/** The monthly figures a plan was made from. */
+export type PlanFigures = {
+  income: number
+  /** recurring bills and day-to-day spending: each category's budget, else its projection */
+  committed: number
+  /** put aside each month for one-off payments */
+  oneOffs: number
+  /** income less committed less one-offs */
+  leftOver: number
+}
+
+/** A plan Cas made (plans). The newest is the current one. */
+export type Plan = {
+  id: number
+  goals: string | null
+  summary: string
+  verdict: PlanVerdict
+  verdictNote: string
+  goalChecks: { goal: string; fits: boolean; note: string }[]
+  figures: PlanFigures
+  madeBy: "website" | "mcp"
+  createdAt: string
+}
+
+/** An allocation or action on a plan (plan_items). */
+export type PlanItem = {
+  id: number
+  planId: number
+  kind: "allocation" | "action"
+  purpose: PlanPurpose | null
+  title: string
+  detail: string | null
+  amount: number | null
+  every: PlanEvery | null
+  categoryId: number | null
+  oneOffId: number | null
+  accountId: number | null
+  dueDate: string | null
+  doneAt: string | null
+  position: number
+}
+
 export const NOTE_KINDS = ["observation", "decision", "preference", "todo"] as const
 export type NoteKind = (typeof NOTE_KINDS)[number]
 

@@ -4,8 +4,12 @@ import {
   ArrowRightIcon,
   TagIcon,
   UploadSimpleIcon,
+  UserIcon,
 } from "@phosphor-icons/react/ssr"
 
+import { BudgetTrackingCard, OneOffTrackingCard, ThisMonthCard } from "./month-tracking"
+import { monthOf, trackBudgets, weekOf } from "./tracking"
+import { ViewSwitch } from "./view-switch"
 import { LogPanel } from "@/app/log-panel"
 import { CashflowChart, CategorySpendChart } from "@/components/charts"
 import { MonthPicker } from "@/components/month-picker"
@@ -34,7 +38,6 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty"
-import { Progress } from "@/components/ui/progress"
 import {
   ACCOUNT_TYPE_LABELS,
   formatDate,
@@ -44,20 +47,30 @@ import {
   parsePeriod,
   PERIOD_LABELS,
   PERIOD_SUFFIX,
-  type MoneyFormat,
 } from "@/lib/format"
+import { getUserId } from "@/lib/db"
+import { planOneOff } from "@/lib/one-offs"
 import {
+  getAccountHolders,
   getAccountsWithBalances,
   getCategories,
   getCategorySpend,
+  getCategorySpendBetween,
+  getCategorySpendFor,
+  getCategorySpendForBetween,
   getLatestMonth,
+  getMonthCashflow,
   getMonthlyCashflow,
+  getMyPrefs,
+  getOneOffs,
+  getPeople,
   getSettings,
   getTransactionMonths,
   getUncategorizedCount,
   getUpcomingExpenses,
 } from "@/lib/queries"
 import { cn } from "@/lib/utils"
+import { parseView } from "@/lib/views"
 import { todayLocal } from "@/supabase/functions/_shared/akahu"
 
 const MAX_CATEGORY_BARS = 10
@@ -70,14 +83,31 @@ export const metadata: Metadata = { title: "Overview" }
 export default async function OverviewPage({
   searchParams,
 }: {
-  searchParams: Promise<{ month?: string; per?: string }>
+  searchParams: Promise<{ month?: string; per?: string; view?: string }>
 }) {
-  const [{ month: monthParam, per }, fmt, months, latest] = await Promise.all([
+  const userId = await getUserId()
+  const [params, fmt, months, latest, prefs, people, holders] = await Promise.all([
     searchParams,
     getSettings(),
     getTransactionMonths(),
     getLatestMonth(),
+    getMyPrefs(userId),
+    getPeople(),
+    getAccountHolders(),
   ])
+  const { month: monthParam, per } = params
+  // you open on your own view or the family's, as you chose in Settings
+  const parsed = parseView(params.view)
+  const view = parsed === "me" || parsed === "family" ? parsed : prefs.homeView
+  const myName = prefs.name ?? people.find((p) => p.id === userId)?.name ?? "Me"
+  const mine = [...holders].filter(([, h]) => h === userId).map(([id]) => id)
+  const scoped = view === "me" ? mine : null
+
+  // this month and this week, whatever month the rest of the page shows
+  const today = todayLocal()
+  const thisMonthKey = today.slice(0, 7)
+  const week = weekOf(today)
+  const monthRange = monthOf(today)
   const month =
     monthParam && /^\d{4}-\d{2}$/.test(monthParam)
       ? monthParam
@@ -93,6 +123,10 @@ export default async function OverviewPage({
     categories,
     uncategorized,
     upcoming,
+    nowCashflow,
+    monthSpendNow,
+    weekSpendNow,
+    { oneOffs },
   ] = await Promise.all([
     getAccountsWithBalances(),
     getMonthlyCashflow(month, 12),
@@ -100,6 +134,12 @@ export default async function OverviewPage({
     getCategories(),
     getUncategorizedCount(),
     getUpcomingExpenses(),
+    getMonthCashflow(thisMonthKey, scoped ?? undefined),
+    scoped ? getCategorySpendFor(thisMonthKey, scoped) : getCategorySpend(thisMonthKey),
+    scoped
+      ? getCategorySpendForBetween(week.start, week.end, scoped)
+      : getCategorySpendBetween(week.start, week.end),
+    getOneOffs(),
   ])
 
   if (accounts.length === 0 || months.length === 0) {
@@ -146,27 +186,34 @@ export default async function OverviewPage({
     })
   }
 
-  const spentByCategory = new Map(spend.map((s) => [s.id, s.spent]))
-  const budgets = categories
-    .filter(
-      (c) => c.kind === "expense" && c.monthlyBudget && c.monthlyBudget > 0
-    )
-    .map((c) => ({
-      id: c.id,
-      name: c.name,
-      budget: c.monthlyBudget!,
-      spent: Math.max(spentByCategory.get(c.id) ?? 0, 0),
-    }))
-    .sort((a, b) => b.spent / b.budget - a.spent / a.budget)
+  const byId = (rows: { id: number | null; spent: number }[]) =>
+    new Map(rows.flatMap((r) => (r.id === null ? [] : [[r.id, r.spent] as const])))
+  const tracked = trackBudgets(
+    categories,
+    { month: byId(monthSpendNow), week: byId(weekSpendNow) },
+    today
+  )
+  const mineSet = new Set(mine)
+  const oneOffItems = oneOffs
+    .filter((o) => !scoped || mineSet.has(o.accountId))
+    .map((o) => ({ oneOff: o, plan: planOneOff(o, o.linked, today) }))
+  const accountName = (id: number) => accounts.find((a) => a.id === id)?.name ?? "Unknown account"
+  const shown = scoped ? active.filter((a) => mineSet.has(a.id)) : active
+  const dayMonth = (d: string) => formatDate(d, fmt.locale).replace(/[,\s]*\d{4}$/, "")
+  const monthLabel = formatMonth(thisMonthKey, fmt.locale)
+  const scopeLabel = scoped ? "from your accounts" : null
 
   return (
     <>
       <PageHeader
         title="Overview"
-        description="Transfers between your accounts are excluded from income and spending."
+        description={
+          view === "me"
+            ? `${myName}'s money: the accounts marked as yours.`
+            : "The whole household's money."
+        }
       >
-        <PeriodPicker value={period} />
-        <MonthPicker months={monthOptions} value={month} />
+        <ViewSwitch view={view} me={myName} params={params} />
       </PageHeader>
 
       {uncategorized > 0 && (
@@ -189,19 +236,66 @@ export default async function OverviewPage({
         </Alert>
       )}
 
+      {scoped && scoped.length === 0 ? (
+        <Alert>
+          <UserIcon />
+          <AlertTitle>No accounts are marked as yours yet</AlertTitle>
+          <AlertDescription>
+            Mark whose each account is, and this view shows your own money in and
+            out, budgets and one-offs. Joint accounts stay in the family view.
+          </AlertDescription>
+          <AlertAction>
+            <Button size="sm" variant="outline" nativeButton={false} render={<Link href="/accounts" />}>
+              Mark accounts
+            </Button>
+          </AlertAction>
+        </Alert>
+      ) : (
+        <>
+          <ThisMonthCard
+            income={nowCashflow.income}
+            expense={nowCashflow.expense}
+            monthLabel={`${dayMonth(monthRange.start)} – ${dayMonth(today)}`}
+            scope={scoped ? "from your accounts" : "the whole household"}
+            fmt={fmt}
+          />
+          <div className="grid items-start gap-6 lg:grid-cols-2">
+            <BudgetTrackingCard
+              budgets={tracked}
+              weekLabel={`Week of ${dayMonth(week.start)}`}
+              monthLabel={monthLabel}
+              scope={scopeLabel}
+              fmt={fmt}
+            />
+            <OneOffTrackingCard
+              items={oneOffItems}
+              accountName={accountName}
+              scope={scoped ? "Paid from your accounts" : null}
+              fmt={fmt}
+            />
+          </div>
+        </>
+      )}
+
       <section className="grid gap-4" aria-labelledby="vitals-heading">
-        <div className="flex flex-wrap items-baseline justify-between gap-x-4">
-          <h2
-            id="vitals-heading"
-            className="font-heading text-lg font-semibold"
-          >
-            Vitals
-          </h2>
-          {dataEnd && (
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2
+              id="vitals-heading"
+              className="font-heading text-lg font-semibold"
+            >
+              Household, month by month
+            </h2>
             <p className="text-sm text-muted-foreground">
-              Data up to {formatDate(dataEnd, fmt.locale)}
+              Everyone&rsquo;s accounts. Transfers between your accounts are
+              excluded from income and spending.
+              {dataEnd && ` Data up to ${formatDate(dataEnd, fmt.locale)}.`}
             </p>
-          )}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <PeriodPicker value={period} />
+            <MonthPicker months={monthOptions} value={month} />
+          </div>
         </div>
         <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3">
           <StatCard
@@ -302,32 +396,7 @@ export default async function OverviewPage({
         <div className="grid content-start gap-6 lg:col-span-2">
           <Card>
             <CardHeader>
-              <CardTitle>Budgets</CardTitle>
-              <CardDescription>
-                {formatMonth(month, fmt.locale)}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="grid gap-4">
-              {budgets.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  Set monthly budgets on{" "}
-                  <Link
-                    href="/categories"
-                    className="underline underline-offset-4"
-                  >
-                    expense categories
-                  </Link>{" "}
-                  to track them here.
-                </p>
-              ) : (
-                budgets.map((b) => <BudgetRow key={b.id} {...b} fmt={fmt} />)
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Accounts</CardTitle>
+              <CardTitle>{scoped ? "Your accounts" : "Accounts"}</CardTitle>
               <CardAction>
                 <Button
                   variant="ghost"
@@ -342,7 +411,7 @@ export default async function OverviewPage({
             </CardHeader>
             <CardContent>
               <ul className="grid gap-3 text-sm">
-                {active.map((a) => (
+                {shown.map((a) => (
                   <li
                     key={a.id}
                     className="flex items-baseline justify-between gap-4"
@@ -395,44 +464,6 @@ function StatCard({
         {hint}
       </CardContent>
     </Card>
-  )
-}
-
-function BudgetRow({
-  name,
-  budget,
-  spent,
-  fmt,
-}: {
-  name: string
-  budget: number
-  spent: number
-  fmt: MoneyFormat
-}) {
-  const ratio = spent / budget
-  const over = ratio > 1
-  return (
-    <div className="grid gap-1.5">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5 text-sm">
-        <span className="font-medium">{name}</span>
-        <span
-          className={cn(
-            "tabular-nums",
-            over ? "text-destructive" : "text-muted-foreground"
-          )}
-        >
-          {formatMoney(spent, fmt)} of {formatMoney(budget, fmt)}
-          {over && " · over"}
-        </span>
-      </div>
-      <Progress
-        value={Math.min(ratio, 1) * 100}
-        aria-label={`${name}: ${Math.round(ratio * 100)}% of budget`}
-        className={cn(
-          over && "[&_[data-slot=progress-indicator]]:bg-destructive"
-        )}
-      />
-    </div>
   )
 }
 

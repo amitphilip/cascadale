@@ -68,15 +68,15 @@ describe("planOneOff", () => {
   })
 
   test("spread payments: each is funded by the contributions since the one before", () => {
-    const o = oneOff({ total: 600, outMode: "spread", outEvery: "month", inEvery: "fortnight", startDate: "2027-01-01" })
-    const plan = planOneOff(o, [], "2027-01-01")
+    const o = oneOff({ total: 600, outMode: "spread", outEvery: "month", inEvery: "fortnight", startDate: "2027-01-02" })
+    const plan = planOneOff(o, [], "2027-01-02")
     expect(plan.moves).toEqual([
-      { date: "2027-01-01", kind: "in", amount: 100 },
-      { date: "2027-01-15", kind: "in", amount: 100 },
-      { date: "2027-01-29", kind: "in", amount: 100 },
+      { date: "2027-01-02", kind: "in", amount: 100 },
+      { date: "2027-01-16", kind: "in", amount: 100 },
+      { date: "2027-01-30", kind: "in", amount: 100 },
       { date: "2027-02-01", kind: "out", amount: 300 },
-      { date: "2027-02-12", kind: "in", amount: 150 },
-      { date: "2027-02-26", kind: "in", amount: 150 },
+      { date: "2027-02-13", kind: "in", amount: 150 },
+      { date: "2027-02-27", kind: "in", amount: 150 },
       { date: "2027-03-01", kind: "out", amount: 300 },
     ])
   })
@@ -103,9 +103,9 @@ describe("planOneOff", () => {
   test("held money pays the earliest payments first, and more than enough is a surplus", () => {
     const o = oneOff({ total: 600, outMode: "spread", outEvery: "month", startDate: "2027-01-01" })
     const plan = planOneOff(o, [tx(1, "2027-01-01", 450)], "2027-01-01")
+    // 200 a month: the 450 covers January and February and 50 of March
     expect(plan.moves.filter((m) => m.kind === "in")).toEqual([
-      { date: "2027-02-01", kind: "in", amount: 75 },
-      { date: "2027-03-01", kind: "in", amount: 75 },
+      { date: "2027-03-01", kind: "in", amount: 150 },
     ])
     expect(planOneOff(o, [tx(1, "2027-01-01", 700)], "2027-01-01").surplus).toBe(100)
   })

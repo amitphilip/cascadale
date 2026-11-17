@@ -2,6 +2,7 @@ import type { Metadata } from "next"
 import { BankIcon, PlusIcon } from "@phosphor-icons/react/ssr"
 
 import { AccountActions } from "./account-actions"
+import { AccountHolderSelect } from "./account-holder-select"
 import { AccountDialog } from "@/components/account-dialog"
 import { AkahuSyncButton } from "@/components/akahu-sync-button"
 import { PageHeader } from "@/components/page-header"
@@ -27,15 +28,22 @@ import {
 } from "@/components/ui/table"
 import { getAkahuStatus } from "@/lib/akahu"
 import { ACCOUNT_TYPE_LABELS, formatDate, formatMoney } from "@/lib/format"
-import { getAccountsWithBalances, getSettings } from "@/lib/queries"
+import {
+  getAccountHolders,
+  getAccountsWithBalances,
+  getPeople,
+  getSettings,
+} from "@/lib/queries"
 
 export const metadata: Metadata = { title: "Accounts" }
 
 export default async function AccountsPage() {
-  const [accounts, fmt, akahu] = await Promise.all([
+  const [accounts, fmt, akahu, people, holders] = await Promise.all([
     getAccountsWithBalances(),
     getSettings(),
     getAkahuStatus(),
+    getPeople(),
+    getAccountHolders(),
   ])
   const active = accounts.filter((a) => !a.archived)
   const netWorth = active.reduce((s, a) => s + a.balance, 0)
@@ -51,7 +59,7 @@ export default async function AccountsPage() {
     <>
       <PageHeader
         title="Accounts"
-        description="Balances are the opening balance plus every recorded transaction."
+        description="Balances are the opening balance plus every recorded transaction. Mark whose each account is, so each person's own view on the Overview shows theirs."
       >
         {akahu && <AkahuSyncButton />}
         <AccountDialog trigger={addButton} />
@@ -95,6 +103,10 @@ export default async function AccountsPage() {
                   </span>
                   <span className="font-medium tabular-nums">{formatMoney(a.balance, fmt)}</span>
                 </div>
+                <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 text-sm">
+                  <span className="text-muted-foreground">Whose</span>
+                  <AccountHolderSelect account={a} holderId={holders.get(a.id) ?? null} people={people} />
+                </div>
               </CardContent>
             </Card>
           ))}
@@ -112,6 +124,7 @@ export default async function AccountsPage() {
                   <TableHead>Type</TableHead>
                   <TableHead className="text-right">Transactions</TableHead>
                   <TableHead>Latest</TableHead>
+                  <TableHead>Whose</TableHead>
                   <TableHead className="text-right">Balance</TableHead>
                   <TableHead className="pr-4" />
                 </TableRow>
@@ -135,6 +148,9 @@ export default async function AccountsPage() {
                     <TableCell className="text-muted-foreground">
                       {a.lastDate ? formatDate(a.lastDate, fmt.locale) : "—"}
                     </TableCell>
+                    <TableCell>
+                      <AccountHolderSelect account={a} holderId={holders.get(a.id) ?? null} people={people} />
+                    </TableCell>
                     <TableCell className="text-right font-medium tabular-nums">
                       {formatMoney(a.balance, fmt)}
                     </TableCell>
@@ -146,7 +162,7 @@ export default async function AccountsPage() {
               </TableBody>
               <TableFooter>
                 <TableRow>
-                  <TableCell className="pl-4" colSpan={4}>
+                  <TableCell className="pl-4" colSpan={5}>
                     Net worth (active accounts)
                   </TableCell>
                   <TableCell className="text-right font-semibold tabular-nums">
