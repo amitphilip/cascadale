@@ -8,7 +8,7 @@ import {
 } from "@phosphor-icons/react/ssr"
 
 import { BudgetTrackingCard, OneOffTrackingCard, ThisMonthCard } from "./month-tracking"
-import { monthOf, trackBudgets, weekOf } from "./tracking"
+import { monthOf, trackBudgets, weekOf } from "@/lib/budget-tracking"
 import { ViewSwitch } from "./view-switch"
 import { LogPanel } from "@/app/log-panel"
 import { CashflowChart, CategorySpendChart } from "@/components/charts"
@@ -67,7 +67,6 @@ import {
   getSettings,
   getTransactionMonths,
   getUncategorizedCount,
-  getUpcomingExpenses,
 } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 import { parseView } from "@/lib/views"
@@ -122,7 +121,6 @@ export default async function OverviewPage({
     spend,
     categories,
     uncategorized,
-    upcoming,
     nowCashflow,
     monthSpendNow,
     weekSpendNow,
@@ -133,7 +131,6 @@ export default async function OverviewPage({
     getCategorySpend(month),
     getCategories(),
     getUncategorizedCount(),
-    getUpcomingExpenses(),
     getMonthCashflow(thisMonthKey, scoped ?? undefined),
     scoped ? getCategorySpendFor(thisMonthKey, scoped) : getCategorySpend(thisMonthKey),
     scoped
@@ -333,14 +330,7 @@ export default async function OverviewPage({
       <LogPanel
         accounts={active.map((a) => ({ id: a.id, name: a.name }))}
         fmt={fmt}
-        upcoming={upcoming.map((u) => ({
-          id: u.id,
-          name: u.name,
-          amount: u.amount,
-          dueDate: u.dueDate,
-          accountId: u.accountId,
-          note: u.note,
-        }))}
+        today={today}
       />
 
       <Card>

@@ -1,21 +1,25 @@
 import "server-only"
 
-import { differenceInHours, parseISO } from "date-fns"
+import { addDays, differenceInHours, format, parseISO } from "date-fns"
 import { z } from "zod"
 
 import {
   categorizeMerchant,
   deleteAsset,
+  linkOneOffTransactions,
   reconcileAccount,
   runAutoCategorize,
   saveAsset,
-  saveUpcomingExpense,
+  saveOneOff,
   setCategoryBudgets,
   setTransactionCategory,
   syncAkahu,
+  unlinkOneOffTransaction,
   type ActionResult,
 } from "@/app/actions"
 import { getAkahuOverview, type AkahuOverview } from "@/lib/akahu"
+import { budgetPeriod, freshCategories } from "@/lib/budget-percent"
+import { monthOf, trackBudgets, weekOf, type Range } from "@/lib/budget-tracking"
 import { tool, isoDate, type CasTool } from "@/lib/cas/tool"
 import { loadDataHealth } from "@/lib/data-health"
 import { COLUMNS, getDb, must } from "@/lib/db"
@@ -23,10 +27,15 @@ import {
   ASSET_KINDS,
   BUDGET_PERIODS,
   NOTE_KINDS,
+  ONE_OFF_FREQUENCIES,
+  ONE_OFF_OUT_MODES,
   type CasNote,
+  type OneOff,
 } from "@/lib/db/schema"
 import { makePlan } from "@/lib/cas/plan"
 import { buildNetWorth } from "@/lib/net-worth"
+import { planOneOff } from "@/lib/one-offs"
+import { oneOffFigure } from "@/lib/plan-figures"
 import { getCurrentPlan } from "@/lib/plan-data"
 import { loadPlanInputs } from "@/lib/plan-inputs"
 import {
@@ -36,16 +45,17 @@ import {
   getCategoriesWithUsage,
   getCategorizationStats,
   getCategorySpend,
+  getCategorySpendBetween,
   getIncomeStatement,
   getLatestMonth,
   getMonthCashflow,
   getMonthlyCashflow,
+  getOneOffs,
   getRuleReview,
   getSettings,
   getStatements,
   getTransactions,
   getUncategorizedMerchants,
-  getUpcomingExpenses,
   PAGE_SIZE,
 } from "@/lib/queries"
 import { todayLocal } from "@/supabase/functions/_shared/akahu"
@@ -124,23 +134,117 @@ async function notes(includeResolved = false) {
   return must<CasNote[]>(query)
 }
 
+const round2 = (n: number) => Math.round(n * 100) / 100
+
+/** What the one-off fields mean, for the tools that return them. */
+const ONE_OFF_FIELDS =
+  "total is the whole amount to pay; paidIn is what's gone into its account for it (setAside, what was already there when it was added, plus linked money in); paidOut is linked money paid out; held = paidIn − paidOut, what's in the account for it now; remaining = total − paidOut, still to pay (held doesn't reduce it: held money is paid out of it later); toPutIn is what still has to go in by the plan; monthlyNeed is toPutIn spread over the months to its last contribution; needNow is what's needed before the next scheduled contribution to make a payment; status is on_track, catch_up (money needed now), overdue (finish date passed with some left) or paid. Only transactions linked to it count, and only ones in its own account."
+
+/**
+ * Every one-off payment with where it stands and what it needs, from the transactions linked
+ * to it. `detail` adds the planned moves, the linked transactions and the ones in its
+ * account that could be linked.
+ */
+async function oneOffPayments(detail: boolean) {
+  const today = todayLocal()
+  const [{ oneOffs, unlinked }, accounts] = await Promise.all([getOneOffs(), getAccountsWithBalances()])
+  const account = new Map(accounts.map((a) => [a.id, a]))
+  return oneOffs.map((o) => {
+    const plan = planOneOff(o, o.linked, today)
+    const figure = oneOffFigure(o, plan, today)
+    return {
+      oneOffId: o.id,
+      name: o.name,
+      account: account.get(o.accountId)?.name ?? null,
+      accountId: o.accountId,
+      accountBalance: account.get(o.accountId)?.balance ?? null,
+      total: o.total,
+      startDate: o.startDate,
+      finishDate: o.finishDate,
+      paidOutHow: o.outMode === "spread" ? `in parts every ${o.outEvery}, the last on finishDate` : "in one go on finishDate",
+      putInEvery: o.inEvery,
+      setAside: o.setAside,
+      note: o.note,
+      status: plan.status,
+      paidIn: plan.paidIn,
+      paidOut: plan.paidOut,
+      held: plan.held,
+      remaining: plan.remaining,
+      surplus: plan.surplus,
+      toPutIn: plan.toPutIn,
+      monthlyNeed: figure.monthly,
+      needNow: figure.needNow,
+      nextMoves: plan.moves.slice(0, detail ? 12 : 3),
+      ...(detail && {
+        linkedTransactions: o.linked,
+        linkable: unlinked
+          .filter((t) => t.accountId === o.accountId && t.date >= o.startDate)
+          .slice(0, 30)
+          .map(({ id, date, description, amount }) => ({ id, date, description, amount })),
+      }),
+    }
+  })
+}
+
+const lastDay = (r: Range) => format(addDays(parseISO(r.end), -1), "yyyy-MM-dd")
+
+/**
+ * Each budget against its own period, this week (Monday to Sunday) or this calendar month,
+ * with percentage budgets first brought in step with projected income.
+ */
+async function budgetProgress() {
+  const today = todayLocal()
+  const week = weekOf(today)
+  const month = monthOf(today)
+  const [{ categories, income }, monthSpend, weekSpend] = await Promise.all([
+    freshCategories(),
+    getCategorySpendBetween(month.start, month.end),
+    getCategorySpendBetween(week.start, week.end),
+  ])
+  const byId = (rows: { id: number | null; spent: number }[]) =>
+    new Map(rows.flatMap((r) => (r.id === null ? [] : [[r.id, r.spent] as const])))
+  const budgets = trackBudgets(categories, { month: byId(monthSpend), week: byId(weekSpend) }, today)
+  const budgeted = new Set(budgets.map((b) => b.id))
+  return {
+    today,
+    week: { from: week.start, to: lastDay(week) },
+    month: { from: month.start, to: lastDay(month) },
+    projectedMonthlyIncome: income === null ? null : round2(income),
+    budgets: budgets.map((b) => ({
+      categoryId: b.id,
+      name: b.name,
+      period: b.period,
+      budget: round2(b.budget),
+      percentOfIncome: b.percent,
+      spent: round2(b.spent),
+      left: round2(b.left),
+      expectedByNow: round2(b.expected),
+      pace: b.pace,
+    })),
+    unbudgetedThisMonth: monthSpend
+      .filter((r) => r.spent > 0 && (r.id === null || !budgeted.has(r.id)))
+      .map((r) => ({ categoryId: r.id, name: r.name, spent: round2(r.spent) })),
+  }
+}
+
 export const TOOLS: CasTool[] = [
   tool({
     name: "get_briefing",
     title: "Briefing",
     access: "read",
     description:
-      "Start here. Everything happening right now in one call: bank feed health, this month's money in and out so far, upcoming one-offs, what needs categorizing, and Cas's open notes and to-dos. Includes data_health: check it before relying on the numbers.",
+      "Start here. Everything happening right now in one call: bank feed health, this month's money in and out so far, projected monthly income, each budget against its own period (this week for a weekly one, this month for a monthly one), the one-off payments still to pay, what needs categorizing, and Cas's open notes and to-dos. Includes data_health: check it before relying on the numbers.",
     run: async () => {
       const overview = await getAkahuOverview().catch(
         (err: Error): AkahuOverview => ({ connected: true, error: err.message, accounts: [] })
       )
       const thisMonth = todayLocal().slice(0, 7)
-      const [sync, cashflow, upcoming, categorization, merchants, lowRules, open, health] =
+      const [sync, cashflow, budgets, oneOffs, categorization, merchants, lowRules, open, health] =
         await Promise.all([
           syncStatus(overview).catch((err: Error) => ({ error: err.message })),
           getMonthCashflow(thisMonth),
-          getUpcomingExpenses(),
+          budgetProgress(),
+          oneOffPayments(false),
           getCategorizationStats(),
           getUncategorizedMerchants(),
           getRuleReview("low"),
@@ -151,7 +255,13 @@ export const TOOLS: CasTool[] = [
         today: todayLocal(),
         sync,
         thisMonth: { month: thisMonth, ...cashflow },
-        upcomingOneOffs: upcoming,
+        projectedMonthlyIncome: budgets.projectedMonthlyIncome,
+        budgets: {
+          week: budgets.week,
+          budgets: budgets.budgets,
+          unbudgetedThisMonth: budgets.unbudgetedThisMonth,
+        },
+        oneOffPayments: oneOffs.filter((o) => o.status !== "paid"),
         categorization: {
           ...categorization,
           topUncategorizedMerchants: merchants.slice(0, 10),
@@ -234,8 +344,15 @@ export const TOOLS: CasTool[] = [
     title: "Categories",
     access: "read",
     description:
-      "Every category with its kind (expense, income or transfer), budget (monthlyBudget, plus weeklyBudget when the budget is weekly) and number of transactions. Use the ids to filter or recategorize transactions.",
-    run: getCategoriesWithUsage,
+      "Every category with its kind (expense, income or transfer), budget and number of transactions. budgetPeriod is week (Monday to Sunday) or month; weeklyBudget is a weekly budget's own amount and monthlyBudget is always the monthly figure (a weekly one's monthly equivalent). budgetPercent is set when the budget is a percent of projected monthly income; its amounts are what that comes to today. Use the ids to filter or recategorize transactions.",
+    run: async () => {
+      await freshCategories()
+      const categories = await getCategoriesWithUsage()
+      return categories.map((c) => ({
+        ...c,
+        budgetPeriod: c.monthlyBudget === null ? null : budgetPeriod(c),
+      }))
+    },
   }),
 
   tool({
@@ -280,10 +397,10 @@ export const TOOLS: CasTool[] = [
     title: "Spending by category",
     access: "read",
     description:
-      "Net spending per expense category for a month (refunds reduce spend), with each category's monthly budget.",
+      "Net spending per expense category for a calendar month (refunds reduce spend), with each category's monthly budget (a weekly one's monthly equivalent). For this week and this month against each budget's own period, use budget_progress.",
     input: { month },
     run: async (args) => {
-      const m = await monthOrLatest(args.month)
+      const [m] = await Promise.all([monthOrLatest(args.month), freshCategories()])
       return { month: m, categories: await getCategorySpend(m) }
     },
   }),
@@ -319,11 +436,20 @@ export const TOOLS: CasTool[] = [
   }),
 
   tool({
-    name: "upcoming_expenses",
-    title: "Upcoming expenses",
+    name: "budget_progress",
+    title: "Budget progress",
     access: "read",
-    description: "One-off expenses planned from today on, soonest first.",
-    run: getUpcomingExpenses,
+    description:
+      "Each budget against its own period: a weekly one this week (Monday to Sunday), a monthly one this calendar month. budget is the amount for that period, spent is net of refunds, expectedByNow is what an even pace allows so far, pace is over (spent more than the budget), ahead (more than 10% over the even pace) or on_pace. percentOfIncome is set when the budget is a percent of projected monthly income. Also projected monthly income and this month's spending in categories with no budget.",
+    run: budgetProgress,
+  }),
+
+  tool({
+    name: "one_off_payments",
+    title: "One-off payments",
+    access: "read",
+    description: `Every one-off payment, the known costs coming up (a trip, rates, a medical fee): a total gathered in an account and paid out by a finish date, in one go or in parts. Each has where it stands, what it still needs, the next planned moves (money in, payments out), the transactions linked to it, and linkable: transactions in its account since it started that no one-off counts yet. ${ONE_OFF_FIELDS}`,
+    run: () => oneOffPayments(true),
   }),
 
   tool({
@@ -331,7 +457,7 @@ export const TOOLS: CasTool[] = [
     title: "Plan",
     access: "read",
     description:
-      "The household's plan, as the Plan page shows it: Cas's verdict on whether it's realistic (realistic, stretch, unrealistic) with the reason and each goal weighed, where each pay goes (allocations, each with an amount per week, fortnight, month or once, and the budget category or one-off it's for), and the to-do actions (doneAt set when ticked off). Also today's figures it stands on: projected income, bills and budgets, one-off needs, what's left over, and budgets set well below how a category runs. plan is null before Cas has made one.",
+      "The household's plan, as the Plan page shows it: Cas's verdict on whether it's realistic (realistic, stretch, unrealistic) with the reason and each goal weighed, where each pay goes (allocations, each with an amount per week, fortnight, month or once, and the budget category or one-off it's for), and the to-do actions (doneAt set when ticked off). Also today's figures it stands on: projected income, bills and budgets, one-off needs, what's left over, and budgets set well below how a category runs. today.figures are monthly: income (projected), committed (each category's budget, else its projection), projectedSpend (what spending runs at), oneOffs (the one-offs' monthly need), leftOver (income − committed − oneOffs) and leftOverAsProjected (the same with spending as it runs). today.categories has each budget's period and percent of income; today.oneOffs has each one-off payment's figures (see one_off_payments for what they mean). plan is null before Cas has made one.",
     run: async () => {
       const [current, inputs] = await Promise.all([getCurrentPlan(), loadPlanInputs()])
       return {
@@ -562,27 +688,72 @@ export const TOOLS: CasTool[] = [
   }),
 
   tool({
-    name: "add_upcoming_expense",
-    title: "Add an upcoming expense",
+    name: "save_one_off",
+    title: "Add or change a one-off payment",
     access: "action",
     description:
-      "Tell the app about a one-off expense coming up. It shows on the Overview's Coming up list.",
+      "Add a one-off payment, a known cost coming up that money is put aside for in an account, or change one by passing its oneOffId from one_off_payments (fields left out stay as they are). It shows on the One-off payments page and the Overview, and the plan counts its monthly need. Moving it to another account unlinks the transactions in the old one.",
     input: {
-      name: z.string().trim().min(1),
-      amount: z.number().positive().describe("What you expect to pay, as a positive amount"),
-      dueDate: isoDate,
-      accountId: z.number().int().positive().optional().describe("Account it'll be paid from"),
+      oneOffId: z.number().int().positive().optional().describe("The one-off to change; omit to add one"),
+      name: z.string().trim().min(1).optional().describe("What it's for; needed when adding"),
+      total: z.number().positive().optional().describe("The whole amount to pay, positive; needed when adding"),
+      accountId: z.number().int().positive().optional().describe("The account the money is gathered in and paid from; needed when adding"),
+      finishDate: isoDate.optional().describe("When it's paid, or the last part is; needed when adding"),
+      startDate: isoDate.optional().describe("When putting money in starts. Defaults to today when adding."),
+      outMode: z.enum(ONE_OFF_OUT_MODES).optional().describe("single: paid in one go on finishDate (the default); spread: in parts every outEvery until it"),
+      outEvery: z.enum(ONE_OFF_FREQUENCIES).optional().describe("How often a part is paid, for a spread one"),
+      inEvery: z.enum(ONE_OFF_FREQUENCIES).optional().describe("How often money goes in for it. Defaults to month."),
+      setAside: z.number().nonnegative().optional().describe("Already in the account for it, not from a linked transaction"),
       note: z.string().optional(),
     },
-    run: ({ name, amount, dueDate, accountId, note }) => {
+    run: async ({ oneOffId, ...changes }) => {
+      const current = oneOffId
+        ? await must<OneOff | null>(
+            (await getDb()).from("one_offs").select(COLUMNS.oneOffs).eq("id", oneOffId).maybeSingle()
+          )
+        : null
+      if (oneOffId && !current) throw new Error("One-off payment not found")
+      const o = {
+        name: changes.name ?? current?.name,
+        total: changes.total ?? current?.total,
+        accountId: changes.accountId ?? current?.accountId,
+        startDate: changes.startDate ?? current?.startDate ?? todayLocal(),
+        finishDate: changes.finishDate ?? current?.finishDate,
+        outMode: changes.outMode ?? current?.outMode ?? "single",
+        outEvery: changes.outEvery ?? current?.outEvery ?? null,
+        inEvery: changes.inEvery ?? current?.inEvery ?? "month",
+        setAside: changes.setAside ?? current?.setAside ?? 0,
+        note: changes.note ?? current?.note ?? null,
+      }
       const form = new FormData()
-      form.set("name", name)
-      form.set("amount", String(amount))
-      form.set("dueDate", dueDate)
-      if (accountId) form.set("accountId", String(accountId))
-      if (note) form.set("note", note)
-      return act(saveUpcomingExpense(form))
+      if (oneOffId) form.set("id", String(oneOffId))
+      for (const [key, value] of Object.entries(o)) {
+        if (value !== undefined && value !== null) form.set(key, String(value))
+      }
+      return act(saveOneOff(form))
     },
+  }),
+
+  tool({
+    name: "link_one_off_transactions",
+    title: "Count transactions towards a one-off",
+    access: "action",
+    description:
+      "Count transactions towards a one-off payment: money in for it, or a payment out of it. Each must be in the one-off's account and not already count towards another; the linkable list on one_off_payments has them.",
+    input: {
+      oneOffId: z.number().int().positive(),
+      transactionIds: z.array(z.number().int().positive()).min(1),
+    },
+    run: ({ oneOffId, transactionIds }) => act(linkOneOffTransactions(oneOffId, transactionIds)),
+  }),
+
+  tool({
+    name: "unlink_one_off_transaction",
+    title: "Stop counting a transaction towards a one-off",
+    access: "action",
+    description: "Stop counting a transaction towards the one-off payment it's linked to.",
+    input: { transactionId: z.number().int().positive() },
+    run: ({ transactionId }) => act(unlinkOneOffTransaction(transactionId)),
   }),
 
 ]

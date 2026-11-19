@@ -145,8 +145,6 @@ export const COLUMNS = {
     "key, basis, growthRate:growth_rate, amount, excluded, updatedAt:updated_at",
   categoryProjections:
     "categoryId:category_id, basis, growthRate:growth_rate, amount, updatedAt:updated_at",
-  upcomingExpenses:
-    "id, name, amount, dueDate:due_date, accountId:account_id, note, createdAt:created_at",
   oneOffs:
     "id, name, total, accountId:account_id, startDate:start_date, finishDate:finish_date, outMode:out_mode, outEvery:out_every, inEvery:in_every, setAside:set_aside, note, createdAt:created_at",
   plans:

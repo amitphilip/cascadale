@@ -1,40 +1,21 @@
 "use client"
 
 import { useState } from "react"
-import {
-  CalendarPlusIcon,
-  PencilSimpleIcon,
-  TrashIcon,
-  UploadSimpleIcon,
-  XIcon,
-} from "@phosphor-icons/react"
+import { CalendarPlusIcon, UploadSimpleIcon, XIcon } from "@phosphor-icons/react"
 
-import { deleteUpcomingExpense } from "@/app/actions"
 import { ImportWizard } from "@/app/import/import-wizard"
-import { ConfirmDialog } from "@/components/confirm-dialog"
-import {
-  UpcomingDialog,
-  type UpcomingDraft,
-} from "@/components/upcoming-dialog"
+import { OneOffDialog } from "@/components/one-off-dialog"
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import { useServerAction } from "@/hooks/use-server-action"
-import { formatDate, formatMoney, type MoneyFormat } from "@/lib/format"
+import type { MoneyFormat } from "@/lib/format"
 
 export function LogPanel({
   accounts,
   fmt,
-  upcoming,
+  today,
 }: {
   accounts: { id: number; name: string }[]
   fmt: MoneyFormat
-  upcoming: UpcomingDraft[]
+  today: string
 }) {
   const [importing, setImporting] = useState(false)
 
@@ -46,7 +27,7 @@ export function LogPanel({
             Log
           </h2>
           <p className="text-sm text-muted-foreground">
-            Add your latest statements and the one-off costs you know are coming.
+            Add your latest statements and the one-off payments you know are coming.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -61,12 +42,13 @@ export function LogPanel({
             )}
             {importing ? "Close" : "Add statement"}
           </Button>
-          <UpcomingDialog
+          <OneOffDialog
             accounts={accounts}
+            today={today}
             trigger={
-              <Button variant="outline">
+              <Button variant="outline" disabled={accounts.length === 0}>
                 <CalendarPlusIcon data-icon="inline-start" />
-                Upcoming expense
+                One-off payment
               </Button>
             }
           />
@@ -81,94 +63,6 @@ export function LogPanel({
           onImported={() => setImporting(false)}
         />
       )}
-
-      <Card className="min-w-0">
-        <CardHeader>
-          <CardTitle>Coming up</CardTitle>
-          <CardDescription>One-off expenses you added.</CardDescription>
-        </CardHeader>
-        <CardContent className="text-sm">
-          {upcoming.length === 0 ? (
-            <p className="text-muted-foreground">
-              None yet. Add things like a car service, insurance excess or a
-              trip.
-            </p>
-          ) : (
-            <ul className="grid grid-cols-1 gap-2">
-              {upcoming.map((u) => (
-                <UpcomingRow
-                  key={u.id}
-                  expense={u}
-                  accounts={accounts}
-                  fmt={fmt}
-                />
-              ))}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
     </section>
-  )
-}
-
-function UpcomingRow({
-  expense,
-  accounts,
-  fmt,
-}: {
-  expense: UpcomingDraft
-  accounts: { id: number; name: string }[]
-  fmt: MoneyFormat
-}) {
-  const { pending, execute } = useServerAction()
-  const account = accounts.find((a) => a.id === expense.accountId)?.name
-  return (
-    <li className="flex items-center gap-2 rounded-lg border p-2.5">
-      <div className="min-w-0 flex-1">
-        <div className="flex items-baseline justify-between gap-3">
-          <span className="truncate font-medium">{expense.name}</span>
-          <span className="shrink-0 font-medium tabular-nums">
-            {formatMoney(expense.amount, fmt)}
-          </span>
-        </div>
-        <div className="truncate text-xs text-muted-foreground">
-          {formatDate(expense.dueDate, fmt.locale)}
-          {account && ` · ${account}`}
-          {expense.note && ` · ${expense.note}`}
-        </div>
-      </div>
-      <UpcomingDialog
-        expense={expense}
-        accounts={accounts}
-        trigger={
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={`Edit ${expense.name}`}
-          >
-            <PencilSimpleIcon />
-          </Button>
-        }
-      />
-      <ConfirmDialog
-        trigger={
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={`Delete ${expense.name}`}
-            disabled={pending}
-          >
-            <TrashIcon />
-          </Button>
-        }
-        title={`Delete “${expense.name}”?`}
-        description="It will be removed from your upcoming expenses."
-        onConfirm={() =>
-          execute(() => deleteUpcomingExpense(expense.id), {
-            success: "Removed",
-          })
-        }
-      />
-    </li>
   )
 }

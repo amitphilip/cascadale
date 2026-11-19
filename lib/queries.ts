@@ -15,7 +15,6 @@ import type {
   RecurringOverrideRow,
   RuleKind,
   RuleSource,
-  UpcomingExpense,
 } from "@/lib/db/schema"
 import { DEFAULT_MONEY, type MoneyFormat } from "@/lib/format"
 import type {
@@ -27,7 +26,6 @@ import type { LinkedTx } from "@/lib/one-offs"
 import { merchantKey } from "@/lib/rules"
 import type { HomeView, Person } from "@/lib/views"
 import type { WindowTx } from "@/lib/counted-transactions"
-import { todayLocal } from "@/supabase/functions/_shared/akahu"
 
 async function db() {
   await connection()
@@ -116,6 +114,7 @@ export async function getCategoriesWithUsage() {
       kind: CategoryKind
       monthly_budget: number | null
       weekly_budget: number | null
+      budget_percent: number | null
       tx_count: number
     }[]
   >((await db()).rpc("categories_with_usage"))
@@ -125,6 +124,7 @@ export async function getCategoriesWithUsage() {
     kind: r.kind,
     monthlyBudget: r.monthly_budget === null ? null : Number(r.monthly_budget),
     weeklyBudget: r.weekly_budget === null ? null : Number(r.weekly_budget),
+    budgetPercent: r.budget_percent === null ? null : Number(r.budget_percent),
     txCount: r.tx_count,
   }))
 }
@@ -710,17 +710,6 @@ export async function getWindowTransactions(window: AverageWindow) {
 }
 
 /** One-off expenses from today on, soonest first. */
-export async function getUpcomingExpenses() {
-  return must<UpcomingExpense[]>(
-    (await db())
-      .from("upcoming_expenses")
-      .select(COLUMNS.upcomingExpenses)
-      .gte("due_date", todayLocal())
-      .order("due_date")
-      .order("id")
-  )
-}
-
 /**
  * Every one-off payment with the transactions linked to it, and the transactions in their
  * accounts since the earliest start that no one-off has yet, to link.

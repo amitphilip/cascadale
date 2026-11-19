@@ -157,19 +157,6 @@ export type CategoryProjectionRow = {
   updatedAt: string
 }
 
-/** A one-off expense you know is coming, e.g. a car service or a wedding gift. */
-export type UpcomingExpense = {
-  id: number
-  name: string
-  /** positive: the amount you expect to pay */
-  amount: number
-  dueDate: string
-  /** account it will be paid from; null when not decided */
-  accountId: number | null
-  note: string | null
-  createdAt: string
-}
-
 /** How often a one-off's money goes in, or its parts are paid out. */
 export const ONE_OFF_FREQUENCIES = ["week", "fortnight", "month"] as const
 export type OneOffFrequency = (typeof ONE_OFF_FREQUENCIES)[number]

@@ -41,7 +41,7 @@ export default async function ConsentPage({
               <CardDescription>
                 It will be able to see everything in Cascadale (accounts, transactions, bank
                 feeds and budgets) and act on it as {data.user.email}: sync feeds,
-                categorize transactions, set budgets and add upcoming expenses.
+                categorize transactions, set budgets and add one-off payments.
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4">

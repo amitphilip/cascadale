@@ -2,7 +2,7 @@ import { addDays, differenceInCalendarDays, format, parseISO, startOfWeek } from
 
 import type { Category } from "@/lib/db/schema"
 
-// Budget tracking for the Overview: each budget against its own period (a weekly one this
+// Budget tracking, for the Overview and Cas: each budget against its own period (a weekly one this
 // week, Monday to Sunday; a monthly one this calendar month) and how far into it we are.
 
 const iso = (d: Date) => format(d, "yyyy-MM-dd")

@@ -2,7 +2,7 @@ import "server-only"
 
 import { getDb, must } from "@/lib/db"
 import type { BudgetPeriod, Category } from "@/lib/db/schema"
-import { getAverageWindow, getRecurringInputs } from "@/lib/queries"
+import { getAverageWindow, getCategories, getRecurringInputs } from "@/lib/queries"
 import { buildBudget, detectRecurring, parseBasis } from "@/lib/recurring"
 
 // Budgets set as a percentage of projected income. The percentage is kept on the category;
@@ -57,4 +57,16 @@ export async function refreshPercentBudgets(categories: Category[], monthlyIncom
     await must((await getDb()).rpc("set_category_budgets", { p_budgets: stale }))
   }
   return stale.map((s) => s.category_id)
+}
+
+/**
+ * Every category, with its percentage budgets first brought in step with projected monthly
+ * income, so what's read is what the budget comes to today. Also returns that income (null
+ * before there's any data).
+ */
+export async function freshCategories() {
+  const [categories, income] = await Promise.all([getCategories(), projectedMonthlyIncome()])
+  if (!income || income <= 0) return { categories, income }
+  const changed = await refreshPercentBudgets(categories, income)
+  return { categories: changed.length ? await getCategories() : categories, income }
 }

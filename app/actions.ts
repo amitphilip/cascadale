@@ -1007,48 +1007,6 @@ export async function removeApiKey() {
   })
 }
 
-// ── Upcoming expenses ───────────────────────────────────────────────────────
-
-const upcomingSchema = z.object({
-  name: z.string().trim().min(1, "Name is required"),
-  amount: money.positive("Enter an amount above zero"),
-  dueDate: isoDate,
-  accountId: optionalId,
-  note: optionalText,
-})
-
-export async function saveUpcomingExpense(form: FormData) {
-  return run(async () => {
-    const data = upcomingSchema.parse(fields(form))
-    const row = {
-      name: data.name,
-      amount: data.amount,
-      due_date: data.dueDate,
-      account_id: data.accountId,
-      note: data.note,
-    }
-    const db = await await getDb()
-    const expenseId = form.get("id") ? id.parse(form.get("id")) : null
-    if (expenseId) {
-      await must(db.from("upcoming_expenses").update(row).eq("id", expenseId))
-      return { id: expenseId }
-    }
-    return { id: await insertId(db, "upcoming_expenses", row) }
-  })
-}
-
-export async function deleteUpcomingExpense(expenseId: number) {
-  return run(async () => {
-    await must(
-      (await getDb())
-        .from("upcoming_expenses")
-        .delete()
-        .eq("id", id.parse(expenseId))
-    )
-    return {}
-  })
-}
-
 // ── One-off payments ────────────────────────────────────────────────────────
 
 const oneOffSchema = z

@@ -107,7 +107,7 @@ Two MCP servers (Streamable HTTP), each added to claude.ai as its own connector:
 - **Cascadale** has the read tools (`get_briefing`, `get_sync_status`,
   `search_transactions`, …) and the action tools
   (`sync_bank_feeds`, `categorize_merchant`, `set_category_budgets`,
-  `add_upcoming_expense`, …). Actions change your data, and
+  `save_one_off`, …). Actions change your data, and
   Claude is told to ask you first.
 - **Cas** has `ask_cas`, which hands a question to the agent
   ([lib/cas/agent.ts](lib/cas/agent.ts), Claude Opus 5.5 with the

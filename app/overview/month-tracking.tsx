@@ -6,7 +6,7 @@ import {
   CaretRightIcon,
 } from "@phosphor-icons/react/ssr"
 
-import { PACE_LABELS, type BudgetTrack, type Pace } from "./tracking"
+import { PACE_LABELS, type BudgetTrack, type Pace } from "@/lib/budget-tracking"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {

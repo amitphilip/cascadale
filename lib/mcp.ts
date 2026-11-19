@@ -26,11 +26,12 @@ export const MCP_RESOURCES = {
 
 const ACTION_NAMES = TOOLS.filter((t) => t.access === "action").map((t) => t.name)
 
-const TOOLS_INSTRUCTIONS = `Cascadale is the user's budgeting app: bank accounts synced from Akahu, transactions, categories and budgets, recurring bills and upcoming one-off expenses. These tools read that data and act on it directly, through the same services and database as the website.
+const TOOLS_INSTRUCTIONS = `Cascadale is the user's budgeting app: bank accounts synced from Akahu, transactions, categories and budgets, recurring bills and one-off payments. These tools read that data and act on it directly, through the same services and database as the website.
 
 - get_briefing is the best single overview; the other read tools answer specific questions.
 - The plan on the website's Plan page is made by Cas from projected income, budgets, bills and one-off payments: get_plan reads it (verdict, allocations, to-do actions and today's figures), make_plan has Cas redo it from the goals the user gives, and set_plan_action_done ticks off an action.
-- Budgets are weekly (Monday to Sunday) or monthly, a fixed amount or a percent of projected income. set_category_budgets takes period "week" for a weekly one; list_categories shows weeklyBudget on those, and monthlyBudget stays the monthly equivalent everything else reads.
+- Budgets are weekly (Monday to Sunday) or monthly, a fixed amount or a percent of projected income. set_category_budgets takes period "week" for a weekly one; list_categories shows weeklyBudget on those, and monthlyBudget stays the monthly equivalent everything else reads. budget_progress tracks each budget against its own week or month.
+- One-off payments are known costs coming up, gathered in an account and paid by a finish date, in one go or in parts: one_off_payments reads them, save_one_off adds or changes one, and link_one_off_transactions counts a transaction towards one.
 - These tools change the user's real finances: ${ACTION_NAMES.join(", ")}. Confirm with the user before calling one, and tell them what changed from the tool's result.
 - Check data_health (on get_briefing and get_overview) before relying on numbers: name stale accounts and drift from the bank, rather than answering as if the data were current.
 - For advice (how am I doing, what should I do, can I afford X), use the Cas connector's ask_cas if it's connected; it recommends actions that you run here.
