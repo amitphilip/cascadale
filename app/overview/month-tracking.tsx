@@ -140,12 +140,12 @@ export function BudgetTrackingCard({
             , as an amount or a % of income, to track them here.
           </p>
         ) : (
-          <ul className="grid">
+          <ul className="grid grid-cols-1">
             {budgets.map((b) => (
               <li key={b.id} className="border-t first:border-t-0">
                 <Link
                   href={`/recurring#budget-${b.id}`}
-                  className="grid min-h-14 gap-1.5 px-(--card-spacing) py-3 hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none"
+                  className="grid min-h-14 grid-cols-1 gap-1.5 px-(--card-spacing) py-3 hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none"
                   aria-label={`${b.name}: ${formatMoney(b.spent, fmt)} of ${formatMoney(b.budget, fmt)} this ${b.period}, ${PACE_LABELS[b.pace].toLowerCase()}. Edit budget`}
                 >
                   <div className="flex items-baseline justify-between gap-3">
@@ -233,7 +233,7 @@ export function OneOffTrackingCard({
             to save for it in steps.
           </p>
         ) : (
-          <ul className="grid">
+          <ul className="grid grid-cols-1">
             {open.map(({ oneOff: o, plan }) => {
               const status = ONE_OFF_STATUS[plan.status as Exclude<OneOffStatus, "paid">]
               const next = plan.moves[0]
@@ -241,11 +241,11 @@ export function OneOffTrackingCard({
                 <li key={o.id} className="border-t first:border-t-0">
                   <Link
                     href="/one-offs"
-                    className="grid min-h-14 gap-1.5 px-(--card-spacing) py-3 hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none"
+                    className="grid min-h-14 grid-cols-1 gap-1.5 px-(--card-spacing) py-3 hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none"
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <div className="truncate font-medium">{o.name}</div>
+                        <div className="truncate font-medium" title={o.name}>{o.name}</div>
                         <div className="text-xs text-muted-foreground">
                           By {formatDate(o.finishDate, fmt.locale)} · {accountName(o.accountId)}
                         </div>
