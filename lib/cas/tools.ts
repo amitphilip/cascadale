@@ -22,7 +22,7 @@ import { budgetPeriod, freshCategories } from "@/lib/budget-percent"
 import { monthOf, trackBudgets, weekOf, type Range } from "@/lib/budget-tracking"
 import { tool, isoDate, type CasTool } from "@/lib/cas/tool"
 import { loadDataHealth } from "@/lib/data-health"
-import { COLUMNS, getDb, must } from "@/lib/db"
+import { COLUMNS, getDb, getUserId, must } from "@/lib/db"
 import {
   ASSET_KINDS,
   BUDGET_PERIODS,
@@ -39,6 +39,7 @@ import { oneOffFigure } from "@/lib/plan-figures"
 import { getCurrentPlan } from "@/lib/plan-data"
 import { loadPlanInputs } from "@/lib/plan-inputs"
 import {
+  getAccountHolders,
   getAccountsWithBalances,
   getAssets,
   getAverageWindow,
@@ -46,11 +47,14 @@ import {
   getCategorizationStats,
   getCategorySpend,
   getCategorySpendBetween,
+  getCategorySpendFor,
   getIncomeStatement,
   getLatestMonth,
   getMonthCashflow,
   getMonthlyCashflow,
+  getMyPrefs,
   getOneOffs,
+  getPeople,
   getRuleReview,
   getSettings,
   getStatements,
@@ -135,6 +139,32 @@ async function notes(includeResolved = false) {
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100
+
+/**
+ * Whose each account is, as on the Overview's My and Family views: the signed-in person,
+ * the household's people, each account's holder by name (null for joint), and your accounts.
+ */
+async function household() {
+  const userId = await getUserId()
+  const [people, holders, prefs] = await Promise.all([getPeople(), getAccountHolders(), getMyPrefs(userId)])
+  const nameOf = new Map(people.map((p) => [p.id, p.name]))
+  const you = prefs.name ?? nameOf.get(userId) ?? "Me"
+  nameOf.set(userId, you)
+  return {
+    you,
+    people: people.map((p) => (p.id === userId ? { ...p, name: you, isYou: true } : { ...p, isYou: false })),
+    holderOf: (accountId: number) => {
+      const h = holders.get(accountId) ?? null
+      return h === null ? null : (nameOf.get(h) ?? null)
+    },
+    mine: [...holders].filter(([, h]) => h === userId).map(([id]) => id),
+  }
+}
+
+const whose = z
+  .enum(["everyone", "mine"])
+  .optional()
+  .describe('"mine" counts only the accounts marked as yours (the Overview\'s My view); default "everyone" (the Family view)')
 
 /** What the one-off fields mean, for the tools that return them. */
 const ONE_OFF_FIELDS =
@@ -233,16 +263,18 @@ export const TOOLS: CasTool[] = [
     title: "Briefing",
     access: "read",
     description:
-      "Start here. Everything happening right now in one call: bank feed health, this month's money in and out so far, projected monthly income, each budget against its own period (this week for a weekly one, this month for a monthly one), the one-off payments still to pay, what needs categorizing, and Cas's open notes and to-dos. Includes data_health: check it before relying on the numbers.",
+      "Start here. Everything happening right now in one call: bank feed health, this month's money in and out so far, projected monthly income, each budget against its own period (this week for a weekly one, this month for a monthly one), the one-off payments still to pay, what needs categorizing, and Cas's open notes and to-dos. thisMonth is the whole household (the Family view); thisMonth.yours is only the accounts marked as yours (the My view), and you names who's asking. Includes data_health: check it before relying on the numbers.",
     run: async () => {
       const overview = await getAkahuOverview().catch(
         (err: Error): AkahuOverview => ({ connected: true, error: err.message, accounts: [] })
       )
       const thisMonth = todayLocal().slice(0, 7)
-      const [sync, cashflow, budgets, oneOffs, categorization, merchants, lowRules, open, health] =
+      const people = await household()
+      const [sync, cashflow, yours, budgets, oneOffs, categorization, merchants, lowRules, open, health] =
         await Promise.all([
           syncStatus(overview).catch((err: Error) => ({ error: err.message })),
           getMonthCashflow(thisMonth),
+          getMonthCashflow(thisMonth, people.mine),
           budgetProgress(),
           oneOffPayments(false),
           getCategorizationStats(),
@@ -253,8 +285,9 @@ export const TOOLS: CasTool[] = [
         ])
       return {
         today: todayLocal(),
+        you: people.you,
         sync,
-        thisMonth: { month: thisMonth, ...cashflow },
+        thisMonth: { month: thisMonth, ...cashflow, yours: { accounts: people.mine.length, ...yours } },
         projectedMonthlyIncome: budgets.projectedMonthlyIncome,
         budgets: {
           week: budgets.week,
@@ -278,20 +311,24 @@ export const TOOLS: CasTool[] = [
     title: "Accounts",
     access: "read",
     description:
-      "The currency and every account with its current balance (credit cards and loans negative when owed), the latest month with transactions. Each account also has its pending transactions (authorised by the bank, not posted yet, flagged pending) and balanceWithPending, so a payment made minutes ago shows; a pending one drops out once it posts, so nothing counts twice. Amounts are signed: negative is money out. Includes data_health (stale feeds, drift from the bank's balance).",
+      "The currency and every account with its current balance (credit cards and loans negative when owed), the latest month with transactions, and the household's people. Each account has holder, whose it is by name (null for joint), as on the Overview's My and Family views; you names who's asking. Each account also has its pending transactions (authorised by the bank, not posted yet, flagged pending) and balanceWithPending, so a payment made minutes ago shows; a pending one drops out once it posts, so nothing counts twice. Amounts are signed: negative is money out. Includes data_health (stale feeds, drift from the bank's balance).",
     run: async () => {
-      const [settings, accounts, latestMonth, health] = await Promise.all([
+      const [settings, accounts, latestMonth, health, people] = await Promise.all([
         getSettings(),
         getAccountsWithBalances(),
         getLatestMonth(),
         loadDataHealth(),
+        household(),
       ])
       const byId = new Map(health.accounts.map((a) => [a.accountId, a]))
       return {
         ...settings,
         latestMonth,
+        you: people.you,
+        people: people.people,
         accounts: accounts.map((a) => ({
           ...a,
+          holder: people.holderOf(a.id),
           pending: health.pendingTransactions.filter((p) => p.accountId === a.id),
           balanceWithPending: byId.get(a.id)?.balanceWithPending ?? a.balance,
           bankBalance: byId.get(a.id)?.bankBalance ?? null,
@@ -397,11 +434,13 @@ export const TOOLS: CasTool[] = [
     title: "Spending by category",
     access: "read",
     description:
-      "Net spending per expense category for a calendar month (refunds reduce spend), with each category's monthly budget (a weekly one's monthly equivalent). For this week and this month against each budget's own period, use budget_progress.",
-    input: { month },
+      "Net spending per expense category for a calendar month (refunds reduce spend), with each category's monthly budget (a weekly one's monthly equivalent). For this week and this month against each budget's own period, use budget_progress. With whose \"mine\" it counts only your accounts; budgets are the household's either way.",
+    input: { month, whose },
     run: async (args) => {
       const [m] = await Promise.all([monthOrLatest(args.month), freshCategories()])
-      return { month: m, categories: await getCategorySpend(m) }
+      if (args.whose !== "mine") return { month: m, whose: "everyone", categories: await getCategorySpend(m) }
+      const { mine } = await household()
+      return { month: m, whose: "mine", accounts: mine.length, categories: await getCategorySpendFor(m, mine) }
     },
   }),
 

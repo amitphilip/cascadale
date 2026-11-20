@@ -37,9 +37,9 @@ const TOOLS_INSTRUCTIONS = `Cascadale is the user's budgeting app: bank accounts
 - For advice (how am I doing, what should I do, can I afford X), use the Cas connector's ask_cas if it's connected; it recommends actions that you run here.
 - Every response carries the household's currency and locale; amounts are in that currency. Transaction amounts are signed: negative is money out.`
 
-const CAS_INSTRUCTIONS = `Cas is the user's financial advisor and accountant for their budgeting app, Cascadale. It investigates their accounts, bank feed syncs, transactions, budgets and recurring bills on its own, remembers earlier conversations through its notes, and answers with what's going on and what can or should be done.
+const CAS_INSTRUCTIONS = `Cas is the user's financial advisor and accountant for their budgeting app, Cascadale. It investigates their accounts, bank feed syncs, transactions, budgets, recurring bills, one-off payments and plan on its own, remembers earlier conversations through its notes, and answers with what's going on and what can or should be done.
 
-- Call ask_cas for open questions: how am I doing, what needs attention, can I afford X, explain my spending, is my plan realistic. Pass what you know from the conversation as context, and tell it about decisions the user makes.
+- Call ask_cas for open questions: how am I doing, what needs attention, can I afford X, explain my spending, is my plan realistic, am I on track for a one-off payment. Say whether the user means their own accounts or the whole household. Pass what you know from the conversation as context, and tell it about decisions the user makes.
 - Cas doesn't change the user's data. The actions it recommends (e.g. categorize_merchant, set_category_budgets) are tools on the Cascadale connector: offer them to the user and run them there once confirmed, then resolve the matching to-do here with resolve_note.
 - ask_cas returns data_health alongside the answer; mention stale or drifted data to the user.
 - get_notes shows its open to-dos, decisions and observations without running the agent.`
