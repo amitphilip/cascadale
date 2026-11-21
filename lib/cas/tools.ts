@@ -778,7 +778,7 @@ export const TOOLS: CasTool[] = [
     title: "Count transactions towards a one-off",
     access: "action",
     description:
-      "Count transactions towards a one-off payment: money in for it, or a payment out of it. Each must be in the one-off's account and not already count towards another; the linkable list on one_off_payments has them.",
+      "Count transactions towards a one-off payment: money in for it, or a payment out of it. Each must be in the one-off's account and not already count towards another; the linkable list on one_off_payments has them. A linked payment comes out of its category's spending and budget, since the one-off's money pays for it; there's no need to recategorize it.",
     input: {
       oneOffId: z.number().int().positive(),
       transactionIds: z.array(z.number().int().positive()).min(1),
