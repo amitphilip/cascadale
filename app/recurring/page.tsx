@@ -3,7 +3,12 @@ import Link from "next/link"
 import { PencilSimpleIcon } from "@phosphor-icons/react/ssr"
 
 import { ApplyAllBudgetsButton, BudgetEditor, type SavedBudget } from "./budget-actions"
-import { CategoryGroup, CollapsibleGroups, ExpandAllButton } from "./collapsible-rows"
+import {
+  CategoryGroup,
+  CollapsibleGroups,
+  ExpandAllButton,
+  MOBILE_ROW,
+} from "./collapsible-rows"
 import { BasisPicker } from "@/components/basis-picker"
 import { PageHeader } from "@/components/page-header"
 import { PeriodPicker } from "@/components/period-picker"
@@ -165,31 +170,32 @@ export default async function RecurringPage({
         <PeriodPicker value={period} />
       </PageHeader>
 
-      <div className="grid gap-4 sm:grid-cols-3">
-        <SummaryCard
-          title="Projected income"
-          value={p(totalIncome)}
-          detail={`${p(recurring(income))} from recurring items`}
-        />
-        <SummaryCard
-          title="Projected spending"
-          value={p(totalExpense)}
-          detail={`${p(recurring(expense))} from recurring items`}
-        />
-        <SummaryCard
-          title="Projected net saved"
-          value={p(net, true)}
-          valueClassName={net < 0 ? "text-destructive" : undefined}
-          detail={
-            totalIncome > 0
-              ? `${Math.round((net / totalIncome) * 100)}% of income`
-              : "No income projected"
-          }
-        />
-      </div>
+      <Summary
+        items={[
+          {
+            title: "Projected income",
+            value: p(totalIncome),
+            detail: `${p(recurring(income))} from recurring items`,
+          },
+          {
+            title: "Projected spending",
+            value: p(totalExpense),
+            detail: `${p(recurring(expense))} from recurring items`,
+          },
+          {
+            title: "Projected net saved",
+            value: p(net, true),
+            negative: net < 0,
+            detail:
+              totalIncome > 0
+                ? `${Math.round((net / totalIncome) * 100)}% of income`
+                : "No income projected",
+          },
+        ]}
+      />
 
       <CollapsibleGroups keys={income.map(groupKey)}>
-        <Card>
+        <Card className={TIGHT}>
           <CardHeader>
             <CardTitle>Income</CardTitle>
             <CardDescription>
@@ -207,7 +213,7 @@ export default async function RecurringPage({
       </CollapsibleGroups>
 
       <CollapsibleGroups keys={expense.map(groupKey)}>
-        <Card>
+        <Card className={TIGHT}>
           <CardHeader>
             <CardTitle>Expenses</CardTitle>
             <CardDescription>
@@ -235,30 +241,77 @@ export default async function RecurringPage({
   )
 }
 
-function SummaryCard({
-  title,
-  value,
-  detail,
-  valueClassName,
-}: {
+type SummaryItem = {
   title: string
   value: string
   detail: string
-  valueClassName?: string
-}) {
+  negative?: boolean
+}
+
+/** The three totals: rows in one card on phones, three cards side by side from sm up. */
+function Summary({ items }: { items: SummaryItem[] }) {
   return (
-    <Card size="sm">
-      <CardHeader>
-        <CardDescription>{title}</CardDescription>
-        <CardTitle className={cn("text-2xl tabular-nums", valueClassName)}>
-          {value}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="text-xs text-muted-foreground">
-        {detail}
-      </CardContent>
-    </Card>
+    <>
+      <Card size="sm" className="sm:hidden">
+        <CardContent>
+          <dl className="grid divide-y">
+            {items.map((t) => (
+              <div
+                key={t.title}
+                className="flex items-baseline justify-between gap-3 py-2.5 first:pt-0 last:pb-0"
+              >
+                <dt className="min-w-0">
+                  <span className="block font-medium">{t.title}</span>
+                  <span className="block text-xs text-muted-foreground">
+                    {t.detail}
+                  </span>
+                </dt>
+                <dd
+                  className={cn(
+                    "shrink-0 text-lg font-semibold tabular-nums",
+                    t.negative && "text-destructive"
+                  )}
+                >
+                  {t.value}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </CardContent>
+      </Card>
+      <div className="grid gap-4 max-sm:hidden sm:grid-cols-3">
+        {items.map((t) => (
+          <Card key={t.title} size="sm">
+            <CardHeader>
+              <CardDescription>{t.title}</CardDescription>
+              <CardTitle
+                className={cn(
+                  "text-2xl tabular-nums",
+                  t.negative && "text-destructive"
+                )}
+              >
+                {t.value}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="text-xs text-muted-foreground">
+              {t.detail}
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    </>
   )
+}
+
+/** Cards hold to a phone's width with less padding. */
+const TIGHT = "max-sm:[--card-spacing:--spacing(4)]"
+
+// Where each cell sits in a row's phone layout (see MOBILE_ROW); off hides it on phones.
+const M = {
+  top: "max-sm:col-start-2 max-sm:row-start-1 max-sm:pb-0 max-sm:pr-(--card-spacing)",
+  basis: "max-sm:col-start-1 max-sm:row-start-2 max-sm:self-center max-sm:pt-0",
+  budget: "max-sm:col-start-2 max-sm:row-start-2 max-sm:self-center max-sm:pt-0",
+  off: "max-sm:hidden",
 }
 
 /** A category's key for folding its rows: its id, so #budget-<id> links open it. */
@@ -336,21 +389,23 @@ function BudgetTable({
   }
 
   return (
-    <Table className="sm:min-w-[44rem]">
+    <Table className="max-sm:block sm:min-w-[44rem] max-sm:[&>tbody]:block max-sm:[&>tfoot]:block max-sm:[&>thead]:block">
       <TableHeader>
-        <TableRow>
+        <TableRow className={cn(MOBILE_ROW, "max-sm:items-center")}>
           <TableHead className="pl-(--card-spacing)">Item</TableHead>
           <TableHead className="text-right max-sm:hidden">Latest</TableHead>
           <TableHead className="text-right max-sm:hidden">Trend /yr</TableHead>
-          <TableHead>Basis</TableHead>
+          <TableHead className={M.off}>Basis</TableHead>
           <TableHead className="text-right max-sm:hidden">
             Avg {PERIOD_SUFFIX[period]}
           </TableHead>
-          <TableHead className={cn("text-right", last)}>
+          <TableHead
+            className={cn("text-right max-sm:pr-(--card-spacing) max-sm:font-normal max-sm:text-muted-foreground", last)}
+          >
             Projected {PERIOD_SUFFIX[period]}
           </TableHead>
           {isExpense && (
-            <TableHead className="pr-(--card-spacing) text-right">
+            <TableHead className={cn("pr-(--card-spacing) text-right", M.off)}>
               Budget
             </TableHead>
           )}
@@ -400,7 +455,12 @@ function BudgetTable({
                   >
                     {formatTrend(l.growthRate ?? l.trend)}
                   </TableCell>
-                  <TableCell>
+                  <TableCell
+                    className={cn(
+                      M.basis,
+                      "max-sm:pl-[calc(var(--card-spacing)+2rem)]"
+                    )}
+                  >
                     {l.categoryId === null ? (
                       <Badge variant="outline">{BASIS_LABELS[l.basis]}</Badge>
                     ) : (
@@ -425,11 +485,13 @@ function BudgetTable({
                   <TableCell className="text-right font-normal text-muted-foreground tabular-nums max-sm:hidden">
                     {formatMoney(fromMonthly(l.actual, period), fmt)}
                   </TableCell>
-                  <TableCell className={cn("text-right tabular-nums", last)}>
+                  <TableCell
+                    className={cn("text-right tabular-nums", M.top, "max-sm:pt-3", last)}
+                  >
                     {formatMoney(fromMonthly(l.projected, period), fmt)}
                   </TableCell>
                   {isExpense && (
-                    <TableCell className="pr-(--card-spacing) text-right">
+                    <TableCell className={cn("pr-(--card-spacing) text-right", M.budget)}>
                       {l.categoryId !== null ? (
                         <BudgetEditor
                           categoryId={l.categoryId}
@@ -459,8 +521,8 @@ function BudgetTable({
                 />
               ))}
               {hasOther && (
-                <TableRow>
-                  <TableCell className="pl-[calc(var(--card-spacing)+2.25rem)]">
+                <TableRow className={MOBILE_ROW}>
+                  <TableCell className="pl-[calc(var(--card-spacing)+2.25rem)] max-sm:pb-0 max-sm:whitespace-normal">
                     {l.series.length
                       ? "Everything else"
                       : isExpense
@@ -477,16 +539,24 @@ function BudgetTable({
                     {formatMoney(fromMonthly(l.other.recent, period), fmt)}
                   </TableCell>
                   <TableCell className="max-sm:hidden" />
-                  <TableCell className="text-xs text-muted-foreground">
+                  <TableCell
+                    className={cn(
+                      "text-xs text-muted-foreground",
+                      M.basis,
+                      "max-sm:pl-[calc(var(--card-spacing)+2.25rem)] max-sm:pb-2.5"
+                    )}
+                  >
                     {BASIS_LABELS[inherited]}
                   </TableCell>
                   <TableCell className="text-right text-muted-foreground tabular-nums max-sm:hidden">
                     {formatMoney(fromMonthly(l.other.average, period), fmt)}
                   </TableCell>
-                  <TableCell className={cn("text-right tabular-nums", last)}>
+                  <TableCell className={cn("text-right tabular-nums", M.top, last)}>
                     {formatMoney(fromMonthly(l.other.monthly, period), fmt)}
                   </TableCell>
-                  {isExpense && <TableCell className="pr-(--card-spacing)" />}
+                  {isExpense && (
+                    <TableCell className={cn("pr-(--card-spacing)", M.off)} />
+                  )}
                 </TableRow>
               )}
             </CategoryGroup>
@@ -494,17 +564,19 @@ function BudgetTable({
         })}
       </TableBody>
       <TableFooter>
-        <TableRow className="font-medium">
+        <TableRow className={cn("font-medium", MOBILE_ROW)}>
           <TableCell className="pl-(--card-spacing)">Total {kind}</TableCell>
           <TableCell className="max-sm:hidden" colSpan={2} />
-          <TableCell />
+          <TableCell className={M.off} />
           <TableCell className="text-right text-muted-foreground tabular-nums max-sm:hidden">
             {formatMoney(fromMonthly(actual, period), fmt)}
           </TableCell>
-          <TableCell className={cn("text-right tabular-nums", last)}>
+          <TableCell
+            className={cn("text-right tabular-nums max-sm:pr-(--card-spacing)", last)}
+          >
             {formatMoney(fromMonthly(total, period), fmt)}
           </TableCell>
-          {isExpense && <TableCell />}
+          {isExpense && <TableCell className={M.off} />}
         </TableRow>
       </TableFooter>
     </Table>
@@ -534,11 +606,11 @@ function SeriesRow({
   const override = overrides.get(s.key)
   const rate = inheritedRate ?? s.trend
   return (
-    <TableRow className={cn(inactive && "text-muted-foreground")}>
-      <TableCell className="pl-[calc(var(--card-spacing)+2.25rem)]">
-        <div className="flex items-center gap-2">
+    <TableRow className={cn(MOBILE_ROW, inactive && "text-muted-foreground")}>
+      <TableCell className="pl-[calc(var(--card-spacing)+2.25rem)] max-sm:min-w-0 max-sm:pb-0 max-sm:whitespace-normal">
+        <div className="flex min-w-0 items-center gap-2">
           <span
-            className="max-w-40 truncate sm:max-w-72"
+            className="min-w-0 truncate sm:max-w-72"
             title={s.note ? `${s.example} — ${s.note}` : s.example}
           >
             {s.example}
@@ -565,7 +637,12 @@ function SeriesRow({
       >
         {formatTrend(s.growthRate)}
       </TableCell>
-      <TableCell>
+      <TableCell
+        className={cn(
+          M.basis,
+          "max-sm:pl-[calc(var(--card-spacing)+2.25rem)]"
+        )}
+      >
         <ProjectionDialog
           target={{
             kind: "series",
@@ -610,12 +687,15 @@ function SeriesRow({
       <TableCell
         className={cn(
           "text-right tabular-nums",
+          M.top,
           !isExpense && "pr-(--card-spacing)"
         )}
       >
         {inactive ? "—" : formatMoney(fromMonthly(s.monthly, period), fmt)}
       </TableCell>
-      {isExpense && <TableCell className="pr-(--card-spacing)" />}
+      {isExpense && (
+        <TableCell className={cn("pr-(--card-spacing)", M.off)} />
+      )}
     </TableRow>
   )
 }

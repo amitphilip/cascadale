@@ -133,7 +133,17 @@ export function BudgetEditor({
             )}
             title={saved && perPeriod(projected, saved.period) > saved.amount + 0.5 ? "Budget is below the projection" : undefined}
           >
-            {saved ? money(saved.amount, saved.period) : "Set"}
+            {saved ? (
+              <>
+                {/* phones hide the Budget column heading, so say it here */}
+                <span className="font-normal text-muted-foreground sm:hidden">Budget </span>
+                {money(saved.amount, saved.period)}
+              </>
+            ) : (
+              <>
+                Set<span className="sm:hidden"> budget</span>
+              </>
+            )}
           </span>
           {saved?.percent != null && (
             <span className="text-xs font-normal text-muted-foreground">{saved.percent}% of income</span>

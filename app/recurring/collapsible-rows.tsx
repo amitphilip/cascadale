@@ -5,6 +5,13 @@ import { CaretDownIcon, CaretRightIcon } from "@phosphor-icons/react"
 
 import { Button } from "@/components/ui/button"
 import { TableCell, TableRow } from "@/components/ui/table"
+import { cn } from "@/lib/utils"
+
+/**
+ * Phones get each row as a small grid instead of seven columns: name and projection on the
+ * first line, basis and budget under them. Cells place themselves with max-sm:col/row-start.
+ */
+export const MOBILE_ROW = "max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:items-start"
 
 // Category rows that fold their recurring items and "everything else" away. Every category
 // starts folded; a link to #budget-<category id> (e.g. from another page's "edit budget")
@@ -94,8 +101,8 @@ export function CategoryGroup({
   const isOpen = open.has(groupKey)
   return (
     <>
-      <TableRow id={anchor} className="scroll-mt-24 bg-muted/40 font-medium">
-        <TableCell className="pl-[calc(var(--card-spacing)-0.5rem)]">
+      <TableRow id={anchor} className={cn("scroll-mt-24 bg-muted/40 font-medium", MOBILE_ROW)}>
+        <TableCell className="pl-[calc(var(--card-spacing)-0.5rem)] max-sm:col-start-1 max-sm:row-start-1 max-sm:min-w-0 max-sm:pb-0 max-sm:whitespace-normal">
           <div className="flex items-start gap-1">
             {detailCount > 0 ? (
               <Button

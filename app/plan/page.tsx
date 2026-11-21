@@ -50,6 +50,9 @@ const PURPOSES: { purpose: PlanPurpose; label: string }[] = [
 const PER_MONTH: Record<PlanEvery, number> = { week: 52 / 12, fortnight: 26 / 12, month: 1, once: 0 }
 const EVERY_SUFFIX: Record<PlanEvery, string> = { week: "/wk", fortnight: "/fn", month: "/mo", once: " once" }
 
+/** Cards hold to a phone's width with less padding. */
+const TIGHT = "max-sm:[--card-spacing:--spacing(4)]"
+
 /** Plan figures move this much from what the plan was made on before it's worth redoing. */
 const STALE_SHARE = 0.05
 
@@ -93,13 +96,15 @@ export default async function PlanPage() {
       <FiguresCard inputs={inputs} fmt={fmt} />
 
       {current ? (
-        <div className="grid items-start gap-6 lg:grid-cols-5">
+        // Below lg the right column dissolves into one stack, so the to-dos can sit above
+        // the long list of allocations instead of under it.
+        <div className="flex flex-col gap-6 lg:grid lg:grid-cols-5 lg:items-start">
           <div className="grid min-w-0 gap-6 lg:col-span-3">
             <AllocationsCard current={current} inputs={inputs} fmt={fmt} />
           </div>
-          <div className="grid min-w-0 gap-6 lg:col-span-2">
+          <div className="grid min-w-0 gap-6 max-lg:contents lg:col-span-2">
             {current.actions.length > 0 && (
-              <Card>
+              <Card className={cn(TIGHT, "max-lg:order-first")}>
                 <CardHeader>
                   <CardTitle>To do</CardTitle>
                   <CardDescription>
@@ -118,7 +123,7 @@ export default async function PlanPage() {
         </div>
       ) : (
         <>
-          <Card>
+          <Card className={TIGHT}>
             <CardHeader>
               <CardTitle>No plan yet</CardTitle>
               <CardDescription>
@@ -150,14 +155,14 @@ function VerdictCard({ current, stale }: { current: CurrentPlan; stale: boolean 
   const { plan } = current
   const v = VERDICT[plan.verdict]
   return (
-    <Card>
+    <Card className={TIGHT}>
       <CardHeader>
         <div className="flex flex-wrap items-center gap-2">
           <Badge className={cn("h-6 px-2.5 text-sm", v.className)}>{v.label}</Badge>
           <CardTitle className="text-base">Cas&rsquo;s read</CardTitle>
         </div>
       </CardHeader>
-      <CardContent className="grid gap-4 text-base">
+      <CardContent className="grid gap-4 text-base max-sm:gap-3">
         <p>{plan.verdictNote}</p>
         <p className="text-muted-foreground">{plan.summary}</p>
         {plan.goalChecks.length > 0 && (
@@ -220,7 +225,7 @@ function AllocationsCard({ current, inputs, fmt }: { current: CurrentPlan; input
   const total = current.allocations.reduce((s, a) => s + monthly(a), 0)
   const gap = inputs.figures.income - total
   return (
-    <Card>
+    <Card className={TIGHT}>
       <CardHeader>
         <CardTitle>Where the money goes</CardTitle>
         <CardDescription>
@@ -257,7 +262,7 @@ function AllocationsCard({ current, inputs, fmt }: { current: CurrentPlan; input
                       {a.categoryId !== null && (
                         <Link
                           href={`/recurring#budget-${a.categoryId}`}
-                          className="inline-flex min-h-8 items-center gap-1 font-medium text-foreground underline-offset-4 hover:underline"
+                          className="inline-flex min-h-8 items-center gap-1 font-medium text-foreground underline-offset-4 hover:underline max-sm:min-h-10"
                         >
                           <PencilSimpleIcon /> Edit budget
                         </Link>
@@ -265,7 +270,7 @@ function AllocationsCard({ current, inputs, fmt }: { current: CurrentPlan; input
                       {a.oneOffId !== null && (
                         <Link
                           href="/one-offs"
-                          className="inline-flex min-h-8 items-center gap-1 font-medium text-foreground underline-offset-4 hover:underline"
+                          className="inline-flex min-h-8 items-center gap-1 font-medium text-foreground underline-offset-4 hover:underline max-sm:min-h-10"
                         >
                           View one-off <ArrowRightIcon />
                         </Link>
@@ -286,7 +291,7 @@ function BudgetsCard({ inputs, fmt }: { inputs: PlanInputs; fmt: MoneyFormat }) 
   const tight = new Set(inputs.figures.tightBudgets.map((t) => t.categoryId))
   const rows = inputs.categories.filter((c) => c.categoryId !== null && (c.budget !== null || c.projected >= 1))
   return (
-    <Card>
+    <Card className={TIGHT}>
       <CardHeader>
         <CardTitle>Budgets</CardTitle>
         <CardDescription>Per month, against how each category has been running.</CardDescription>
@@ -334,7 +339,7 @@ const ONE_OFF_STATUS: Record<string, string> = {
 
 function OneOffsCard({ inputs, fmt }: { inputs: PlanInputs; fmt: MoneyFormat }) {
   return (
-    <Card>
+    <Card className={TIGHT}>
       <CardHeader>
         <CardTitle>One-off payments</CardTitle>
         <CardDescription>What each still needs put in per month.</CardDescription>
