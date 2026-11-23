@@ -305,3 +305,49 @@ export function analyzeIncome({
     trend: annualTrend(rows.map((r) => r.rate)),
   }
 }
+
+export type PayDue = {
+  name: string
+  accountId: number
+  /** the expected payday */
+  date: string
+  amount: number
+  /** due: still ahead; late: its payday has passed but it may yet land; missed: well overdue, so not counted on */
+  status: "due" | "late" | "missed"
+}
+
+const shiftDays = (iso: string, days: number) =>
+  new Date(Date.parse(`${iso}T00:00:00Z`) + Math.round(days) * 86_400_000).toISOString().slice(0, 10)
+
+/**
+ * The regular pays still to land this month: each series' next payday, then every cadence
+ * after it, up to the month's last day. Midway through a month the income so far is only
+ * part of it, so this is what the rest of the month still brings in. A payday already
+ * passed is late for a week (pays post a day or two late), then missed.
+ */
+export function paysDue(
+  series: Pick<RecurringSeries, "example" | "accountId" | "cadence" | "nextDate" | "latest">[],
+  today: string,
+  monthEnd: string
+): PayDue[] {
+  const out: PayDue[] = []
+  for (const s of series) {
+    const { days } = CADENCE_DAYS[s.cadence]
+    for (let date = s.nextDate; date <= monthEnd; date = shiftDays(date, days)) {
+      const overdue = daysBetween(date, today)
+      if (overdue > 0 && date < `${today.slice(0, 7)}-01` && overdue > PAUSE_GRACE) continue
+      out.push({
+        name: s.example,
+        accountId: s.accountId,
+        date,
+        amount: round2(s.latest),
+        status: overdue <= 0 ? "due" : overdue <= PAUSE_GRACE ? "late" : "missed",
+      })
+    }
+  }
+  return out.sort((a, b) => a.date.localeCompare(b.date) || b.amount - a.amount)
+}
+
+/** What's counted on from the pays still due: those ahead and those only a few days late. */
+export const expectedFrom = (pays: PayDue[]) =>
+  round2(sum(pays.filter((p) => p.status !== "missed").map((p) => p.amount)))

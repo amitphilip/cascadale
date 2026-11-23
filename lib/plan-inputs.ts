@@ -1,6 +1,10 @@
 import "server-only"
 
+import { addDays, format, parseISO } from "date-fns"
+
 import { budgetPeriod, refreshPercentBudgets } from "@/lib/budget-percent"
+import { monthOf } from "@/lib/budget-tracking"
+import { paysDue } from "@/lib/income"
 import { planOneOff } from "@/lib/one-offs"
 import { oneOffFigure, planFigures, type CategoryFigure } from "@/lib/plan-figures"
 import {
@@ -22,8 +26,8 @@ const DEBT_TYPES = ["loan", "credit_line"]
 /**
  * Everything a plan is made from, as Cas reads it and the Plan page shows it: projected
  * income and its sources, each expense category's projection against its budget, recurring
- * bills, one-off payments with what they still need, accounts and who holds them. Null
- * before there are any transactions.
+ * bills, one-off payments with what they still need, the pays still due this month,
+ * accounts and who holds them. Null before there are any transactions.
  */
 export async function loadPlanInputs() {
   const today = todayLocal()
@@ -103,6 +107,11 @@ export async function loadPlanInputs() {
           : []),
       ]
     }),
+    paysDue: paysDue(
+      incomeLines.flatMap((l) => l.series.filter((s) => !s.ended && !s.excluded)),
+      today,
+      format(addDays(parseISO(monthOf(today).end), -1), "yyyy-MM-dd")
+    ).map((p) => ({ ...p, account: accountName.get(p.accountId) ?? null })),
     categories: expense,
     bills: lines
       .filter((l) => l.direction < 0)

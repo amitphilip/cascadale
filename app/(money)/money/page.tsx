@@ -25,6 +25,8 @@ import {
   PERIOD_LABELS,
   PERIOD_SUFFIX,
 } from "@/lib/format"
+import { expectedFrom } from "@/lib/income"
+import { loadPlanInputs } from "@/lib/plan-inputs"
 import {
   getAccountsWithBalances,
   getCategorySpend,
@@ -60,10 +62,12 @@ export default async function MoneySummaryPage({
   const estimated = period !== "month"
   const perSuffix = estimated ? PERIOD_SUFFIX[period] : ""
 
-  const [accounts, cashflow, spend] = await Promise.all([
+  const current = month === todayLocal().slice(0, 7)
+  const [accounts, cashflow, spend, inputs] = await Promise.all([
     getAccountsWithBalances(),
     getMonthlyCashflow(month, 12),
     getCategorySpend(month),
+    current ? loadPlanInputs() : null,
   ])
 
   const active = accounts.filter((a) => !a.archived)
@@ -71,6 +75,11 @@ export default async function MoneySummaryPage({
   const cashNow = active.filter((a) => isCashAccount(a.type)).reduce((s, a) => s + a.balance, 0)
   const thisMonth = cashflow[cashflow.length - 1] ?? { month, income: 0, expense: 0, net: 0 }
   const savingsRate = thisMonth.income > 0 ? thisMonth.net / thisMonth.income : null
+  // This month isn't over: the pays still due change how it ends, so say so rather than
+  // reading part of a month's income against its spending.
+  const due = (inputs?.paysDue ?? []).filter((p) => p.status !== "missed")
+  const stillDue = expectedFrom(due)
+  const lastPay = due.at(-1)
   const activeMonths = cashflow.filter((c) => c.income > 0 || c.expense > 0)
   const average = (key: "income" | "expense") =>
     activeMonths.reduce((s, c) => s + c[key], 0) / Math.max(activeMonths.length, 1)
@@ -124,7 +133,11 @@ export default async function MoneySummaryPage({
         <StatCard
           label={`Income · ${shortMonth}${estimated ? ` · ${PERIOD_LABELS[period].toLowerCase()} est.` : ""}`}
           value={`${formatMoney(fromMonthly(thisMonth.income, period), fmt)}${perSuffix}`}
-          hint={`Average ${formatMoney(fromMonthly(average("income"), period), fmt)}${perSuffix}`}
+          hint={
+            lastPay
+              ? `${formatMoney(fromMonthly(stillDue, period), fmt)}${perSuffix} more due by ${formatDate(lastPay.date, fmt.locale)}`
+              : `Average ${formatMoney(fromMonthly(average("income"), period), fmt)}${perSuffix}`
+          }
         />
         <StatCard
           label={`Spending · ${shortMonth}`}
@@ -132,9 +145,15 @@ export default async function MoneySummaryPage({
           hint={`Average ${formatMoney(average("expense"), fmt)}`}
         />
         <StatCard
-          label="Saved"
+          label={lastPay ? "Saved so far" : "Saved"}
           value={formatMoney(thisMonth.net, fmt, { signed: true })}
-          hint={savingsRate === null ? "No income this month" : `${Math.round(savingsRate * 100)}% of income`}
+          hint={
+            lastPay
+              ? `${formatMoney(thisMonth.net + stillDue, fmt, { signed: true })} once the pay${due.length === 1 ? "" : "s"} still due land${due.length === 1 ? "s" : ""}`
+              : savingsRate === null
+                ? "No income this month"
+                : `${Math.round(savingsRate * 100)}% of income`
+          }
         />
       </section>
 

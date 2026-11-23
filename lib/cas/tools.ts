@@ -34,6 +34,7 @@ import {
   type OneOff,
 } from "@/lib/db/schema"
 import { makePlan } from "@/lib/cas/plan"
+import { expectedFrom } from "@/lib/income"
 import { getInbox } from "@/lib/inbox"
 import { buildNetWorth } from "@/lib/net-worth"
 import { planOneOff } from "@/lib/one-offs"
@@ -269,14 +270,14 @@ export const TOOLS: CasTool[] = [
     title: "Briefing",
     access: "read",
     description:
-      "Start here. Everything happening right now in one call: bank feed health, this month's money in and out so far, projected monthly income, each budget against its own period (this week for a weekly one, this month for a monthly one), the one-off payments still to pay, what needs categorizing, and Cas's open notes and to-dos. thisMonth is the whole household (the Family view); thisMonth.yours is only the accounts marked as yours (the My view), and you names who's asking. Includes data_health: check it before relying on the numbers.",
+      "Start here. Everything happening right now in one call: bank feed health, this month's money in and out so far, the regular pays still due before the month ends (thisMonth.incomeStillDue, each due, late or missed; incomeByMonthEnd is what's in so far plus the due and late ones), projected monthly income, each budget against its own period (this week for a weekly one, this month for a monthly one), the one-off payments still to pay, what needs categorizing, and Cas's open notes and to-dos. thisMonth is the whole household (the Family view); thisMonth.yours is only the accounts marked as yours (the My view), and you names who's asking. Includes data_health: check it before relying on the numbers.",
     run: async () => {
       const overview = await getAkahuOverview().catch(
         (err: Error): AkahuOverview => ({ connected: true, error: err.message, accounts: [] })
       )
       const thisMonth = todayLocal().slice(0, 7)
       const people = await household()
-      const [sync, cashflow, yours, budgets, oneOffs, categorization, merchants, lowRules, open, health] =
+      const [sync, cashflow, yours, budgets, oneOffs, categorization, merchants, lowRules, open, health, inputs] =
         await Promise.all([
           syncStatus(overview).catch((err: Error) => ({ error: err.message })),
           getMonthCashflow(thisMonth),
@@ -288,12 +289,29 @@ export const TOOLS: CasTool[] = [
           getRuleReview("low"),
           notes(),
           loadDataHealth(overview),
+          loadPlanInputs(),
         ])
+      // The month so far is only part of it: add the pays still due before it ends.
+      const due = inputs?.paysDue ?? []
+      const mine = new Set(people.mine)
+      const stillToCome = (pays: typeof due, received: number) => {
+        const expected = expectedFrom(pays)
+        return { incomeStillDue: pays, incomeByMonthEnd: round2(received + expected), stillExpected: expected }
+      }
       return {
         today: todayLocal(),
         you: people.you,
         sync,
-        thisMonth: { month: thisMonth, ...cashflow, yours: { accounts: people.mine.length, ...yours } },
+        thisMonth: {
+          month: thisMonth,
+          ...cashflow,
+          ...stillToCome(due, cashflow.income),
+          yours: {
+            accounts: people.mine.length,
+            ...yours,
+            ...stillToCome(due.filter((p) => mine.has(p.accountId)), yours.income),
+          },
+        },
         projectedMonthlyIncome: budgets.projectedMonthlyIncome,
         budgets: {
           week: budgets.week,
@@ -512,7 +530,7 @@ export const TOOLS: CasTool[] = [
     title: "Plan",
     access: "read",
     description:
-      "The household's plan, as the Plan page shows it: Cas's verdict on whether it's realistic (realistic, stretch, unrealistic) with the reason and each goal weighed, where each pay goes (allocations, each with an amount per week, fortnight, month or once, and the budget category or one-off it's for), and the to-do actions (doneAt set when ticked off). Also today's figures it stands on: projected income, bills and budgets, one-off needs, what's left over, and budgets set well below how a category runs. today.figures are monthly: income (projected), committed (each category's budget, else its projection), projectedSpend (what spending runs at), oneOffs (the one-offs' monthly need), leftOver (income − committed − oneOffs) and leftOverAsProjected (the same with spending as it runs). today.categories has each budget's period and percent of income; today.oneOffs has each one-off payment's figures (see one_off_payments for what they mean). plan is null before Cas has made one.",
+      "The household's plan, as the Plan page shows it: Cas's verdict on whether it's realistic (realistic, stretch, unrealistic) with the reason and each goal weighed, where each pay goes (allocations, each with an amount per week, fortnight, month or once, and the budget category or one-off it's for), and the to-do actions (doneAt set when ticked off). Also today's figures it stands on: projected income, bills and budgets, one-off needs, what's left over, and budgets set well below how a category runs. today.figures are monthly: income (projected), committed (each category's budget, else its projection), projectedSpend (what spending runs at), oneOffs (the one-offs' monthly need), leftOver (income − committed − oneOffs) and leftOverAsProjected (the same with spending as it runs). today.categories has each budget's period and percent of income; today.oneOffs has each one-off payment's figures (see one_off_payments for what they mean). today.paysDue lists the regular pays still due this month. plan is null before Cas has made one.",
     run: async () => {
       const [current, inputs] = await Promise.all([getCurrentPlan(), loadPlanInputs()])
       return {
@@ -526,6 +544,7 @@ export const TOOLS: CasTool[] = [
           categories: inputs.categories,
           oneOffs: inputs.oneOffs,
           incomeSources: inputs.incomeSources,
+          paysDue: inputs.paysDue,
         },
       }
     },
