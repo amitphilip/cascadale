@@ -55,6 +55,8 @@ export type Account = {
   akahuId: string | null
   /** Only Akahu transactions after this date are synced (set when linking an account with history). */
   akahuStart: string | null
+  /** Annual interest rate in percent (debt or savings), null when unknown. */
+  interestRate: number | null
   createdAt: string
 }
 
@@ -233,10 +235,26 @@ export type PlanItem = {
   every: PlanEvery | null
   categoryId: number | null
   oneOffId: number | null
+  /** where the money should sit */
   accountId: number | null
+  /** where the money leaves from, usually the account a pay lands in */
+  fromAccountId: number | null
   dueDate: string | null
   doneAt: string | null
   position: number
+}
+
+/** Something Cas tells the household without being asked (cas_nudges). */
+export type CasNudge = {
+  id: number
+  kind: "payday" | "weekly"
+  title: string
+  body: string
+  dedupeKey: string
+  dueDate: string | null
+  createdAt: string
+  pushedAt: string | null
+  doneAt: string | null
 }
 
 export const NOTE_KINDS = ["observation", "decision", "preference", "todo"] as const

@@ -29,6 +29,7 @@ import {
   type AkahuApi,
   type AkahuTokens,
 } from "../_shared/akahu.ts"
+import { runNudges } from "./nudges.ts"
 import { buildMatcher, merchantKey, type RuleLike } from "../_shared/rules.ts"
 import { pairTransfers } from "../_shared/transfers.ts"
 import {
@@ -397,7 +398,12 @@ async function syncUser(userId: string, runBy: RunBy, onlyAccountId?: number) {
     console.error(userId, err)
     return 0
   })
-  return { inserted, categorized: categorized + transfers, failed, todos, ...adopted }
+  // after transfers are paired and categories set, so a pay is known to be income
+  const nudges = await runNudges(db, userId).catch((err) => {
+    console.error(userId, "nudges", err)
+    return 0
+  })
+  return { inserted, categorized: categorized + transfers, failed, todos, nudges, ...adopted }
 }
 
 /**

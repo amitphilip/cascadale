@@ -31,6 +31,13 @@ describe("buildDataHealth", () => {
     expect(health.staleAccounts).toEqual([])
   })
 
+  test("words drift by what's left once pending is counted, and drops drift pending explains", () => {
+    const health = buildDataHealth(healthInput())
+    expect(health.warnings).toContain("Everyday is 150.00 below the bank (1082.50 vs 1232.50)")
+    // Joint matches the bank once its pending payment is counted, or has no drift: no warning either way
+    expect(health.warnings.some((w) => w.startsWith("Joint is"))).toBe(false)
+  })
+
   test("flags stale accounts", () => {
     const input = healthInput()
     if (!input.feed.connected) throw new Error("fixture is connected")

@@ -28,7 +28,7 @@ export function AkahuSyncButton({ disabled }: { disabled?: boolean }) {
             if (r.failedAccounts) {
               toast.warning(
                 `${r.failedAccounts} account${r.failedAccounts === 1 ? "" : "s"} didn't sync`,
-                { description: "See the error under each account on the Import page." }
+                { description: "See the error under each account in Settings, Import & sync." }
               )
             }
             if (r.aiError) {

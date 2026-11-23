@@ -95,27 +95,42 @@ cookies. `proxy.ts` refreshes the session and sends anyone signed out to
   normalised, e.g. "D/C FROM Wood Partners Consu" and "Wood Partners Consu
   WoodiPayroll41494-0579" are one payer), a ±20% amount band and the cadence.
 
+## Cas's messages (push)
+
+After each sync the `akahu-sync` edge function works out what Cas should say unasked
+([supabase/functions/_shared/nudges.ts](supabase/functions/_shared/nudges.ts)), with no model
+call: when a pay lands, what the plan moves out of that account this pay; on Monday mornings,
+a check-in on budgets, unbudgeted spending and what's due. Each is saved once in `cas_nudges`,
+shows in Home's inbox, and is pushed to every device that turned on **Settings → Cas messages**.
+
+Payday lists need a plan made since allocations record where money moves from: redo the plan
+once. To turn on push, make a VAPID key pair (`npx web-push generate-vapid-keys`), then:
+
+```bash
+npx supabase secrets set VAPID_PUBLIC_KEY=<public> VAPID_PRIVATE_KEY=<private> VAPID_SUBJECT=mailto:<you>
+```
+
+and set `NEXT_PUBLIC_VAPID_PUBLIC_KEY=<public>` wherever the app runs. On iPhone, push works
+once Cascadale is added to the Home Screen.
+
 ## Use it from Claude (MCP)
 
-Two MCP servers (Streamable HTTP), each added to claude.ai as its own connector:
+One MCP server to connect (Streamable HTTP), plus an older one kept for existing connectors:
 
 | Connector     | URL                  | Purpose                                                       |
 | ------------- | -------------------- | ------------------------------------------------------------- |
-| **Cascadale** | `/api/mcp`           | Your data and actions, as plain tools                         |
-| **Cas**       | `/api/mcp/cas`       | Your financial advisor and accountant, as an agent            |
+| **Cascadale** | `/api/mcp`           | Your data, Cas's notes and the actions, with Claude as Cas      |
+| Cas (older)   | `/api/mcp/cas`       | `ask_cas` runs a second agent; no longer needed                 |
 
-- **Cascadale** has the read tools (`get_briefing`, `get_sync_status`,
-  `search_transactions`, …) and the action tools
-  (`sync_bank_feeds`, `categorize_merchant`, `set_category_budgets`,
-  `save_one_off`, …). Actions change your data, and
-  Claude is told to ask you first.
-- **Cas** has `ask_cas`, which hands a question to the agent
-  ([lib/cas/agent.ts](lib/cas/agent.ts), Claude Opus 5.5 with the
-  Anthropic key from Settings). It works through the read tools on its own,
-  checks feed health, books, cash flow, budgets and bills, and answers with
-  suggested actions for Claude to run on Cascadale. It never changes your finances
-  itself; it keeps notes (`cas_notes`) to remember decisions and to-dos
-  between conversations, which `get_notes` and `resolve_note` expose.
+- **Cascadale** has every tool: reads (`get_briefing`, `get_inbox`, `search_transactions`, …),
+  Cas's memory (`get_notes`, `save_note`, `resolve_note`) and actions (`sync_bank_feeds`,
+  `categorize_merchant`, `set_category_budgets`, `set_account_interest_rate`, `save_one_off`, …).
+  Its instructions carry Cas's role and practice ([lib/cas/knowledge.ts](lib/cas/knowledge.ts)),
+  so Claude answers as Cas directly, which is quick enough for voice. Actions change your data,
+  and Claude is told to ask you first.
+- **Cas** (older) has `ask_cas`, which hands a question to a separate agent
+  ([lib/cas/agent.ts](lib/cas/agent.ts)) using the Anthropic key from Settings. Remove its
+  connector once Cascadale is connected.
 
 - **Data health:** `get_briefing`, `get_overview` and `ask_cas` return `data_health`: each account's last sync and Akahu refresh
   time, drift between Cascadale's balance and the bank's, pending transactions

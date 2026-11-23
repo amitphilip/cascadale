@@ -31,5 +31,5 @@
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts"
   ],
-  "exclude": ["node_modules", "supabase/functions/*/index.ts"]
+  "exclude": ["node_modules", "supabase/functions/*/index.ts", "supabase/functions/akahu-sync"]
 }

@@ -3,6 +3,7 @@ import { BankIcon, PlusIcon } from "@phosphor-icons/react/ssr"
 
 import { AccountActions } from "./account-actions"
 import { AccountHolderSelect } from "./account-holder-select"
+import { InterestRateInput } from "./interest-rate-input"
 import { AccountDialog } from "@/components/account-dialog"
 import { AkahuSyncButton } from "@/components/akahu-sync-button"
 import { PageHeader } from "@/components/page-header"
@@ -59,7 +60,7 @@ export default async function AccountsPage() {
     <>
       <PageHeader
         title="Accounts"
-        description="Balances are the opening balance plus every recorded transaction. Mark whose each account is, so each person's own view on the Overview shows theirs."
+        description="Balances are the opening balance plus every transaction. Mark whose each account is, so each person's view on Home shows theirs. An interest rate lets Cas weigh paying down debt against saving."
       >
         {akahu && <AkahuSyncButton />}
         <AccountDialog trigger={addButton} />
@@ -106,6 +107,11 @@ export default async function AccountsPage() {
                 <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 text-sm">
                   <span className="text-muted-foreground">Whose</span>
                   <AccountHolderSelect account={a} holderId={holders.get(a.id) ?? null} people={people} />
+                  <span className="text-muted-foreground">Interest</span>
+                  <div className="flex items-center gap-2">
+                    <InterestRateInput key={a.interestRate ?? "none"} account={a} rate={a.interestRate} className="w-24 shrink-0" />
+                    <span className="text-xs text-muted-foreground">a year</span>
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -125,6 +131,7 @@ export default async function AccountsPage() {
                   <TableHead className="text-right">Transactions</TableHead>
                   <TableHead>Latest</TableHead>
                   <TableHead>Whose</TableHead>
+                  <TableHead title="Annual rate. Lets Cas weigh paying down debt against saving.">Interest /yr</TableHead>
                   <TableHead className="text-right">Balance</TableHead>
                   <TableHead className="pr-4" />
                 </TableRow>
@@ -151,6 +158,9 @@ export default async function AccountsPage() {
                     <TableCell>
                       <AccountHolderSelect account={a} holderId={holders.get(a.id) ?? null} people={people} />
                     </TableCell>
+                    <TableCell>
+                      <InterestRateInput key={a.interestRate ?? "none"} account={a} rate={a.interestRate} className="w-24" />
+                    </TableCell>
                     <TableCell className="text-right font-medium tabular-nums">
                       {formatMoney(a.balance, fmt)}
                     </TableCell>
@@ -162,7 +172,7 @@ export default async function AccountsPage() {
               </TableBody>
               <TableFooter>
                 <TableRow>
-                  <TableCell className="pl-4" colSpan={5}>
+                  <TableCell className="pl-4" colSpan={6}>
                     Net worth (active accounts)
                   </TableCell>
                   <TableCell className="text-right font-semibold tabular-nums">

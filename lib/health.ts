@@ -134,10 +134,18 @@ export function buildDataHealth(input: HealthInput) {
   const stale = accounts.filter((a) => a.stale)
   for (const a of stale) warnings.push(`${a.name} is stale: ${a.staleReason}`)
   const drifted = accounts.filter((a) => a.drift !== null && Math.abs(a.drift) >= DRIFT_TOLERANCE)
-  for (const a of drifted)
+  // Drift that pending transactions explain isn't a problem: they post and it closes. Otherwise
+  // lead with the gap that's left once they're counted, since that's the one to reconcile.
+  for (const a of drifted) {
+    if (a.driftExplainedByPending) continue
+    const gap = a.pending.count ? a.driftWithPending! : a.drift!
+    const side = gap < 0 ? "below" : "above"
     warnings.push(
-      `${a.name} is ${Math.abs(a.drift!).toFixed(2)} ${a.drift! < 0 ? "below" : "above"} the bank (${a.balance.toFixed(2)} vs ${a.bankBalance!.toFixed(2)})${a.driftExplainedByPending ? ", explained by pending transactions" : ""}`
+      a.pending.count
+        ? `${a.name} is ${Math.abs(gap).toFixed(2)} ${side} the bank once its ${a.pending.count} pending ${a.pending.count === 1 ? "transaction is" : "transactions are"} counted (${a.balanceWithPending.toFixed(2)} vs ${a.bankBalance!.toFixed(2)})`
+        : `${a.name} is ${Math.abs(gap).toFixed(2)} ${side} the bank (${a.balance.toFixed(2)} vs ${a.bankBalance!.toFixed(2)})`
     )
+  }
 
   for (const b of input.seriesBreaks)
     warnings.push(

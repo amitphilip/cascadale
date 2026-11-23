@@ -3,6 +3,8 @@ import Link from "next/link"
 import { PencilSimpleIcon } from "@phosphor-icons/react/ssr"
 
 import { ApplyAllBudgetsButton, BudgetEditor, type SavedBudget } from "./budget-actions"
+import { BudgetInputsStrip } from "./budget-inputs"
+import { BudgetTrackingCard } from "./budget-tracking-card"
 import {
   CategoryGroup,
   CollapsibleGroups,
@@ -35,6 +37,7 @@ import {
 import {
   formatDate,
   formatMoney,
+  formatMonth,
   fromMonthly,
   parsePeriod,
   PERIOD_SUFFIX,
@@ -47,10 +50,15 @@ import {
   projectedMonthlyIncome,
   refreshPercentBudgets,
 } from "@/lib/budget-percent"
+import { getAkahuStatus } from "@/lib/akahu"
+import { trackBudgets, weekOf } from "@/lib/budget-tracking"
 import type { Category } from "@/lib/db/schema"
 import {
   getAverageWindow,
+  getBudgetInputs,
   getCategories,
+  getCategorySpend,
+  getCategorySpendBetween,
   getRecurringInputs,
   getSettings,
 } from "@/lib/queries"
@@ -69,20 +77,27 @@ import {
   type RecurringOverride,
 } from "@/lib/recurring"
 import { cn } from "@/lib/utils"
+import { todayLocal } from "@/supabase/functions/_shared/akahu"
 
-export const metadata: Metadata = { title: "Recurring & budget" }
+export const metadata: Metadata = { title: "Budgets" }
 
-export default async function RecurringPage({
+export default async function BudgetPage({
   searchParams,
 }: {
   searchParams: Promise<{ basis?: string; per?: string }>
 }) {
-  const [{ basis: basisParam, per }, fmt, window, categories] =
+  const today = todayLocal()
+  const week = weekOf(today)
+  const [{ basis: basisParam, per }, fmt, window, categories, inputs, akahu, monthSpend, weekSpend] =
     await Promise.all([
       searchParams,
       getSettings(),
       getAverageWindow(),
       getCategories(),
+      getBudgetInputs(),
+      getAkahuStatus(),
+      getCategorySpend(today.slice(0, 7)),
+      getCategorySpendBetween(week.start, week.end),
     ])
   const basis = parseBasis(basisParam)
   const period = parsePeriod(per)
@@ -154,10 +169,15 @@ export default async function RecurringPage({
     savedByCategory: new Map(projections.map((p) => [p.categoryId, p])),
   }
 
+  const byId = (rows: { id: number | null; spent: number }[]) =>
+    new Map(rows.flatMap((r) => (r.id === null ? [] : [[r.id, r.spent] as const])))
+  const tracked = trackBudgets(categories, { month: byId(monthSpend), week: byId(weekSpend) }, today)
+  const dayMonth = (d: string) => formatDate(d, fmt.locale).replace(/[,\s]*\d{4}$/, "")
+
   return (
     <>
       <PageHeader
-        title="Recurring & budget"
+        title="Budgets"
         description={
           <>
             Each category projected forward, with its regular income and bills
@@ -169,6 +189,15 @@ export default async function RecurringPage({
         <BasisPicker value={basis} />
         <PeriodPicker value={period} />
       </PageHeader>
+
+      <BudgetTrackingCard
+        budgets={tracked}
+        weekLabel={`Week of ${dayMonth(week.start)}`}
+        monthLabel={formatMonth(today.slice(0, 7), fmt.locale)}
+        fmt={fmt}
+      />
+
+      <BudgetInputsStrip inputs={inputs} akahuConnected={akahu !== null} />
 
       <Summary
         items={[

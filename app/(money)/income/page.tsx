@@ -222,8 +222,8 @@ export default async function IncomePage({
               <CardDescription>
                 Income on a regular schedule, with bonuses taken out. Mark a source as not
                 recurring on the{" "}
-                <Link href="/recurring" className="underline underline-offset-4">
-                  Recurring
+                <Link href="/plan/budgets" className="underline underline-offset-4">
+                  Budget
                 </Link>{" "}
                 page to count it as one-offs.
               </CardDescription>

@@ -126,7 +126,8 @@ export async function loadPlanInputs() {
       name: a.name,
       type: a.type,
       balance: a.balance,
-      isDebt: DEBT_TYPES.includes(a.type),
+      isDebt: DEBT_TYPES.includes(a.type) || a.balance < 0,
+      interestRate: a.interestRate,
       holder: holders.get(a.id) ? (personName.get(holders.get(a.id)!) ?? "Someone") : "Joint",
     })),
   }

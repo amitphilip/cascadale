@@ -17,7 +17,7 @@ import { getAkahuOverview } from "@/lib/akahu"
 import { formatDate } from "@/lib/format"
 import { getAccountsWithBalances, getSettings, getStatements } from "@/lib/queries"
 
-export const metadata: Metadata = { title: "Import statements" }
+export const metadata: Metadata = { title: "Import & sync" }
 
 export default async function ImportPage({
   searchParams,
@@ -36,7 +36,7 @@ export default async function ImportPage({
   return (
     <>
       <PageHeader
-        title="Import statements"
+        title="Import & sync"
         description="Files are kept in ./data/uploads so you always have the originals."
       />
       <AkahuPanel overview={akahu} accounts={active} fmt={fmt} />

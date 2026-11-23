@@ -46,3 +46,35 @@ self.addEventListener("fetch", (event) => {
     )
   }
 })
+
+// Cas's messages (cas_nudges), pushed by the akahu-sync edge function. The payload carries
+// only a title, a short line and where to open; the detail stays in the app.
+self.addEventListener("push", (event) => {
+  let data = {}
+  try {
+    data = event.data ? event.data.json() : {}
+  } catch {
+    data = { title: "Cas", body: event.data ? event.data.text() : "" }
+  }
+  event.waitUntil(
+    self.registration.showNotification(data.title || "Cas", {
+      body: data.body || "",
+      icon: "/icons/192",
+      badge: "/icons/192",
+      tag: data.tag,
+      data: { url: data.url || "/overview" },
+    })
+  )
+})
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close()
+  const url = new URL(event.notification.data?.url || "/overview", self.location.origin).href
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((windows) => {
+      const open = windows.find((w) => w.url.startsWith(self.location.origin))
+      if (open) return open.navigate(url).then((w) => (w || open).focus())
+      return self.clients.openWindow(url)
+    })
+  )
+})

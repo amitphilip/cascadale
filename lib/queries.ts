@@ -1,5 +1,6 @@
 import "server-only"
 
+import type { PostgrestError } from "@supabase/supabase-js"
 import { cache } from "react"
 import { connection } from "next/server"
 
@@ -57,6 +58,14 @@ export const getAccountsWithBalances = cache(async function getAccountsWithBalan
       last_date: string | null
     }[]
   >((await db()).rpc("accounts_with_balances"))
+  // interest rates aren't in the balances function, so read them alongside
+  const rates = new Map(
+    (
+      await must<{ id: number; interest_rate: number | null }[]>(
+        (await db()).from("accounts").select("id, interest_rate")
+      )
+    ).map((r) => [r.id, r.interest_rate === null ? null : Number(r.interest_rate)])
+  )
   return rows.map((r) => ({
     id: r.id,
     name: r.name,
@@ -67,6 +76,7 @@ export const getAccountsWithBalances = cache(async function getAccountsWithBalan
     txTotal: Number(r.tx_total),
     txCount: r.tx_count,
     lastDate: r.last_date,
+    interestRate: rates.get(r.id) ?? null,
     balance:
       Math.round((Number(r.opening_balance) + Number(r.tx_total)) * 100) / 100,
   }))
@@ -790,3 +800,49 @@ export async function getOpenCasNotes(limit = 20) {
       .limit(limit)
   )
 }
+
+// ── Budget inputs ───────────────────────────────────────────────────────────
+
+/** How many rows a query matches, without fetching them. */
+async function countOf(query: PromiseLike<{ count: number | null; error: PostgrestError | null }>) {
+  const { count, error } = await query
+  if (error) throw new DbError(error)
+  return count ?? 0
+}
+
+/**
+ * What the Budget page is built from, read from the database only (no call to Akahu):
+ * the bank syncs, what's left uncategorized, and the setup pages that feed it.
+ */
+export async function getBudgetInputs() {
+  const client = await db()
+  const [accounts, linked, uncategorized, rules, oneOffs, syncs] = await Promise.all([
+    countOf(client.from("accounts").select("id", { count: "exact", head: true }).eq("archived", false)),
+    countOf(
+      client
+        .from("accounts")
+        .select("id", { count: "exact", head: true })
+        .eq("archived", false)
+        .not("akahu_id", "is", null)
+    ),
+    countOf(client.from("transactions").select("id", { count: "exact", head: true }).is("category_id", null)),
+    countOf(client.from("rules").select("id", { count: "exact", head: true })),
+    countOf(client.from("one_offs").select("id", { count: "exact", head: true })),
+    must<{ accountId: number; finishedAt: string | null; error: string | null }[]>(
+      client
+        .from("akahu_syncs")
+        .select("accountId:account_id, finishedAt:finished_at, error")
+        .order("id", { ascending: false })
+        .limit(200)
+    ),
+  ])
+  // each account's latest sync decides whether it's failing
+  const latest = new Map<number, (typeof syncs)[number]>()
+  for (const s of syncs) if (!latest.has(s.accountId)) latest.set(s.accountId, s)
+  const lastSyncedAt =
+    syncs.find((s) => s.finishedAt !== null && s.error === null)?.finishedAt ?? null
+  const failing = [...latest.values()].filter((s) => s.error !== null).length
+  return { accounts, linked, uncategorized, rules, oneOffs, lastSyncedAt, failing }
+}
+
+export type BudgetInputs = Awaited<ReturnType<typeof getBudgetInputs>>

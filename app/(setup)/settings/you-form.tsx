@@ -57,7 +57,7 @@ export function YouForm({ name, homeView }: { name: string; homeView: HomeView }
             </SelectContent>
           </Select>
           <FieldDescription>
-            The other view is a tap away on the Overview.
+            The other view is a tap away on Home.
           </FieldDescription>
         </Field>
       </FieldGroup>

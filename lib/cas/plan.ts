@@ -46,6 +46,11 @@ const CasPlanSchema = z.object({
         category_id: z.number().int().nullable().describe("For a budget allocation: the category's id from the data"),
         one_off_id: z.number().int().nullable().describe("For a one-off allocation: its id from the data"),
         account_id: z.number().int().nullable().describe("Where the money should sit, an account id from the data, or null"),
+        from_account_id: z
+          .number()
+          .int()
+          .nullable()
+          .describe("For money to move by hand (savings, goals, one-offs, debt paydown, transfers into a bills account): the account it leaves from, usually the account the paying income lands in (incomeSources[].accountId). Null when nothing moves, e.g. spending that happens where the money already is."),
       })
     )
     .describe("Where each pay's money goes, covering all of income: bills, budgets, one-offs, then savings, goals and a buffer from what's left. Together they should add up to income (per month)."),
@@ -69,7 +74,7 @@ The data (amounts in their currency, monthly unless said otherwise):
 - categories: each expense category's projection, budget (monthly equivalent), budget period and, if set, the budget as a % of income.
 - bills: recurring bills within those categories.
 - oneOffs: one-off payments still to pay: total, finish date, held, still to put in, monthly need, needNow (behind schedule) and status.
-- accounts: balances, which are debt (loans, revolving credit) and who holds each.
+- accounts: balances, which are debt (loans, revolving credit, an overdrawn account) and who holds each, with interestRate (annual %, null when unknown).
 - notes: what you remember about their decisions and preferences.
 
 Be realistic. A budget well under how a category has been running is a hope, not a plan: say so and plan with the realistic figure unless they've said they'll cut it. Goals that need more than leftOver (or leftOverAsProjected if their budgets are tight) don't fit: mark them, give the number they'd need, and say what would make them fit (a smaller amount, a later date, a named budget to cut). Never make the numbers work by quietly assuming less spending.
@@ -77,7 +82,9 @@ Be realistic. A budget well under how a category has been running is a hope, not
 The plan:
 - Allocations cover every dollar of income per month: bills, each budgeted category (or groups of small ones), each one-off's monthly need (use its oneOffId), then savings, goals and a buffer from what's left. Use the pay cadence the income actually arrives on (fortnight for a fortnightly pay) when it makes the transfers easier. If income doesn't cover it, say so and leave the shortfall visible rather than inventing money.
 - Use ids only from the data. Refer to accounts and categories by name in text, never by id.
-- Actions are concrete next steps they can do this week.
+- Debt against savings: when a debt has an interestRate above what a savings account earns, money beyond an emergency buffer does more paying the debt down; say what that's worth a year (balance × rate difference). When a rate is unknown, say that knowing it would settle it.
+- Mark where money moves from (from_account_id) on every allocation that has to be moved by hand, so on payday the app can say what to move from the account the pay landed in.
+- Actions are concrete next steps they can do this week. Leave out trivial ones (a top-up of a dollar or two).
 
 Keep every text short and plain: lead with the number, no preamble.`
 
@@ -166,6 +173,7 @@ async function save(plan: CasPlan, inputs: PlanInputs, goals: string | null, mad
       category_id: known(categoryIds, a.category_id),
       one_off_id: known(oneOffIds, a.one_off_id),
       account_id: known(accountIds, a.account_id),
+      from_account_id: known(accountIds, a.from_account_id),
       position: i,
     })),
     ...plan.actions.map((a, i) => ({

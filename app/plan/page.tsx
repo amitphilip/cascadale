@@ -261,7 +261,7 @@ function AllocationsCard({ current, inputs, fmt }: { current: CurrentPlan; input
                       )}
                       {a.categoryId !== null && (
                         <Link
-                          href={`/recurring#budget-${a.categoryId}`}
+                          href={`/plan/budgets#budget-${a.categoryId}`}
                           className="inline-flex min-h-8 items-center gap-1 font-medium text-foreground underline-offset-4 hover:underline max-sm:min-h-10"
                         >
                           <PencilSimpleIcon /> Edit budget
@@ -296,7 +296,7 @@ function BudgetsCard({ inputs, fmt }: { inputs: PlanInputs; fmt: MoneyFormat }) 
         <CardTitle>Budgets</CardTitle>
         <CardDescription>Per month, against how each category has been running.</CardDescription>
         <CardAction>
-          <Button variant="outline" size="sm" nativeButton={false} render={<Link href="/recurring" />}>
+          <Button variant="outline" size="sm" nativeButton={false} render={<Link href="/plan/budgets" />}>
             Edit all
           </Button>
         </CardAction>
@@ -306,7 +306,7 @@ function BudgetsCard({ inputs, fmt }: { inputs: PlanInputs; fmt: MoneyFormat }) 
           {rows.map((c) => (
             <li key={c.categoryId}>
               <Link
-                href={`/recurring#budget-${c.categoryId}`}
+                href={`/plan/budgets#budget-${c.categoryId}`}
                 className="flex min-h-12 items-center justify-between gap-3 py-2 hover:bg-muted/40"
               >
                 <span className="grid min-w-0">

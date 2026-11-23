@@ -3,7 +3,7 @@
 import { useEffect } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
-import { GearSixIcon, SignOutIcon } from "@phosphor-icons/react"
+import { SignOutIcon } from "@phosphor-icons/react"
 
 import {
   Sidebar,
@@ -22,7 +22,7 @@ import {
 import { signOut } from "@/app/actions"
 import { useServerAction } from "@/hooks/use-server-action"
 import { LogoMark } from "@/components/logo"
-import { NAV } from "@/lib/nav"
+import { inSection, NAV } from "@/lib/nav"
 
 export function AppSidebar({
   uncategorized,
@@ -35,8 +35,6 @@ export function AppSidebar({
   const router = useRouter()
   const { setOpenMobile } = useSidebar()
   const { pending, execute } = useServerAction()
-  const isActive = (href: string) =>
-    pathname.startsWith(href)
 
   // close the mobile drawer after navigating
   useEffect(() => {
@@ -74,7 +72,7 @@ export function AppSidebar({
               {NAV.map((item) => (
                 <SidebarMenuItem key={item.href}>
                   <SidebarMenuButton
-                    isActive={isActive(item.href)}
+                    isActive={inSection(item, pathname)}
                     tooltip={item.label}
                     render={
                       <Link
@@ -86,7 +84,7 @@ export function AppSidebar({
                     <item.icon />
                     <span>{item.label}</span>
                   </SidebarMenuButton>
-                  {item.href === "/transactions" && uncategorized > 0 && (
+                  {item.href === "/money" && uncategorized > 0 && (
                     <SidebarMenuBadge title="Uncategorized transactions">
                       {uncategorized}
                     </SidebarMenuBadge>
@@ -99,18 +97,6 @@ export function AppSidebar({
       </SidebarContent>
       <SidebarFooter>
         <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              isActive={isActive("/settings")}
-              tooltip="Settings"
-              render={
-                <Link href="/settings" onClick={() => setOpenMobile(false)} />
-              }
-            >
-              <GearSixIcon />
-              <span>Settings</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton
               tooltip={email ? `Sign out ${email}` : "Sign out"}

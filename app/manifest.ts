@@ -24,9 +24,9 @@ export default function manifest(): MetadataRoute.Manifest {
     ],
     shortcuts: [
       { name: "Plan", url: "/plan" },
+      { name: "Budgets", url: "/plan/budgets" },
       { name: "Transactions", url: "/transactions" },
-      { name: "Review categories", url: "/review" },
-      { name: "Import statements", url: "/import" },
+      { name: "Settings", url: "/settings" },
     ],
   }
 }

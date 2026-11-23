@@ -7,7 +7,7 @@ import { buildBudget, detectRecurring, parseBasis } from "@/lib/recurring"
 
 // Budgets set as a percentage of projected income. The percentage is kept on the category;
 // its amount is what that percentage of projected monthly income (on the default basis,
-// as Recurring & budget shows it) comes to, re-set whenever income moves.
+// as the Budget page shows it) comes to, re-set whenever income moves.
 
 const WEEKS_PER_MONTH = 52 / 12
 

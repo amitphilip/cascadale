@@ -160,6 +160,26 @@ export async function saveAccount(form: FormData) {
   })
 }
 
+/** Set an account's annual interest rate in percent (debt or savings), or clear it with null. */
+export async function setAccountInterestRate(accountId: number, ratePercent: number | null) {
+  return run(async () => {
+    accountId = id.parse(accountId)
+    const rate = z
+      .number({ error: "Enter the rate as a number, e.g. 8.95" })
+      .min(0, "A rate can't be negative")
+      .max(100, "Enter the rate in percent, e.g. 8.95")
+      .nullable()
+      .parse(ratePercent)
+    await must(
+      (await getDb())
+        .from("accounts")
+        .update({ interest_rate: rate === null ? null : Math.round(rate * 1000) / 1000 })
+        .eq("id", accountId)
+    )
+    return { interestRate: rate }
+  })
+}
+
 /**
  * Match an account to the bank: set its opening balance so the opening balance plus every
  * transaction up to `asOf` (default: all of them) equals the bank's balance on that day.

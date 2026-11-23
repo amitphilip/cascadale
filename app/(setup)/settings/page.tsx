@@ -4,7 +4,9 @@ import Link from "next/link"
 import { AkahuForm } from "./akahu-form"
 import { ApiKeyForm } from "./api-key-form"
 import { InstallApp } from "./install-card"
+import { PushToggle } from "./push-card"
 import { SettingsForm } from "./settings-form"
+import { SignOutButton } from "./sign-out-button"
 import { YouForm } from "./you-form"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
@@ -17,23 +19,25 @@ import {
 } from "@/components/ui/card"
 import { getAkahuStatus } from "@/lib/akahu"
 import { getApiKeyStatus } from "@/lib/anthropic"
-import { getUserId } from "@/lib/db"
+import { getDb, getUserId } from "@/lib/db"
 import { getMyPrefs, getPeople, getSettings } from "@/lib/queries"
 
 export const metadata: Metadata = { title: "Settings" }
 
 export default async function SettingsPage() {
   const userId = await getUserId()
-  const [current, apiKey, akahu, prefs, people] = await Promise.all([
+  const [current, apiKey, akahu, prefs, people, { data: auth }] = await Promise.all([
     getSettings(),
     getApiKeyStatus(),
     getAkahuStatus(),
     getMyPrefs(userId),
     getPeople(),
+    getDb().then((db) => db.auth.getClaims()),
   ])
+  const email = auth?.claims.email ?? null
   return (
     <>
-      <PageHeader title="Settings" />
+      <PageHeader title="Settings" description="You, how the app looks, and what it's connected to." />
       <Card>
         <CardHeader>
           <CardTitle>You</CardTitle>
@@ -47,6 +51,17 @@ export default async function SettingsPage() {
             name={prefs.name ?? people.find((p) => p.id === userId)?.name ?? ""}
             homeView={prefs.homeView}
           />
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>Cas messages</CardTitle>
+          <CardDescription>
+            Cas tells you when your pay lands and what to move, and gives a Monday check-in.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <PushToggle />
         </CardContent>
       </Card>
       <Card>
@@ -88,7 +103,7 @@ export default async function SettingsPage() {
           <CardTitle>Bank feeds</CardTitle>
           <CardDescription>
             Sync transactions from your New Zealand bank accounts through an Akahu
-            personal app. Link accounts on the Import page.
+            personal app. Link accounts under Import &amp; sync.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -138,6 +153,15 @@ export default async function SettingsPage() {
             </code>
             .
           </p>
+        </CardContent>
+      </Card>
+      <Card className="md:hidden">
+        <CardHeader>
+          <CardTitle>Sign out</CardTitle>
+          {email && <CardDescription>Signed in as {email}.</CardDescription>}
+        </CardHeader>
+        <CardContent>
+          <SignOutButton />
         </CardContent>
       </Card>
     </>

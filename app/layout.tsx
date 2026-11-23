@@ -89,10 +89,7 @@ export default async function RootLayout({
                     {children}
                   </div>
                 </SidebarInset>
-                <MobileTabBar
-                  uncategorized={uncategorized}
-                  email={user.email ?? null}
-                />
+                <MobileTabBar uncategorized={uncategorized} />
               </SidebarProvider>
             ) : (
               children

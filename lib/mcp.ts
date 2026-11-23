@@ -6,15 +6,17 @@ import { z } from "zod"
 
 import { bearerToken, tokenClient } from "@/lib/db"
 import { askCas } from "@/lib/cas/agent"
+import { CAS_PRACTICE, CAS_ROLE } from "@/lib/cas/knowledge"
 import { withMoney } from "@/lib/cas/tool"
 import { TOOLS, type CasTool } from "@/lib/cas/tools"
 import { loadDataHealth } from "@/lib/data-health"
 import { getSettings } from "@/lib/queries"
 
-// Two MCP servers for clients such as claude.ai, each added as its own connector:
-// - Cascadale (/api/mcp): your data and the actions on it, as plain tools.
-// - Cas (/api/mcp/cas): the advisor agent, which investigates with the read tools
-//   and remembers through its notes, and recommends actions for the client to run on Cascadale.
+// MCP servers for clients such as claude.ai, each added as its own connector:
+// - Cascadale (/api/mcp): your data, Cas's notes and the actions on them, with instructions
+//   that make the client Cas. This is the one to connect.
+// - Cas (/api/mcp/cas): the older advisor agent (ask_cas runs a second model over the read
+//   tools). Kept so existing connectors keep working.
 // Each request is authenticated by an access token from Supabase's OAuth server, and getDb
 // acts as that token's user, so every tool sees only that user's rows, just like the app.
 
@@ -26,18 +28,26 @@ export const MCP_RESOURCES = {
 
 const ACTION_NAMES = TOOLS.filter((t) => t.access === "action").map((t) => t.name)
 
-const TOOLS_INSTRUCTIONS = `Cascadale is the user's budgeting app: bank accounts synced from Akahu, transactions, categories and budgets, recurring bills and one-off payments. These tools read that data and act on it directly, through the same services and database as the website.
+// On the Cascadale connector Claude itself is Cas: it gets Cas's role and practice, every
+// read, memory and action tool, and asks before changing anything. Nothing runs a second
+// agent, so answers are as quick as the tools (which matters for voice).
+const TOOLS_INSTRUCTIONS = `Cascadale is the user's household budgeting app: bank accounts synced hourly from Akahu, transactions, categories and budgets, recurring bills, one-off payments, a plan, net worth, and Cas's notes. These tools read that data and act on it directly, through the same services and database as the website.
 
-- get_briefing is the best single overview; the other read tools answer specific questions.
-- The plan on the website's Plan page is made by Cas from projected income, budgets, bills and one-off payments: get_plan reads it (verdict, allocations, to-do actions and today's figures), make_plan has Cas redo it from the goals the user gives, and set_plan_action_done ticks off an action.
-- Budgets are weekly (Monday to Sunday) or monthly, a fixed amount or a percent of projected income. set_category_budgets takes period "week" for a weekly one; list_categories shows weeklyBudget on those, and monthlyBudget stays the monthly equivalent everything else reads. budget_progress tracks each budget against its own week or month.
-- One-off payments are known costs coming up, gathered in an account and paid by a finish date, in one go or in parts: one_off_payments reads them, save_one_off adds or changes one, and link_one_off_transactions counts a transaction towards one.
-- These tools change the user's real finances: ${ACTION_NAMES.join(", ")}. Confirm with the user before calling one, and tell them what changed from the tool's result.
-- Check data_health (on get_briefing and get_overview) before relying on numbers: name stale accounts and drift from the bank, rather than answering as if the data were current.
-- For advice (how am I doing, what should I do, can I afford X), use the Cas connector's ask_cas if it's connected; it recommends actions that you run here.
+When the user talks about their money, be Cas for them.
+
+${CAS_ROLE}
+
+${CAS_PRACTICE}
+
+Using these tools:
+- get_briefing is the best single overview; get_inbox is what Home shows them to do; the other read tools answer specific questions.
+- These tools change the user's real finances: ${ACTION_NAMES.join(", ")}. Confirm with the user before calling one, and tell them what changed from the tool's result. Notes (save_note, resolve_note) are Cas's memory and need no confirmation.
+- In voice or chat, answer in a few plain sentences: the verdict or number first, then what to do. Offer detail rather than reading out lists.
 - Every response carries the household's currency and locale; amounts are in that currency. Transaction amounts are signed: negative is money out.`
 
-const CAS_INSTRUCTIONS = `Cas is the user's financial advisor and accountant for their budgeting app, Cascadale. It investigates their accounts, bank feed syncs, transactions, budgets, recurring bills, one-off payments and plan on its own, remembers earlier conversations through its notes, and answers with what's going on and what can or should be done.
+const CAS_INSTRUCTIONS = `This is the older Cas connector; the Cascadale connector now carries everything Cas does (its notes too), and answers faster. Prefer Cascadale's tools when both are connected.
+
+Cas is the user's financial advisor and accountant for their budgeting app, Cascadale. It investigates their accounts, bank feed syncs, transactions, budgets, recurring bills, one-off payments and plan on its own, remembers earlier conversations through its notes, and answers with what's going on and what can or should be done.
 
 - Call ask_cas for open questions: how am I doing, what needs attention, can I afford X, explain my spending, is my plan realistic, am I on track for a one-off payment. Say whether the user means their own accounts or the whole household. Pass what you know from the conversation as context, and tell it about decisions the user makes.
 - Cas doesn't change the user's data. The actions it recommends (e.g. categorize_merchant, set_category_budgets) are tools on the Cascadale connector: offer them to the user and run them there once confirmed, then resolve the matching to-do here with resolve_note.
@@ -82,13 +92,14 @@ function register(server: McpServer, t: CasTool, name = t.name) {
   )
 }
 
-/** Cascadale: every read and action tool. */
+/** Cascadale: every read, memory and action tool, with Claude as Cas. */
 function createToolsServer() {
   const server = new McpServer(
-    { name: "cascadale", title: "Cascadale", version: "0.1.0" },
+    { name: "cascadale", title: "Cascadale", version: "0.2.0" },
     { instructions: TOOLS_INSTRUCTIONS }
   )
-  for (const t of TOOLS) if (t.access !== "memory") register(server, t)
+  // read_notes is get_notes here, as on the Cas connector people already know
+  for (const t of TOOLS) register(server, t, t.name === "read_notes" ? "get_notes" : t.name)
   return server
 }
 

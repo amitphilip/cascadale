@@ -11,6 +11,7 @@ import {
   runAutoCategorize,
   saveAsset,
   saveOneOff,
+  setAccountInterestRate,
   setCategoryBudgets,
   setTransactionCategory,
   syncAkahu,
@@ -33,6 +34,7 @@ import {
   type OneOff,
 } from "@/lib/db/schema"
 import { makePlan } from "@/lib/cas/plan"
+import { getInbox } from "@/lib/inbox"
 import { buildNetWorth } from "@/lib/net-worth"
 import { planOneOff } from "@/lib/one-offs"
 import { oneOffFigure } from "@/lib/plan-figures"
@@ -78,6 +80,8 @@ const month = yearMonth
 
 /** Hours after which a linked account that hasn't synced is worth mentioning (it runs hourly). */
 const STALE_HOURS = 26
+/** Failed sync runs older than this aren't listed. */
+const FAILURE_DAYS = 7
 
 /** The month asked for, or the latest month with transactions. */
 async function monthOrLatest(m?: string) {
@@ -122,6 +126,8 @@ async function syncStatus(overview?: AkahuOverview) {
       .from("akahu_syncs")
       .select("accountId:account_id, startedAt:started_at, runBy:run_by, error")
       .not("error", "is", null)
+      // older failures have been fixed or superseded; the latest sync per account is in lastSync
+      .gte("started_at", addDays(now, -FAILURE_DAYS).toISOString())
       .order("id", { ascending: false })
       .limit(10)
   )
@@ -141,7 +147,7 @@ async function notes(includeResolved = false) {
 const round2 = (n: number) => Math.round(n * 100) / 100
 
 /**
- * Whose each account is, as on the Overview's My and Family views: the signed-in person,
+ * Whose each account is, as on Home's My and Family views: the signed-in person,
  * the household's people, each account's holder by name (null for joint), and your accounts.
  */
 async function household() {
@@ -164,7 +170,7 @@ async function household() {
 const whose = z
   .enum(["everyone", "mine"])
   .optional()
-  .describe('"mine" counts only the accounts marked as yours (the Overview\'s My view); default "everyone" (the Family view)')
+  .describe('"mine" counts only the accounts marked as yours (Home\'s My view); default "everyone" (the Family view)')
 
 /** What the one-off fields mean, for the tools that return them. */
 const ONE_OFF_FIELDS =
@@ -311,7 +317,7 @@ export const TOOLS: CasTool[] = [
     title: "Accounts",
     access: "read",
     description:
-      "The currency and every account with its current balance (credit cards and loans negative when owed), the latest month with transactions, and the household's people. Each account has holder, whose it is by name (null for joint), as on the Overview's My and Family views; you names who's asking. Each account also has its pending transactions (authorised by the bank, not posted yet, flagged pending) and balanceWithPending, so a payment made minutes ago shows; a pending one drops out once it posts, so nothing counts twice. Amounts are signed: negative is money out. Includes data_health (stale feeds, drift from the bank's balance).",
+      "The currency and every account with its current balance (credit cards and loans negative when owed), the latest month with transactions, and the household's people. Each account has holder, whose it is by name (null for joint), as on Home's My and Family views; you names who's asking. Each account also has its pending transactions (authorised by the bank, not posted yet, flagged pending) and balanceWithPending, so a payment made minutes ago shows; a pending one drops out once it posts, so nothing counts twice. Amounts are signed: negative is money out. Includes data_health (stale feeds, drift from the bank's balance).",
     run: async () => {
       const [settings, accounts, latestMonth, health, people] = await Promise.all([
         getSettings(),
@@ -346,12 +352,13 @@ export const TOOLS: CasTool[] = [
       "Net worth: what you own less what you owe. Adds account balances to the assets valued by hand (such as the house), with each asset's id, value and the date it was valued, and lists accounts as cash, investments and debts. An overdrawn account counts as a debt. Asset values are only as current as valuedOn.",
     run: async () => {
       const [accounts, assets] = await Promise.all([getAccountsWithBalances(), getAssets()])
-      const account = ({ id, name, type, institution, balance }: (typeof accounts)[number]) => ({
+      const account = ({ id, name, type, institution, balance, interestRate }: (typeof accounts)[number]) => ({
         id,
         name,
         type,
         institution,
         balance,
+        interestRate,
       })
       const worth = buildNetWorth(accounts, assets)
       return {
@@ -365,6 +372,15 @@ export const TOOLS: CasTool[] = [
         debts: worth.debts.map(account),
       }
     },
+  }),
+
+  tool({
+    name: "get_inbox",
+    title: "Inbox",
+    access: "read",
+    description:
+      "What Home's inbox shows the household right now, most urgent first: the messages Cas sent on its own (source nudge: a pay landed and what to move, the Monday check-in), the plan's open to-do actions (source plan) and Cas's open to-dos (source cas). Each has a key, title, detail and due date.",
+    run: () => getInbox(),
   }),
 
   tool({
@@ -610,6 +626,19 @@ export const TOOLS: CasTool[] = [
   }),
 
   tool({
+    name: "set_account_interest_rate",
+    title: "Set an account's interest rate",
+    access: "action",
+    description:
+      "Save the annual interest rate (percent, e.g. 8.95) on an account: what a loan, overdraft or card costs, or what savings earn. Null clears it. Cas and the plan use it to weigh paying down debt against saving.",
+    input: {
+      accountId: z.number().int().positive(),
+      ratePercent: z.number().min(0).max(100).nullable(),
+    },
+    run: ({ accountId, ratePercent }) => act(setAccountInterestRate(accountId, ratePercent)),
+  }),
+
+  tool({
     name: "auto_categorize",
     title: "Auto-categorize",
     access: "action",
@@ -731,7 +760,7 @@ export const TOOLS: CasTool[] = [
     title: "Add or change a one-off payment",
     access: "action",
     description:
-      "Add a one-off payment, a known cost coming up that money is put aside for in an account, or change one by passing its oneOffId from one_off_payments (fields left out stay as they are). It shows on the One-off payments page and the Overview, and the plan counts its monthly need. Moving it to another account unlinks the transactions in the old one.",
+      "Add a one-off payment, a known cost coming up that money is put aside for in an account, or change one by passing its oneOffId from one_off_payments (fields left out stay as they are). It shows on the One-off payments page and Home, and the plan counts its monthly need. Moving it to another account unlinks the transactions in the old one.",
     input: {
       oneOffId: z.number().int().positive().optional().describe("The one-off to change; omit to add one"),
       name: z.string().trim().min(1).optional().describe("What it's for; needed when adding"),
