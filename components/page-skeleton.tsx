@@ -10,10 +10,10 @@ export function PageSkeleton() {
       </div>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
         {Array.from({ length: 6 }, (_, i) => (
-          <Skeleton key={i} className="h-24 rounded-xl" />
+          <Skeleton key={i} className="h-24 rounded-2xl" />
         ))}
       </div>
-      <Skeleton className="h-64 rounded-xl" />
+      <Skeleton className="h-64 rounded-2xl" />
     </div>
   )
 }

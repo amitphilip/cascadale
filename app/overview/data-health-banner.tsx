@@ -21,8 +21,8 @@ export async function DataHealthBanner() {
     ...drifted.map((d) => `${d.account} doesn't match the bank.`),
   ]
   return (
-    <Alert>
-      <WarningIcon />
+    <Alert variant="warning">
+      <WarningIcon weight="fill" />
       <AlertTitle>
         {stale.length > 0 ? "Some numbers may be out of date" : "A balance doesn't match the bank"}
       </AlertTitle>

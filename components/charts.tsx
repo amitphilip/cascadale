@@ -62,8 +62,8 @@ export function CashflowChart({
         />
         {/* keep legend in bar order rather than alphabetical */}
         <ChartLegend content={<ChartLegendContent />} itemSorter={null} />
-        <Bar dataKey="income" fill="var(--color-income)" radius={[4, 4, 0, 0]} maxBarSize={28} />
-        <Bar dataKey="expense" fill="var(--color-expense)" radius={[4, 4, 0, 0]} maxBarSize={28} />
+        <Bar dataKey="income" fill="var(--color-income)" radius={[4, 4, 0, 0]} maxBarSize={22} />
+        <Bar dataKey="expense" fill="var(--color-expense)" radius={[4, 4, 0, 0]} maxBarSize={22} />
       </BarChart>
     </ChartContainer>
   )
@@ -108,7 +108,7 @@ export function CategorySpendChart({
             </div>
           )} />}
         />
-        <Bar dataKey="spent" fill="var(--color-spent)" radius={4} barSize={20} />
+        <Bar dataKey="spent" fill="var(--color-spent)" radius={4} barSize={16} />
       </BarChart>
     </ChartContainer>
   )
@@ -116,7 +116,7 @@ export function CategorySpendChart({
 
 const incomeConfig = {
   regular: { label: "Regular pay", color: "var(--chart-1)" },
-  oneOff: { label: "One-offs", color: "var(--chart-3)" },
+  oneOff: { label: "One-offs", color: "var(--chart-2)" },
   rate: { label: "Regular rate /mo", color: "var(--foreground)" },
 } satisfies ChartConfig
 

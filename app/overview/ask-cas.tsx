@@ -12,7 +12,7 @@ export function AskCas() {
 
   return (
     <form
-      className="grid gap-2"
+      className="grid gap-3 rounded-2xl bg-primary p-5 text-primary-foreground max-sm:p-4"
       onSubmit={(e) => {
         e.preventDefault()
         const q = question.trim()
@@ -21,8 +21,9 @@ export function AskCas() {
         setQuestion("")
       }}
     >
-      <label htmlFor="ask-cas" className="text-sm font-medium">
-        Ask Cas
+      <label htmlFor="ask-cas" className="grid gap-0.5">
+        <span className="font-heading text-xl font-semibold">Ask Cas</span>
+        <span className="text-sm text-primary-foreground/75">Your accountant, about anything money.</span>
       </label>
       <div className="flex gap-2">
         <Input
@@ -31,13 +32,17 @@ export function AskCas() {
           onChange={(e) => setQuestion(e.target.value)}
           placeholder="Can we afford a weekend away?"
           enterKeyHint="send"
-          className="h-10"
+          className="h-10 border-transparent bg-primary-foreground text-foreground placeholder:text-foreground/45 dark:bg-background dark:text-foreground"
         />
-        <Button type="submit" size="icon" className="size-10 shrink-0" aria-label="Ask Cas in Claude" disabled={!question.trim()}>
+        <Button
+          type="submit"
+          size="icon"
+          variant="secondary"
+          className="size-10 shrink-0 bg-primary-foreground/15 text-primary-foreground hover:bg-primary-foreground/25 disabled:opacity-60" aria-label="Ask Cas in Claude" disabled={!question.trim()}>
           <PaperPlaneRightIcon />
         </Button>
       </div>
-      <p className="text-xs text-muted-foreground">Opens in Claude, where Cas can see your accounts.</p>
+      <p className="text-xs text-primary-foreground/65">Opens in Claude, where Cas can see your accounts.</p>
     </form>
   )
 }

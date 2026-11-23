@@ -37,7 +37,12 @@ export function InboxList({ items, today, locale }: { items: InboxRow[]; today: 
   const [all, setAll] = useState(false)
 
   if (shown.length === 0) {
-    return <p className="text-sm text-muted-foreground">Nothing needs you right now.</p>
+    return (
+      <p className="flex items-center gap-2 text-sm text-muted-foreground">
+        <CheckCircleIcon weight="fill" className="size-4 text-positive" aria-hidden />
+        Nothing needs you right now.
+      </p>
+    )
   }
 
   function done(item: InboxRow) {
@@ -56,13 +61,13 @@ export function InboxList({ items, today, locale }: { items: InboxRow[]; today: 
   const visible = all ? shown : shown.slice(0, FIRST)
   return (
     <div className="grid gap-2">
-      <ul className="grid gap-2">
+      <ul className="-mx-2 grid divide-y divide-border/70">
         {visible.map((item) => (
           <InboxEntry key={item.key} item={item} today={today} locale={locale} onDone={() => done(item)} />
         ))}
       </ul>
       {shown.length > FIRST && (
-        <Button variant="ghost" size="sm" className="justify-self-start" onClick={() => setAll((v) => !v)}>
+        <Button variant="ghost" size="sm" className="-ml-1 justify-self-start text-primary" onClick={() => setAll((v) => !v)}>
           {all ? "Show fewer" : `Show all ${shown.length}`}
         </Button>
       )}
@@ -94,13 +99,23 @@ function InboxEntry({
 
   const body = (
     <span className="grid min-w-0 gap-0.5">
-      <span className={cn("text-xs font-medium", nudge ? "text-primary" : "text-muted-foreground")}>
+      <span
+        className={cn(
+          "text-[0.6875rem] font-semibold tracking-[0.06em] uppercase",
+          nudge ? "text-primary" : "text-muted-foreground"
+        )}
+      >
         {SOURCE_LABEL[item.source]}
       </span>
-      <span className="font-medium text-pretty">{item.title}</span>
+      <span className="font-medium text-pretty text-foreground">{item.title}</span>
       {item.detail && <span className="text-sm text-pretty text-muted-foreground">{item.detail}</span>}
       {when && (
-        <span className={cn("text-xs", when.urgent ? "font-medium text-destructive" : "text-muted-foreground")}>
+        <span
+          className={cn(
+            "mt-0.5 w-fit rounded-full text-xs tabular-nums",
+            when.urgent ? "bg-destructive/10 px-2 py-0.5 font-medium text-destructive" : "text-muted-foreground"
+          )}
+        >
           {when.text}
         </span>
       )}
@@ -108,46 +123,41 @@ function InboxEntry({
   )
 
   return (
-    <li
-      className={cn(
-        "flex items-start gap-1 rounded-lg border",
-        nudge && "border-primary/30 bg-primary/5"
-      )}
-    >
+    <li className={cn("flex items-start gap-1 py-1", nudge && "my-1 rounded-xl border-none bg-accent py-1.5")}>
       {nudge ? (
         <span className="flex size-11 shrink-0 items-center justify-center" aria-hidden>
-          <BellRingingIcon weight="fill" className="size-5 text-primary" />
+          <BellRingingIcon weight="duotone" className="size-5 text-primary" />
         </span>
       ) : tickable ? (
         <button
           type="button"
           onClick={onDone}
           aria-label={`Mark done: ${item.title}`}
-          className="group flex size-11 shrink-0 items-center justify-center rounded-lg hover:bg-muted/60"
+          className="group flex size-11 shrink-0 items-center justify-center rounded-full hover:bg-muted/60"
         >
-          <CircleIcon className="size-5 text-muted-foreground group-hover:hidden" />
-          <CheckCircleIcon weight="fill" className="hidden size-5 text-primary group-hover:block" />
+          <CircleIcon className="size-5 text-foreground/30 group-hover:hidden" />
+          <CheckCircleIcon weight="fill" className="hidden size-5 text-positive group-hover:block" />
         </button>
       ) : (
         <span className="flex size-11 shrink-0 items-center justify-center" aria-hidden>
-          <CircleIcon className="size-5 text-muted-foreground/50" />
+          <CircleIcon className="size-5 text-foreground/15" />
         </span>
       )}
 
       {item.href ? (
         <Link
           href={item.href}
-          className="flex min-w-0 flex-1 items-start justify-between gap-2 py-2.5 pr-3 hover:bg-muted/40 rounded-r-lg"
+          className="group/row flex min-w-0 flex-1 items-start justify-between gap-2 rounded-lg py-2.5 pr-3 transition-colors hover:bg-muted/50"
         >
           {body}
-          <CaretRightIcon className="mt-5 shrink-0 text-muted-foreground" aria-hidden />
+          <CaretRightIcon className="mt-5 shrink-0 text-muted-foreground transition-transform group-hover/row:translate-x-0.5" aria-hidden />
         </Link>
       ) : (
         <div className="min-w-0 flex-1 py-2.5 pr-3">{body}</div>
       )}
 
       {nudge && (
-        <Button variant="ghost" size="sm" className="my-1.5 mr-1.5 shrink-0" onClick={onDone}>
+        <Button variant="outline" size="sm" className="my-2 mr-2 shrink-0 bg-card" onClick={onDone}>
           Got it
         </Button>
       )}

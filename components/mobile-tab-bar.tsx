@@ -13,7 +13,7 @@ export function MobileTabBar({ uncategorized }: { uncategorized: number }) {
   return (
     <nav
       aria-label="Main"
-      className="fixed inset-x-0 bottom-0 z-30 flex border-t bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur supports-backdrop-filter:bg-background/80 md:hidden"
+      className="fixed inset-x-0 bottom-0 z-30 flex border-t bg-background/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-md supports-backdrop-filter:bg-background/75 md:hidden"
     >
       {NAV.map((tab) => {
         const active = inSection(tab, pathname)
@@ -24,7 +24,7 @@ export function MobileTabBar({ uncategorized }: { uncategorized: number }) {
             aria-current={active ? "page" : undefined}
             className={cn(
               "flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 text-[11px] font-medium",
-              active ? "text-foreground" : "text-muted-foreground"
+              active ? "text-primary" : "text-muted-foreground"
             )}
           >
             <span className="relative">

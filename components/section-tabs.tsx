@@ -52,7 +52,7 @@ export function SectionTabs({
                 className={cn(
                   "-mb-px flex min-h-11 items-center gap-1.5 border-b-2 px-3 text-sm whitespace-nowrap transition-colors",
                   current
-                    ? "border-foreground font-medium text-foreground"
+                    ? "border-primary font-medium text-foreground"
                     : "border-transparent text-muted-foreground hover:text-foreground"
                 )}
               >

@@ -30,7 +30,7 @@ export function ViewSwitch({
   return (
     <nav
       aria-label="Whose money"
-      className="grid w-full grid-cols-2 rounded-lg border bg-muted/50 p-0.5 text-sm sm:inline-grid sm:w-auto"
+      className="grid w-full grid-cols-2 rounded-xl bg-secondary p-1 text-sm sm:inline-grid sm:w-auto"
     >
       {items.map((item) => (
         <Link
@@ -38,9 +38,9 @@ export function ViewSwitch({
           href={href(item.view)}
           aria-current={view === item.view ? "page" : undefined}
           className={cn(
-            "flex min-h-10 min-w-0 items-center justify-center gap-1.5 rounded-md px-4 font-medium",
+            "flex min-h-9 min-w-0 items-center justify-center gap-1.5 rounded-lg px-4 font-medium transition-colors",
             view === item.view
-              ? "bg-background text-foreground shadow-sm"
+              ? "bg-card text-foreground shadow-card"
               : "text-muted-foreground hover:text-foreground"
           )}
         >

@@ -50,11 +50,11 @@ export function AppSidebar({
               size="lg"
               render={<Link href="/" onClick={() => setOpenMobile(false)} />}
             >
-              <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
+              <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground shadow-sm">
                 <LogoMark className="size-5" />
               </div>
               <div className="grid flex-1 text-left leading-tight">
-                <span className="truncate font-heading font-semibold">
+                <span className="truncate font-heading text-base font-semibold">
                   Cascadale
                 </span>
                 <span className="truncate text-xs text-muted-foreground">
@@ -66,7 +66,7 @@ export function AppSidebar({
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
-        <SidebarGroup>
+        <SidebarGroup className="pt-3">
           <SidebarGroupContent>
             <SidebarMenu>
               {NAV.map((item) => (
@@ -74,6 +74,7 @@ export function AppSidebar({
                   <SidebarMenuButton
                     isActive={inSection(item, pathname)}
                     tooltip={item.label}
+                    className="h-9 text-sidebar-foreground/75 data-active:font-medium data-active:text-sidebar-foreground data-active:shadow-card data-active:[&>svg]:text-sidebar-primary"
                     render={
                       <Link
                         href={item.href}

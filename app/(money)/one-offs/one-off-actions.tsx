@@ -132,7 +132,7 @@ export function LinkTransactionsDialog({
                   <span
                     className={cn(
                       "text-sm tabular-nums",
-                      t.amount > 0 && "text-emerald-600 dark:text-emerald-400"
+                      t.amount > 0 && "text-positive"
                     )}
                   >
                     {formatMoney(t.amount, fmt, { signed: true })}

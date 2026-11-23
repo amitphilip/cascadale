@@ -369,7 +369,7 @@ function OneOffCard({
                   <span
                     className={cn(
                       "tabular-nums",
-                      t.amount > 0 && "text-emerald-600 dark:text-emerald-400"
+                      t.amount > 0 && "text-positive"
                     )}
                   >
                     {money(t.amount, true)}
@@ -432,7 +432,7 @@ function MoveList({
           <span
             className={cn(
               "tabular-nums",
-              m.kind === "in" && "text-emerald-600 dark:text-emerald-400"
+              m.kind === "in" && "text-positive"
             )}
           >
             {money(m.kind === "in" ? m.amount : -m.amount, true)}

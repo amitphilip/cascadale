@@ -32,11 +32,14 @@ export const metadata: Metadata = { title: "Plan" }
 // Asking Cas for a plan is a server action on this page that can take a minute or two.
 export const maxDuration = 300
 
-const VERDICT: Record<PlanVerdict, { label: string; className: string }> = {
-  realistic: { label: "Realistic", className: "bg-emerald-600/10 text-emerald-700 dark:text-emerald-400" },
-  stretch: { label: "A stretch", className: "bg-amber-500/15 text-amber-800 dark:text-amber-300" },
-  unrealistic: { label: "Not realistic", className: "bg-destructive/10 text-destructive" },
+const VERDICT: Record<PlanVerdict, { label: string; variant: "positive" | "warning" | "destructive"; bar: string }> = {
+  realistic: { label: "Realistic", variant: "positive", bar: "bg-positive" },
+  stretch: { label: "A stretch", variant: "warning", bar: "bg-warning" },
+  unrealistic: { label: "Not realistic", variant: "destructive", bar: "bg-destructive" },
 }
+
+/** A small label over a group of rows. */
+const EYEBROW = "text-[0.6875rem] font-semibold tracking-[0.08em] text-muted-foreground uppercase"
 
 const PURPOSES: { purpose: PlanPurpose; label: string }[] = [
   { purpose: "bills", label: "Bills" },
@@ -51,7 +54,7 @@ const PER_MONTH: Record<PlanEvery, number> = { week: 52 / 12, fortnight: 26 / 12
 const EVERY_SUFFIX: Record<PlanEvery, string> = { week: "/wk", fortnight: "/fn", month: "/mo", once: " once" }
 
 /** Cards hold to a phone's width with less padding. */
-const TIGHT = "max-sm:[--card-spacing:--spacing(4)]"
+const TIGHT = "max-sm:[--card-spacing:--spacing(5)]"
 
 /** Plan figures move this much from what the plan was made on before it's worth redoing. */
 const STALE_SHARE = 0.05
@@ -155,24 +158,29 @@ function VerdictCard({ current, stale }: { current: CurrentPlan; stale: boolean 
   const { plan } = current
   const v = VERDICT[plan.verdict]
   return (
-    <Card className={TIGHT}>
+    <Card className={cn(TIGHT, "relative")}>
+      <span aria-hidden className={cn("absolute inset-y-0 left-0 w-1", v.bar)} />
       <CardHeader>
         <div className="flex flex-wrap items-center gap-2">
-          <Badge className={cn("h-6 px-2.5 text-sm", v.className)}>{v.label}</Badge>
-          <CardTitle className="text-base">Cas&rsquo;s read</CardTitle>
+          <CardTitle className="font-heading text-xl font-semibold">Cas&rsquo;s read</CardTitle>
+          <Badge variant={v.variant}>{v.label}</Badge>
         </div>
       </CardHeader>
       <CardContent className="grid gap-4 text-base max-sm:gap-3">
-        <p>{plan.verdictNote}</p>
-        <p className="text-muted-foreground">{plan.summary}</p>
+        <p className="max-w-[68ch] leading-relaxed sm:text-[1.0625rem] text-pretty">{plan.verdictNote}</p>
+        <p className="max-w-[80ch] text-sm leading-relaxed text-pretty text-muted-foreground">{plan.summary}</p>
         {plan.goalChecks.length > 0 && (
-          <ul className="grid gap-2 text-sm">
+          <ul className="grid divide-y border-t text-sm">
             {plan.goalChecks.map((g, i) => (
-              <li key={i} className="flex items-start gap-2.5 rounded-lg border p-3">
+              <li key={i} className="flex items-start gap-3 py-3">
                 {g.fits ? (
-                  <CheckIcon weight="bold" className="mt-0.5 size-4 shrink-0 text-emerald-600" aria-label="Fits" />
+                  <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-positive/12">
+                    <CheckIcon weight="bold" className="size-3 text-positive" aria-label="Fits" />
+                  </span>
                 ) : (
-                  <XIcon weight="bold" className="mt-0.5 size-4 shrink-0 text-destructive" aria-label="Doesn't fit" />
+                  <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-destructive/10">
+                    <XIcon weight="bold" className="size-3 text-destructive" aria-label="Doesn't fit" />
+                  </span>
                 )}
                 <span className="grid gap-0.5">
                   <span className="font-medium">{g.goal}</span>
@@ -183,8 +191,8 @@ function VerdictCard({ current, stale }: { current: CurrentPlan; stale: boolean 
           </ul>
         )}
         {stale && (
-          <p className="flex items-start gap-2 rounded-lg bg-muted p-3 text-sm">
-            <WarningIcon className="mt-0.5 shrink-0" />
+          <p className="flex items-start gap-2 rounded-xl bg-warning/8 p-3 text-sm ring-1 ring-warning/20">
+            <WarningIcon weight="fill" className="mt-0.5 shrink-0 text-warning" />
             Your income, budgets or one-offs have moved since this plan was made. Ask Cas to redo it.
           </p>
         )}
@@ -206,13 +214,18 @@ function FiguresCard({ inputs, fmt }: { inputs: PlanInputs; fmt: MoneyFormat }) 
     <section aria-label="This month's numbers" className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
       {tiles.map((t) => (
         <Card key={t.label} size="sm">
-          <CardHeader>
-            <CardDescription>{t.label}</CardDescription>
-            <CardTitle className={cn("text-xl tabular-nums sm:text-2xl", t.tone && "text-destructive")}>
+          <CardHeader className="gap-1.5">
+            <CardDescription className="text-xs font-medium">{t.label}</CardDescription>
+            <CardTitle
+              className={cn(
+                "font-heading text-2xl! leading-none font-semibold tracking-[-0.01em] tabular-nums sm:text-[1.75rem]!",
+                t.tone && "text-destructive"
+              )}
+            >
               {formatMoney(t.value, fmt)}
             </CardTitle>
           </CardHeader>
-          <CardContent className="text-xs text-muted-foreground">{t.hint}</CardContent>
+          <CardContent className="text-xs text-pretty text-muted-foreground">{t.hint}</CardContent>
         </Card>
       ))}
     </section>
@@ -239,13 +252,13 @@ function AllocationsCard({ current, inputs, fmt }: { current: CurrentPlan; input
           if (items.length === 0) return null
           return (
             <section key={purpose} className="grid gap-2">
-              <h3 className="flex items-baseline justify-between text-sm font-medium text-muted-foreground">
+              <h3 className={cn(EYEBROW, "flex items-baseline justify-between border-b pb-2")}>
                 {label}
                 <span className="tabular-nums">{formatMoney(items.reduce((s, a) => s + monthly(a), 0), fmt)}/mo</span>
               </h3>
-              <ul className="grid gap-2">
+              <ul className="grid divide-y divide-border/70">
                 {items.map((a) => (
-                  <li key={a.id} className="grid gap-1 rounded-lg border p-3">
+                  <li key={a.id} className="grid gap-1 py-3 first:pt-1">
                     <div className="flex items-baseline justify-between gap-3">
                       <span className="min-w-0 font-medium">{a.title}</span>
                       <span className="shrink-0 font-medium tabular-nums">
@@ -307,7 +320,7 @@ function BudgetsCard({ inputs, fmt }: { inputs: PlanInputs; fmt: MoneyFormat }) 
             <li key={c.categoryId}>
               <Link
                 href={`/plan/budgets#budget-${c.categoryId}`}
-                className="flex min-h-12 items-center justify-between gap-3 py-2 hover:bg-muted/40"
+                className="-mx-2 flex min-h-12 items-center justify-between gap-3 rounded-lg px-2 py-2 transition-colors hover:bg-muted/60"
               >
                 <span className="grid min-w-0">
                   <span className="truncate font-medium">{c.name}</span>
@@ -370,7 +383,7 @@ function OneOffsCard({ inputs, fmt }: { inputs: PlanInputs; fmt: MoneyFormat }) 
                 </span>
                 <span className="grid shrink-0 justify-items-end">
                   <span className="tabular-nums">{formatMoney(o.monthly, fmt)}/mo</span>
-                  <Badge variant={o.status === "on_track" ? "outline" : "destructive"}>
+                  <Badge variant={o.status === "on_track" ? "positive" : "destructive"}>
                     {ONE_OFF_STATUS[o.status] ?? o.status}
                   </Badge>
                 </span>

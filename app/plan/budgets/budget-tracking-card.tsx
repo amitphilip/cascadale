@@ -18,7 +18,7 @@ import { cn } from "@/lib/utils"
 
 const PACE_TONE: Record<Pace, string> = {
   over: "text-destructive",
-  ahead: "text-amber-700 dark:text-amber-400",
+  ahead: "text-warning",
   on_pace: "text-muted-foreground",
 }
 
@@ -66,7 +66,7 @@ export function BudgetTrackingCard({
                   value={Math.min(b.spent / b.budget, 1) * 100}
                   className={cn(
                     b.pace === "over" && "[&_[data-slot=progress-indicator]]:bg-destructive",
-                    b.pace === "ahead" && "[&_[data-slot=progress-indicator]]:bg-amber-500"
+                    b.pace === "ahead" && "[&_[data-slot=progress-indicator]]:bg-warning"
                   )}
                 />
                 <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 text-xs">

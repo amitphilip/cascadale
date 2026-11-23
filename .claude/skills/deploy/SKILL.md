@@ -12,7 +12,7 @@ Deploy the Cascadale repo at /Users/aphilip/projects/cascadale. Run these steps 
    `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`
    If there is nothing to commit, skip to step 4.
 4. `git push origin HEAD`
-5. `supabase link --project-ref zgjvrzmdvaqmexpscybh`
+5. `supabase link --project-ref ggyrknbmqbkkufiepjjg`
 6. `supabase db push` (add `--yes` if it prompts for confirmation)
 7. `supabase functions deploy` (deploys every function under `supabase/functions/`, e.g. `akahu-sync`)
 
