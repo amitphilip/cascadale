@@ -220,7 +220,7 @@ function StatCard({ label, value, hint }: { label: string; value: string; hint: 
     <Card size="sm">
       <CardHeader className="gap-1.5">
         <CardDescription className="text-xs font-medium">{label}</CardDescription>
-        <CardTitle className="font-heading text-xl! leading-none font-semibold tracking-[-0.01em] break-words tabular-nums sm:text-[1.625rem]!">
+        <CardTitle className="font-heading text-lg! leading-none font-semibold break-words tabular-nums sm:text-[1.375rem]!">
           {value}
         </CardTitle>
       </CardHeader>

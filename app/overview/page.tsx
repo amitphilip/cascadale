@@ -225,14 +225,14 @@ function LeftToSpendHero({ left, today, fmt }: { left: LeftToSpend; today: strin
           </p>
           <p
             className={cn(
-              "font-heading text-5xl leading-none font-semibold tracking-[-0.02em] tabular-nums sm:text-6xl",
+              "font-heading text-4xl leading-none font-semibold tracking-[-0.015em] tabular-nums sm:text-[2.75rem]",
               over && "text-destructive"
             )}
           >
             {over && <span className="mr-1 text-[0.6em] align-[0.2em]">&minus;</span>}
             {money(over ? -left.amount : left.amount)}
           </p>
-          <p className="mt-2 text-base font-medium text-pretty">
+          <p className="mt-2 text-sm font-medium text-pretty">
             {over
               ? `Hold off on extras until ${nextMonth}.`
               : `About ${money(left.perDay)} a day for ${left.daysLeft} day${left.daysLeft === 1 ? "" : "s"}.`}
@@ -271,7 +271,7 @@ function PlanLine({ verdict, note }: { verdict: PlanVerdict | null; note: string
       className="group flex min-h-14 items-center gap-3 rounded-2xl bg-card px-5 py-4 shadow-card transition-colors hover:bg-accent/60 max-sm:px-4"
     >
       <span className="grid min-w-0 flex-1 gap-1.5">
-        <span className="flex flex-wrap items-center gap-2 text-[0.9375rem] font-semibold">
+        <span className="flex flex-wrap items-center gap-2 text-sm font-semibold">
           Your plan
           {v && <Badge variant={v.variant}>{v.label}</Badge>}
         </span>

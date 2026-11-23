@@ -22,9 +22,9 @@ export function PageHeader({
       )}
     >
       <div className="min-w-0">
-        <h1 className="font-heading text-[1.75rem] leading-tight font-semibold tracking-[-0.015em] sm:text-[2rem]">{title}</h1>
+        <h1 className="font-heading text-2xl leading-tight font-semibold tracking-[-0.01em] sm:text-[1.625rem]">{title}</h1>
         {description && (
-          <p className="mt-1.5 max-w-2xl text-sm text-pretty text-muted-foreground">{description}</p>
+          <p className="mt-1 max-w-2xl text-sm text-pretty text-muted-foreground">{description}</p>
         )}
       </div>
       {children && (

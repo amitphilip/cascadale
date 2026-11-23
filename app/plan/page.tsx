@@ -162,12 +162,12 @@ function VerdictCard({ current, stale }: { current: CurrentPlan; stale: boolean 
       <span aria-hidden className={cn("absolute inset-y-0 left-0 w-1", v.bar)} />
       <CardHeader>
         <div className="flex flex-wrap items-center gap-2">
-          <CardTitle className="font-heading text-xl font-semibold">Cas&rsquo;s read</CardTitle>
+          <CardTitle className="font-heading text-lg font-semibold">Cas&rsquo;s read</CardTitle>
           <Badge variant={v.variant}>{v.label}</Badge>
         </div>
       </CardHeader>
-      <CardContent className="grid gap-4 text-base max-sm:gap-3">
-        <p className="max-w-[68ch] leading-relaxed sm:text-[1.0625rem] text-pretty">{plan.verdictNote}</p>
+      <CardContent className="grid gap-4 text-sm max-sm:gap-3">
+        <p className="max-w-[72ch] text-[0.9375rem] leading-relaxed text-pretty">{plan.verdictNote}</p>
         <p className="max-w-[80ch] text-sm leading-relaxed text-pretty text-muted-foreground">{plan.summary}</p>
         {plan.goalChecks.length > 0 && (
           <ul className="grid divide-y border-t text-sm">
@@ -218,7 +218,7 @@ function FiguresCard({ inputs, fmt }: { inputs: PlanInputs; fmt: MoneyFormat }) 
             <CardDescription className="text-xs font-medium">{t.label}</CardDescription>
             <CardTitle
               className={cn(
-                "font-heading text-2xl! leading-none font-semibold tracking-[-0.01em] tabular-nums sm:text-[1.75rem]!",
+                "font-heading text-xl! leading-none font-semibold tabular-nums sm:text-[1.375rem]!",
                 t.tone && "text-destructive"
               )}
             >

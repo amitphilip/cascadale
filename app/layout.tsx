@@ -89,7 +89,7 @@ export default async function RootLayout({
                     <span className="flex size-6 items-center justify-center rounded-md bg-primary text-primary-foreground">
                       <LogoMark className="size-4" />
                     </span>
-                    <span className="font-heading text-lg font-semibold">Cascadale</span>
+                    <span className="font-heading text-base font-semibold">Cascadale</span>
                   </header>
                   <div className="mx-auto flex w-full max-w-6xl min-w-0 flex-1 flex-col gap-6 px-3 py-4 pb-[calc(5rem+env(safe-area-inset-bottom))] sm:p-4 sm:pb-[calc(5rem+env(safe-area-inset-bottom))] md:px-10 md:py-9">
                     {children}

@@ -22,7 +22,7 @@ export function AskCas() {
       }}
     >
       <label htmlFor="ask-cas" className="grid gap-0.5">
-        <span className="font-heading text-xl font-semibold">Ask Cas</span>
+        <span className="font-heading text-lg font-semibold">Ask Cas</span>
         <span className="text-sm text-primary-foreground/75">Your accountant, about anything money.</span>
       </label>
       <div className="flex gap-2">

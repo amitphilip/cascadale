@@ -1,8 +1,10 @@
 import type { Metadata } from "next"
+import { headers } from "next/headers"
 import Link from "next/link"
 
 import { AkahuForm } from "./akahu-form"
 import { ApiKeyForm } from "./api-key-form"
+import { CopyField } from "./copy-field"
 import { InstallApp } from "./install-card"
 import { PushToggle } from "./push-card"
 import { SettingsForm } from "./settings-form"
@@ -18,6 +20,7 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { getAkahuStatus } from "@/lib/akahu"
+import { MCP_RESOURCES } from "@/lib/mcp"
 import { getApiKeyStatus } from "@/lib/anthropic"
 import { getDb, getUserId } from "@/lib/db"
 import { getMyPrefs, getPeople, getSettings } from "@/lib/queries"
@@ -35,6 +38,7 @@ export default async function SettingsPage() {
     getDb().then((db) => db.auth.getClaims()),
   ])
   const email = auth?.claims.email ?? null
+  const origin = await siteOrigin()
   return (
     <>
       <PageHeader title="Settings" description="You, how the app looks, and what it's connected to." />
@@ -112,6 +116,31 @@ export default async function SettingsPage() {
       </Card>
       <Card>
         <CardHeader>
+          <CardTitle>Claude connectors</CardTitle>
+          <CardDescription>
+            Talk to Cas from claude.ai or the Claude app. In Claude, go to Settings → Connectors →
+            Add custom connector, paste this address, then sign in with your Cascadale account.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4">
+          <div className="grid gap-1.5">
+            <p className="text-sm font-medium">Cascadale</p>
+            <CopyField value={`${origin}${MCP_RESOURCES.tools}`} label="Cascadale connector address" />
+            <p className="text-xs text-muted-foreground">
+              Your money, Cas&rsquo;s notes and the actions. This is the one to add.
+            </p>
+          </div>
+          <div className="grid gap-1.5">
+            <p className="text-sm font-medium">Cas (older)</p>
+            <CopyField value={`${origin}${MCP_RESOURCES.cas}`} label="Cas connector address" />
+            <p className="text-xs text-muted-foreground">
+              Kept for connectors already set up. Cascadale does everything it does, faster.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
           <CardTitle>Password</CardTitle>
           <CardDescription>
             Change the password you sign in with.
@@ -166,4 +195,13 @@ export default async function SettingsPage() {
       </Card>
     </>
   )
+}
+
+/** Where this app is being served from, as the browser sees it (behind Vercel's proxy too). */
+async function siteOrigin() {
+  const h = await headers()
+  const host = h.get("x-forwarded-host") ?? h.get("host") ?? "localhost:3000"
+  const proto =
+    h.get("x-forwarded-proto") ?? (host.startsWith("localhost") || host.startsWith("127.") ? "http" : "https")
+  return `${proto}://${host}`
 }
