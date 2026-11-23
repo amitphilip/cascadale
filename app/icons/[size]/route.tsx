@@ -1,6 +1,6 @@
 import { ImageResponse } from "next/og"
 
-import { LOGO_PATH } from "@/components/logo"
+import { LOGO_BG, LOGO_FG, LOGO_PATH } from "@/components/logo"
 
 const SIZES = new Set([192, 512])
 
@@ -24,14 +24,14 @@ export async function GET(
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "#171717",
+        background: LOGO_BG,
       }}
     >
       <svg width={mark} height={mark} viewBox="0 0 32 32">
         <path
           d={LOGO_PATH}
           fill="none"
-          stroke="#fff"
+          stroke={LOGO_FG}
           strokeWidth={3}
           strokeLinecap="round"
           strokeLinejoin="round"

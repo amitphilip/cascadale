@@ -92,10 +92,22 @@ function register(server: McpServer, t: CasTool, name = t.name) {
   )
 }
 
+/** Who's serving: the site's address and the app icon, so Claude shows the mark beside the connector. */
+function serverMeta(origin: string) {
+  return {
+    websiteUrl: origin,
+    icons: [
+      { src: `${origin}/icon.svg`, mimeType: "image/svg+xml", sizes: ["any"] },
+      { src: `${origin}/icons/192`, mimeType: "image/png", sizes: ["192x192"] },
+      { src: `${origin}/icons/512`, mimeType: "image/png", sizes: ["512x512"] },
+    ],
+  }
+}
+
 /** Cascadale: every read, memory and action tool, with Claude as Cas. */
-function createToolsServer() {
+function createToolsServer(origin: string) {
   const server = new McpServer(
-    { name: "cascadale", title: "Cascadale", version: "0.2.0" },
+    { name: "cascadale", title: "Cascadale", version: "0.2.0", ...serverMeta(origin) },
     { instructions: TOOLS_INSTRUCTIONS }
   )
   // read_notes is get_notes here, as on the Cas connector people already know
@@ -104,9 +116,9 @@ function createToolsServer() {
 }
 
 /** Cas: the advisor agent, plus a view of its notes. */
-function createCasServer() {
+function createCasServer(origin: string) {
   const server = new McpServer(
-    { name: "cas", title: "Cas", version: "0.1.0" },
+    { name: "cas", title: "Cas", version: "0.1.0", ...serverMeta(origin) },
     { instructions: CAS_INSTRUCTIONS }
   )
 
@@ -178,7 +190,8 @@ export function mcpHandler(which: keyof typeof MCP_RESOURCES) {
       )
     }
 
-    const server = which === "cas" ? createCasServer() : createToolsServer()
+    const origin = new URL(request.url).origin
+    const server = which === "cas" ? createCasServer(origin) : createToolsServer(origin)
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,

@@ -1,6 +1,6 @@
 import { ImageResponse } from "next/og"
 
-import { LOGO_PATH } from "@/components/logo"
+import { LOGO_BG, LOGO_FG, LOGO_PATH } from "@/components/logo"
 
 export const size = { width: 180, height: 180 }
 export const contentType = "image/png"
@@ -14,14 +14,14 @@ export default function AppleIcon() {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "#171717",
+        background: LOGO_BG,
       }}
     >
       <svg width="150" height="150" viewBox="0 0 32 32">
         <path
           d={LOGO_PATH}
           fill="none"
-          stroke="#fff"
+          stroke={LOGO_FG}
           strokeWidth={3}
           strokeLinecap="round"
           strokeLinejoin="round"
