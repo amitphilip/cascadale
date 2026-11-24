@@ -49,6 +49,8 @@ import { HOME_VIEWS } from "@/lib/views"
 import { RECURRING_BASES } from "@/lib/recurring"
 import { percentAmount, projectedMonthlyIncome } from "@/lib/budget-percent"
 import { buildMatcher, merchantKey } from "@/lib/rules"
+import { processCasQueue } from "@/lib/cas-queue"
+import { merchantName } from "@/supabase/functions/_shared/cas-queue"
 
 // Actions act as the signed-in user: the Supabase client carries their session, and row
 // level security limits every query to their rows. Signed out, they see and change nothing.
@@ -359,6 +361,104 @@ export async function setTransactionCategory(
     await refreshTodos(db)
     return { updatedSimilar }
   })
+}
+
+const moveSchema = z.object({
+  txId: id,
+  to: z.union([z.object({ oneOffId: id }), z.object({ categoryId: optionalId })]),
+  remember: z.boolean(),
+})
+
+export type MoveTarget = { categoryId: number | null } | { oneOffId: number }
+
+/**
+ * Move one transaction to another category, or to count towards a one-off payment, from
+ * Home's budget tracking. It applies now; Cas takes it in later (Update Cas, or each
+ * morning), and with `remember` makes it the merchant's rule then.
+ */
+export async function moveTransaction(txId: number, to: MoveTarget, remember: boolean) {
+  return run(async () => {
+    const input = moveSchema.parse({ txId, to, remember })
+    const db = await getDb()
+    const tx = await must<{
+      id: number
+      description: string
+      amount: number
+      date: string
+      accountId: number
+      categoryId: number | null
+    } | null>(
+      db
+        .from("transactions")
+        .select("id, description, amount, date, accountId:account_id, categoryId:category_id")
+        .eq("id", input.txId)
+        .maybeSingle()
+    )
+    if (!tx) throw new Error("Transaction not found")
+    const [link] = await must<{ oneOffId: number }[]>(
+      db.from("one_off_transactions").select("oneOffId:one_off_id").eq("transaction_id", tx.id)
+    )
+    const fromOneOff = link?.oneOffId ?? null
+    const unlink = () => must(db.from("one_off_transactions").delete().eq("transaction_id", tx.id))
+
+    const target = input.to
+    if ("oneOffId" in target) {
+      const oneOff = await must<{ name: string; accountId: number } | null>(
+        db.from("one_offs").select("name, accountId:account_id").eq("id", target.oneOffId).maybeSingle()
+      )
+      if (!oneOff) throw new Error("One-off payment not found")
+      if (fromOneOff === target.oneOffId) throw new Error(`It already counts towards ${oneOff.name}`)
+      if (oneOff.accountId !== tx.accountId) {
+        throw new Error(`${oneOff.name} is paid from another account, so only that account's transactions count towards it`)
+      }
+      if (fromOneOff !== null) await unlink()
+      await must(db.from("one_off_transactions").insert({ one_off_id: target.oneOffId, transaction_id: tx.id }))
+    } else {
+      if (fromOneOff !== null) await unlink()
+      await must(db.from("transactions").update(manualCategory(target.categoryId)).eq("id", tx.id))
+    }
+
+    // Queue it for Cas. A move still waiting for this transaction is replaced, keeping where
+    // it started; moving it back there leaves nothing to tell Cas.
+    const [waiting] = await must<{ fromCategoryId: number | null; fromOneOffId: number | null }[]>(
+      db
+        .from("cas_queue")
+        .select("fromCategoryId:from_category_id, fromOneOffId:from_one_off_id")
+        .eq("transaction_id", tx.id)
+        .is("processed_at", null)
+    )
+    const from = waiting ?? { fromCategoryId: tx.categoryId, fromOneOffId: fromOneOff }
+    if (waiting) {
+      await must(db.from("cas_queue").delete().eq("transaction_id", tx.id).is("processed_at", null))
+    }
+    const toOneOff = "oneOffId" in target ? target.oneOffId : null
+    const toCategory = "oneOffId" in target ? tx.categoryId : target.categoryId
+    const backHome = from.fromOneOffId === toOneOff && (toOneOff !== null || from.fromCategoryId === toCategory)
+    const key = merchantKey(tx.description)
+    if (!backHome) {
+      await must(
+        db.from("cas_queue").insert({
+          transaction_id: tx.id,
+          description: tx.description,
+          merchant_key: key,
+          amount: tx.amount,
+          tx_date: tx.date,
+          from_category_id: from.fromCategoryId,
+          from_one_off_id: from.fromOneOffId,
+          to_category_id: toOneOff === null ? toCategory : null,
+          to_one_off_id: toOneOff,
+          remember: toOneOff === null && toCategory !== null && input.remember,
+        })
+      )
+    }
+    await refreshTodos(db)
+    return { merchant: merchantName(key), queued: !backHome }
+  })
+}
+
+/** Cas takes in the corrections waiting for it now, rather than tomorrow morning. */
+export async function updateCas() {
+  return run(() => processCasQueue())
 }
 
 export async function deleteTransaction(txId: number) {

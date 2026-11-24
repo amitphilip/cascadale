@@ -113,6 +113,16 @@ export async function loadPlanInputs() {
       format(addDays(parseISO(monthOf(today).end), -1), "yyyy-MM-dd")
     ).map((p) => ({ ...p, account: accountName.get(p.accountId) ?? null })),
     categories: expense,
+    /** the regular bills still to go out this month, each with its category, like paysDue */
+    billsDue: lines
+      .filter((l) => l.direction < 0)
+      .flatMap((l) =>
+        paysDue(
+          l.series.filter((s) => !s.ended && !s.excluded),
+          today,
+          format(addDays(parseISO(monthOf(today).end), -1), "yyyy-MM-dd")
+        ).map((p) => ({ ...p, categoryId: l.categoryId }))
+      ),
     bills: lines
       .filter((l) => l.direction < 0)
       .flatMap((l) =>

@@ -846,3 +846,42 @@ export async function getBudgetInputs() {
 }
 
 export type BudgetInputs = Awaited<ReturnType<typeof getBudgetInputs>>
+
+// ── Home's month ────────────────────────────────────────────────────────────
+
+export type SpendTx = {
+  id: number
+  date: string
+  description: string
+  amount: number
+  accountId: number
+  categoryId: number | null
+  categorySource: CategorySource | null
+  /** the one-off payment it counts towards, if any */
+  oneOffId: number | null
+}
+
+/** Every transaction counted as money in or out over [start, end), newest first: transfers and sinking-fund draws left out. */
+export async function getSpendTransactions(start: string, end: string): Promise<SpendTx[]> {
+  const client = await db()
+  const rows = await selectAll<{
+    id: number
+    date: string
+    description: string
+    amount: number
+    account_id: number
+    category_id: number | null
+    category_source: CategorySource | null
+    one_off_id: number | null
+  }>((from, to) => client.rpc("spend_transactions", { p_start: start, p_end: end }).range(from, to))
+  return rows.map((r) => ({
+    id: r.id,
+    date: r.date,
+    description: r.description,
+    amount: Number(r.amount),
+    accountId: r.account_id,
+    categoryId: r.category_id,
+    categorySource: r.category_source,
+    oneOffId: r.one_off_id,
+  }))
+}

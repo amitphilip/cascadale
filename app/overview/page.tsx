@@ -5,6 +5,7 @@ import { addDays, format, parseISO } from "date-fns"
 import { CaretRightIcon, CheckCircleIcon, UploadSimpleIcon, UserIcon } from "@phosphor-icons/react/ssr"
 
 import { AskCas } from "./ask-cas"
+import { BudgetTracking } from "./budget-tracking"
 import { DataHealthBanner } from "./data-health-banner"
 import { InboxList } from "./inbox-list"
 import { ViewSwitch } from "./view-switch"
@@ -22,22 +23,19 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty"
-import { trackBudgets, weekOf, type BudgetTrack } from "@/lib/budget-tracking"
+import { getPendingCorrections } from "@/lib/cas-queue"
 import { getUserId } from "@/lib/db"
 import type { OneOff, PlanVerdict } from "@/lib/db/schema"
-import { formatDate, formatMoney, type MoneyFormat } from "@/lib/format"
+import { formatDate, formatMonth, formatMoney, type MoneyFormat } from "@/lib/format"
 import { getInbox } from "@/lib/inbox"
-import { getLeftToSpend, type LeftToSpend } from "@/lib/left-to-spend"
+import { loadMonthFigures } from "@/lib/month"
+import type { MonthFigures } from "@/lib/month-figures"
 import { planOneOff, type OneOffPlan } from "@/lib/one-offs"
 import { getCurrentPlan } from "@/lib/plan-data"
 import {
   getAccountHolders,
   getAccountsWithBalances,
   getCategories,
-  getCategorySpend,
-  getCategorySpendBetween,
-  getCategorySpendFor,
-  getCategorySpendForBetween,
   getMyPrefs,
   getOneOffs,
   getPeople,
@@ -93,25 +91,14 @@ export default async function HomePage({
   const scoped = view === "me" ? mine : null
 
   const today = todayLocal()
-  const week = weekOf(today)
-  const month = today.slice(0, 7)
-  const [left, inbox, current, categories, monthSpend, weekSpend, { oneOffs }] = await Promise.all([
-    getLeftToSpend(view),
+  const [figures, inbox, current, categories, { oneOffs }, waiting] = await Promise.all([
+    loadMonthFigures({ mine: scoped }),
     getInbox(),
     getCurrentPlan(),
     getCategories(),
-    scoped ? getCategorySpendFor(month, scoped) : getCategorySpend(month),
-    scoped
-      ? getCategorySpendForBetween(week.start, week.end, scoped)
-      : getCategorySpendBetween(week.start, week.end),
     getOneOffs(),
+    getPendingCorrections(),
   ])
-
-  const byId = (rows: { id: number | null; spent: number }[]) =>
-    new Map(rows.flatMap((r) => (r.id === null ? [] : [[r.id, r.spent] as const])))
-  const overPace = trackBudgets(categories, { month: byId(monthSpend), week: byId(weekSpend) }, today).filter(
-    (b) => b.pace !== "on_pace"
-  )
 
   const soon = format(addDays(parseISO(today), DUE_SOON_DAYS), "yyyy-MM-dd")
   const mineSet = new Set(mine)
@@ -151,11 +138,28 @@ export default async function HomePage({
         </Alert>
       )}
 
-      {/* On a wide screen the number and the inbox lead on the left; the plan and what's worth
+      <MonthCard figures={figures} today={today} yours={view === "me" ? myName : null} fmt={fmt} />
+
+      {/* On a wide screen budget tracking and the inbox lead on the left; the plan and what's worth
           a look sit alongside. On a phone it's one column in that order. */}
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]">
         <div className="grid min-w-0 gap-6">
-          <LeftToSpendHero left={left} today={today} fmt={fmt} />
+          <Card className={TIGHT}>
+            <CardHeader>
+              <CardTitle id="budget-tracking">Budget tracking</CardTitle>
+              <CardDescription>Tap a category to see where it went, and move anything in the wrong place.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <BudgetTracking
+                figures={figures}
+                categories={categories}
+                oneOffs={oneOffs.map((o) => ({ id: o.id, name: o.name, accountId: o.accountId }))}
+                accounts={accounts.map((a) => ({ id: a.id, name: a.name }))}
+                waiting={waiting.length}
+                fmt={fmt}
+              />
+            </CardContent>
+          </Card>
 
           <Card className={TIGHT}>
             <CardHeader>
@@ -177,7 +181,7 @@ export default async function HomePage({
 
         <div className="grid min-w-0 gap-6">
           <PlanLine verdict={current?.plan.verdict ?? null} note={current?.plan.verdictNote ?? null} />
-          <WatchCard budgets={overPace} dueSoon={dueSoon} today={today} fmt={fmt} />
+          <WatchCard dueSoon={dueSoon} today={today} fmt={fmt} />
           <AskCas />
         </div>
       </div>
@@ -185,78 +189,124 @@ export default async function HomePage({
   )
 }
 
-/** The one number: what's left to spend this month and stay on plan. */
-function LeftToSpendHero({ left, today, fmt }: { left: LeftToSpend; today: string; fmt: MoneyFormat }) {
+/** This month at a glance: money in against what's expected, money out against the plan, and where it's heading. */
+function MonthCard({
+  figures,
+  today,
+  yours,
+  fmt,
+}: {
+  figures: MonthFigures
+  today: string
+  /** your name in the My view, for the line on your own accounts */
+  yours: string | null
+  fmt: MoneyFormat
+}) {
   const money = (n: number) => formatMoney(Math.round(n), fmt)
-  const over = left.amount < 0
-  const nextMonth = formatDate(format(addDays(parseISO(left.periodEnd), 1), "yyyy-MM-dd"), fmt.locale)
-
-  if (left.budgeted <= 0) {
-    return (
-      <Card className={TIGHT}>
-        <CardHeader>
-          <CardDescription>Left to spend this month</CardDescription>
-          <CardTitle className="text-base">Set budgets to see what&rsquo;s left to spend.</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Button variant="outline" nativeButton={false} render={<Link href="/plan/budgets" />}>
-            Set budgets
-          </Button>
-        </CardContent>
-      </Card>
-    )
-  }
-
-  const used = left.spent + left.unbudgeted
-  const daysInMonth = Number(left.periodEnd.slice(8, 10))
-  const gone = Math.min(1, Number(today.slice(8, 10)) / daysInMonth)
-  const ahead = !over && used / left.budgeted > gone + 0.1
+  const { in: income, out, net, month } = figures
+  const still = income.stillDue.filter((p) => p.status !== "missed")
+  const missed = income.stillDue.filter((p) => p.status === "missed")
+  const over = out.diff > 0
+  // a few dollars either way is on plan
+  const onPlan = Math.abs(out.diff) < Math.max(20, out.planned * 0.01)
+  const day = (iso: string) =>
+    new Intl.DateTimeFormat(fmt.locale, { weekday: "short", day: "numeric", month: "short" }).format(parseISO(iso))
 
   return (
-    <Card className={cn(TIGHT, "relative")}>
-      <span
-        aria-hidden
-        className={cn("absolute inset-y-0 left-0 w-1", over ? "bg-destructive" : ahead ? "bg-warning" : "bg-positive")}
-      />
-      <CardContent className="grid gap-5">
-        <div className="grid gap-1">
-          <p className="text-sm font-medium text-muted-foreground">
-            {over ? "Over plan this month" : "Left to spend this month"}
+    <Card className={TIGHT}>
+      <CardContent className="grid gap-6">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+          <h2 className="font-heading text-lg font-semibold">{formatMonth(today.slice(0, 7), fmt.locale)} so far</h2>
+          <p className="text-sm text-muted-foreground tabular-nums">
+            {month.daysLeft} day{month.daysLeft === 1 ? "" : "s"} to go
           </p>
-          <p
-            className={cn(
-              "font-heading text-4xl leading-none font-semibold tracking-[-0.015em] tabular-nums sm:text-[2.75rem]",
-              over && "text-destructive"
+        </div>
+
+        <div className="grid gap-6 sm:grid-cols-2 sm:gap-8">
+          <section className="grid content-start gap-2" aria-label="Money in">
+            <p className={EYEBROW}>In</p>
+            <p className="font-heading text-3xl leading-none font-semibold tracking-[-0.015em] tabular-nums sm:text-4xl">
+              {money(income.soFar)}
+            </p>
+            <p className="text-sm text-muted-foreground tabular-nums">
+              of <span className="font-medium text-foreground">{money(income.expected)}</span> expected
+            </p>
+            <Meter
+              value={income.soFar}
+              max={income.expected}
+              tone="positive"
+              label={`${money(income.soFar)} in of ${money(income.expected)} expected`}
+              className="mt-1 h-2"
+            />
+            {still.length > 0 && (
+              <ul className="mt-1 grid gap-1 text-xs text-muted-foreground">
+                {still.map((p) => (
+                  <li key={`${p.name}:${p.date}`} className="flex justify-between gap-3">
+                    <span className={cn("truncate", p.status === "late" && "text-warning")}>
+                      {p.name} · {p.status === "late" ? `late, due ${day(p.date)}` : day(p.date)}
+                    </span>
+                    <span className="shrink-0 tabular-nums">{money(p.amount)}</span>
+                  </li>
+                ))}
+              </ul>
             )}
-          >
-            {over && <span className="mr-1 text-[0.6em] align-[0.2em]">&minus;</span>}
-            {money(over ? -left.amount : left.amount)}
-          </p>
-          <p className="mt-2 text-sm font-medium text-pretty">
-            {over
-              ? `Hold off on extras until ${nextMonth}.`
-              : `About ${money(left.perDay)} a day for ${left.daysLeft} day${left.daysLeft === 1 ? "" : "s"}.`}
-          </p>
+            {missed.length > 0 && (
+              <p className="text-xs text-destructive">
+                Not counted: {missed.map((p) => `${p.name} (due ${day(p.date)})`).join(", ")} hasn&rsquo;t landed.
+              </p>
+            )}
+          </section>
+
+          <section className="grid content-start gap-2" aria-label="Money out">
+            <p className={EYEBROW}>Out</p>
+            <p className="font-heading text-3xl leading-none font-semibold tracking-[-0.015em] tabular-nums sm:text-4xl">
+              {money(out.soFar)}
+            </p>
+            <p className="text-sm text-muted-foreground tabular-nums">
+              of <span className="font-medium text-foreground">{money(out.planned)}</span> expected
+            </p>
+            <Meter
+              value={out.soFar}
+              max={out.planned}
+              mark={month.share}
+              tone={out.soFar > out.planned ? "destructive" : "primary"}
+              label={`${money(out.soFar)} out of ${money(out.planned)} expected`}
+              className="mt-1 h-2"
+            />
+            <p className="mt-1 flex flex-wrap items-baseline gap-x-2 text-sm tabular-nums">
+              <span className="text-muted-foreground">Heading for</span>
+              <span className="font-semibold">{money(out.projected)}</span>
+              <span
+                className={cn(
+                  "rounded-full px-2 text-xs leading-5 font-semibold",
+                  onPlan
+                    ? "bg-muted text-muted-foreground"
+                    : over
+                      ? "bg-destructive/10 text-destructive"
+                      : "bg-positive/10 text-positive"
+                )}
+              >
+                {onPlan ? "on plan" : `${over ? "+" : "−"}${money(Math.abs(out.diff))} ${over ? "over" : "under"}`}
+              </span>
+            </p>
+          </section>
         </div>
 
-        <div className="grid gap-2">
-          <Meter
-            value={used}
-            max={left.budgeted}
-            mark={gone}
-            tone={over ? "destructive" : ahead ? "warning" : "positive"}
-            label={`${money(used)} spent of ${money(left.budgeted)} flexible budget`}
-            className="h-2"
-          />
-          <div className="flex justify-between gap-3 text-xs text-muted-foreground tabular-nums">
-            <span>
-              <span className="font-medium text-foreground">{money(used)}</span> spent
+        <div className="grid gap-1 border-t pt-4 text-sm">
+          <p className="text-pretty">
+            By the end of the month:{" "}
+            <span className={cn("font-semibold tabular-nums", net < 0 ? "text-destructive" : "text-positive")}>
+              {net < 0 ? `${money(-net)} short` : `${money(net)} to spare`}
             </span>
-            <span>of {money(left.budgeted)} flexible budget</span>
-          </div>
+            <span className="text-muted-foreground"> · expected in, less where spending is heading.</span>
+          </p>
+          {yours && figures.yours && (
+            <p className="text-xs text-muted-foreground tabular-nums">
+              Budgets are the household&rsquo;s, so this is everyone. {yours}&rsquo;s accounts so far:{" "}
+              {money(figures.yours.in)} in, {money(figures.yours.out)} out.
+            </p>
+          )}
         </div>
-
-        <p className="border-t pt-4 text-xs text-pretty text-muted-foreground">{left.basis}</p>
       </CardContent>
     </Card>
   )
@@ -286,23 +336,13 @@ function PlanLine({ verdict, note }: { verdict: PlanVerdict | null; note: string
 
 type DueSoon = { oneOff: OneOff; plan: OneOffPlan; date: string; amount: number }
 
-/** Only what's worth a look: budgets running over pace, and one-off payments coming up. */
-function WatchCard({
-  budgets,
-  dueSoon,
-  today,
-  fmt,
-}: {
-  budgets: BudgetTrack[]
-  dueSoon: DueSoon[]
-  today: string
-  fmt: MoneyFormat
-}) {
-  if (budgets.length === 0 && dueSoon.length === 0) {
+/** One-off payments coming up in the next month. */
+function WatchCard({ dueSoon, today, fmt }: { dueSoon: DueSoon[]; today: string; fmt: MoneyFormat }) {
+  if (dueSoon.length === 0) {
     return (
       <p className="flex items-start gap-2 rounded-2xl border border-dashed px-4 py-3 text-sm text-muted-foreground">
         <CheckCircleIcon weight="fill" className="mt-0.5 size-4 shrink-0 text-positive" aria-hidden />
-        Every budget is on pace, and no one-off payments are due in the next month.
+        No one-off payments are due in the next month.
       </p>
     )
   }
@@ -310,74 +350,32 @@ function WatchCard({
   return (
     <Card className={TIGHT}>
       <CardHeader>
-        <CardTitle>Worth a look</CardTitle>
+        <CardTitle>One-off payments due soon</CardTitle>
       </CardHeader>
-      <CardContent className="grid gap-6">
-        {budgets.length > 0 && (
-          <section className="grid gap-1" aria-label="Budgets over pace">
-            <h3 className={EYEBROW}>Budgets running fast</h3>
-            <ul className="-mx-2 grid">
-              {budgets.map((b) => (
-                <li key={b.id}>
-                  <Link
-                    href={`/plan/budgets#budget-${b.id}`}
-                    className="grid gap-2 rounded-lg px-2 py-2.5 transition-colors hover:bg-muted/60"
-                  >
-                    <span className="flex items-baseline justify-between gap-3">
-                      <span className="truncate font-medium">{b.name}</span>
-                      <span
-                        className={cn(
-                          "shrink-0 text-sm font-semibold tabular-nums",
-                          b.pace === "over" ? "text-destructive" : "text-warning"
-                        )}
-                      >
-                        {b.left < 0 ? `${money(-b.left)} over` : `${money(b.left)} left`}
-                      </span>
+      <CardContent>
+        <ul className="-mx-2 grid">
+          {dueSoon.map(({ oneOff: o, plan, date, amount }) => {
+            const late = plan.status === "overdue" || date < today
+            const short = plan.status === "catch_up"
+            return (
+              <li key={o.id}>
+                <Link href="/one-offs" className="flex min-h-12 items-center justify-between gap-3 rounded-lg px-2 py-2.5 transition-colors hover:bg-muted/60">
+                  <span className="grid min-w-0">
+                    <span className="truncate font-medium">{o.name}</span>
+                    <span className={cn("text-xs", late || short ? "text-destructive" : "text-muted-foreground")}>
+                      {late
+                        ? `Overdue since ${formatDate(date, fmt.locale)}`
+                        : short
+                          ? `Due ${formatDate(date, fmt.locale)} · needs money put in now`
+                          : `Due ${formatDate(date, fmt.locale)} · ${money(plan.held)} put aside`}
                     </span>
-                    <Meter
-                      value={b.spent}
-                      max={b.budget}
-                      mark={b.budget > 0 ? b.expected / b.budget : undefined}
-                      tone={b.pace === "over" ? "destructive" : "warning"}
-                      label={`${money(b.spent)} of ${money(b.budget)}`}
-                    />
-                    <span className="text-xs text-muted-foreground tabular-nums">
-                      {money(b.spent)} of {money(b.budget)} this {b.period}
-                    </span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
-        {dueSoon.length > 0 && (
-          <section className="grid gap-1" aria-label="One-off payments due soon">
-            <h3 className={EYEBROW}>One-off payments due soon</h3>
-            <ul className="-mx-2 grid">
-              {dueSoon.map(({ oneOff: o, plan, date, amount }) => {
-                const late = plan.status === "overdue" || date < today
-                const short = plan.status === "catch_up"
-                return (
-                  <li key={o.id}>
-                    <Link href="/one-offs" className="flex min-h-12 items-center justify-between gap-3 rounded-lg px-2 py-2.5 transition-colors hover:bg-muted/60">
-                      <span className="grid min-w-0">
-                        <span className="truncate font-medium">{o.name}</span>
-                        <span className={cn("text-xs", late || short ? "text-destructive" : "text-muted-foreground")}>
-                          {late
-                            ? `Overdue since ${formatDate(date, fmt.locale)}`
-                            : short
-                              ? `Due ${formatDate(date, fmt.locale)} · needs money put in now`
-                              : `Due ${formatDate(date, fmt.locale)} · ${money(plan.held)} put aside`}
-                        </span>
-                      </span>
-                      <span className="shrink-0 text-sm font-semibold tabular-nums">{money(amount)}</span>
-                    </Link>
-                  </li>
-                )
-              })}
-            </ul>
-          </section>
-        )}
+                  </span>
+                  <span className="shrink-0 text-sm font-semibold tabular-nums">{money(amount)}</span>
+                </Link>
+              </li>
+            )
+          })}
+        </ul>
       </CardContent>
     </Card>
   )

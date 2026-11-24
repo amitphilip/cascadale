@@ -29,6 +29,7 @@ import {
   type AkahuApi,
   type AkahuTokens,
 } from "../_shared/akahu.ts"
+import { runCasQueue } from "./cas-queue.ts"
 import { runNudges } from "./nudges.ts"
 import { buildMatcher, merchantKey, type RuleLike } from "../_shared/rules.ts"
 import { pairTransfers } from "../_shared/transfers.ts"
@@ -393,7 +394,12 @@ async function syncUser(userId: string, runBy: RunBy, onlyAccountId?: number) {
     }
   }
   const transfers = inserted > 0 ? await categorizeTransfers(userId) : 0
-  // Best effort: the sync has succeeded either way.
+  // Best effort: the sync has succeeded either way. Cas takes in yesterday's corrections
+  // first, so the to-dos and nudges below see the merchant rules they made.
+  const corrections = await runCasQueue(db, userId).catch((err) => {
+    console.error(userId, "cas queue", err)
+    return 0
+  })
   const todos = await syncUncategorizedTodos(userId).catch((err) => {
     console.error(userId, err)
     return 0
@@ -403,7 +409,7 @@ async function syncUser(userId: string, runBy: RunBy, onlyAccountId?: number) {
     console.error(userId, "nudges", err)
     return 0
   })
-  return { inserted, categorized: categorized + transfers, failed, todos, nudges, ...adopted }
+  return { inserted, categorized: categorized + transfers, failed, corrections, todos, nudges, ...adopted }
 }
 
 /**

@@ -7,6 +7,7 @@ import {
   categorizeMerchant,
   deleteAsset,
   linkOneOffTransactions,
+  moveTransaction,
   reconcileAccount,
   runAutoCategorize,
   saveAsset,
@@ -16,12 +17,14 @@ import {
   setTransactionCategory,
   syncAkahu,
   unlinkOneOffTransaction,
+  updateCas,
   type ActionResult,
 } from "@/app/actions"
 import { getAkahuOverview, type AkahuOverview } from "@/lib/akahu"
 import { budgetPeriod, freshCategories } from "@/lib/budget-percent"
 import { monthOf, trackBudgets, weekOf, type Range } from "@/lib/budget-tracking"
 import { tool, isoDate, type CasTool } from "@/lib/cas/tool"
+import { getCorrections } from "@/lib/cas-queue"
 import { loadDataHealth } from "@/lib/data-health"
 import { COLUMNS, getDb, getUserId, must } from "@/lib/db"
 import {
@@ -36,6 +39,7 @@ import {
 import { makePlan } from "@/lib/cas/plan"
 import { expectedFrom } from "@/lib/income"
 import { getInbox } from "@/lib/inbox"
+import { loadMonthFigures } from "@/lib/month"
 import { buildNetWorth } from "@/lib/net-worth"
 import { planOneOff } from "@/lib/one-offs"
 import { oneOffFigure } from "@/lib/plan-figures"
@@ -270,7 +274,7 @@ export const TOOLS: CasTool[] = [
     title: "Briefing",
     access: "read",
     description:
-      "Start here. Everything happening right now in one call: bank feed health, this month's money in and out so far, the regular pays still due before the month ends (thisMonth.incomeStillDue, each due, late or missed; incomeByMonthEnd is what's in so far plus the due and late ones), projected monthly income, each budget against its own period (this week for a weekly one, this month for a monthly one), the one-off payments still to pay, what needs categorizing, and Cas's open notes and to-dos. thisMonth is the whole household (the Family view); thisMonth.yours is only the accounts marked as yours (the My view), and you names who's asking. Includes data_health: check it before relying on the numbers.",
+      "Start here. Everything happening right now in one call: bank feed health, this month's money in and out so far, the regular pays still due before the month ends (thisMonth.incomeStillDue, each due, late or missed; incomeByMonthEnd is what's in so far plus the due and late ones), projected monthly income, each budget against its own period (this week for a weekly one, this month for a monthly one), the one-off payments still to pay, what needs categorizing, Cas's open notes and to-dos, homeMonth (the household's month exactly as Home shows it: in so far and expected by month end, out so far, planned and projected, the net, and left to spend), and corrections (transactions the household moved on Home: those waiting for Cas and those recently taken in). thisMonth is the whole household (the Family view); thisMonth.yours is only the accounts marked as yours (the My view), and you names who's asking. Includes data_health: check it before relying on the numbers.",
     run: async () => {
       const overview = await getAkahuOverview().catch(
         (err: Error): AkahuOverview => ({ connected: true, error: err.message, accounts: [] })
@@ -291,6 +295,10 @@ export const TOOLS: CasTool[] = [
           loadDataHealth(overview),
           loadPlanInputs(),
         ])
+      const [corrections, home] = await Promise.all([
+        getCorrections(),
+        loadMonthFigures({ inputs }),
+      ])
       // The month so far is only part of it: add the pays still due before it ends.
       const due = inputs?.paysDue ?? []
       const mine = new Set(people.mine)
@@ -311,6 +319,21 @@ export const TOOLS: CasTool[] = [
             ...yours,
             ...stillToCome(due.filter((p) => mine.has(p.accountId)), yours.income),
           },
+        },
+        homeMonth: {
+          inSoFar: home.in.soFar,
+          inExpected: home.in.expected,
+          outSoFar: home.out.soFar,
+          outPlanned: home.out.planned,
+          outProjected: home.out.projected,
+          outProjectedLessPlanned: home.out.diff,
+          netByMonthEnd: home.net,
+          leftToSpend: home.leftToSpend,
+        },
+        corrections: {
+          waiting: corrections.waiting.length,
+          waitingMoves: corrections.waiting,
+          recentlyTakenIn: corrections.recentlyTakenIn.slice(0, 20),
         },
         projectedMonthlyIncome: budgets.projectedMonthlyIncome,
         budgets: {
@@ -558,6 +581,15 @@ export const TOOLS: CasTool[] = [
     run: getStatements,
   }),
 
+  tool({
+    name: "get_corrections",
+    title: "Corrections",
+    access: "read",
+    description:
+      "The transactions the household moved by hand on Home (to another category, or to count towards a one-off payment), most recent first. waiting are still queued for Cas; recentlyTakenIn are the last 30 days' that Cas has taken in, each with its outcome. A move with rememberForMerchant becomes the merchant's rule when taken in; the rest are one-time exceptions. They tell you how the household sees its spending: weigh them before recategorizing that merchant or judging its category.",
+    run: () => getCorrections(),
+  }),
+
   // ── Cas's memory ──
 
   tool({
@@ -632,6 +664,39 @@ export const TOOLS: CasTool[] = [
       categoryId: z.number().int().positive().nullable(),
     },
     run: ({ transactionId, categoryId }) => act(setTransactionCategory(transactionId, categoryId)),
+  }),
+
+  tool({
+    name: "move_transaction",
+    title: "Move a transaction",
+    access: "action",
+    description:
+      "Move one transaction to another category (categoryId, or null for uncategorized) or to count towards a one-off payment (oneOffId; it must be in the one-off's account), as Home's budget tracking does. Only that transaction changes now; it's queued for Cas, and with rememberForMerchant it becomes the merchant's rule when Cas takes the queue in (update_cas, or each morning).",
+    input: {
+      transactionId: z.number().int().positive(),
+      categoryId: z.number().int().positive().nullable().optional(),
+      oneOffId: z.number().int().positive().optional(),
+      rememberForMerchant: z.boolean().optional(),
+    },
+    run: ({ transactionId, categoryId, oneOffId, rememberForMerchant }) => {
+      if (oneOffId === undefined && categoryId === undefined) throw new Error("Give categoryId or oneOffId")
+      return act(
+        moveTransaction(
+          transactionId,
+          oneOffId !== undefined ? { oneOffId } : { categoryId: categoryId ?? null },
+          rememberForMerchant ?? false
+        )
+      )
+    },
+  }),
+
+  tool({
+    name: "update_cas",
+    title: "Take in the corrections",
+    access: "action",
+    description:
+      "Take in every correction waiting in the queue now, rather than with the morning run: moves marked rememberForMerchant become merchant rules (moving that merchant's other auto-categorized and uncategorized transactions with them); the rest are recorded as one-time exceptions. Returns how many were processed, rules set and transactions recategorized.",
+    run: () => act(updateCas()),
   }),
 
   tool({
