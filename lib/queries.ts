@@ -885,3 +885,25 @@ export async function getSpendTransactions(start: string, end: string): Promise<
     oneOffId: r.one_off_id,
   }))
 }
+
+/** Every transaction over [start, end), transfers included, for matching the plan's moves. */
+export async function getMonthMoves(start: string, end: string) {
+  const d = await db()
+  const rows = await selectAll<{
+    id: number
+    accountId: number
+    date: string
+    description: string
+    amount: number
+    categoryId: number | null
+  }>((from, to) =>
+    d
+      .from("transactions")
+      .select("id, accountId:account_id, date, description, amount, categoryId:category_id")
+      .gte("date", start)
+      .lt("date", end)
+      .order("id")
+      .range(from, to)
+  )
+  return rows.map((r) => ({ ...r, amount: Number(r.amount) }))
+}

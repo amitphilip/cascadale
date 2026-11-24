@@ -64,6 +64,23 @@ export type MonthOneOff = {
   outThisMonth: number
 }
 
+/** Where a flow's money comes from, or goes. */
+export type FlowKind = "income" | "due" | "from_savings" | "bills" | "everyday" | "one_offs" | "left_over"
+
+export type FlowNode = {
+  kind: FlowKind
+  name: string
+  amount: number
+  /** what it's made of, largest first */
+  parts: { name: string; amount: number }[]
+}
+
+/**
+ * The month's money as a flow: what came in (and from savings, when more went out) on one
+ * side, where it went (and what's left over) on the other. The two sides add to `total`.
+ */
+export type MonthFlow = { sources: FlowNode[]; uses: FlowNode[]; total: number }
+
 export type MonthFigures = {
   month: { start: string; last: string; daysLeft: number; share: number }
   in: { soFar: number; stillDue: PayDue[]; expected: number }
@@ -72,6 +89,8 @@ export type MonthFigures = {
   net: number
   leftToSpend: { amount: number; perDay: number; budgeted: number; spent: number; unbudgeted: number }
   rows: TrackRow[]
+  /** the month as a flow, so far and by the month's end (in expected, out projected) */
+  flow: { soFar: MonthFlow; byMonthEnd: MonthFlow }
   /** the same so-far figures for the accounts marked as yours */
   yours: { in: number; out: number } | null
 }
@@ -226,12 +245,15 @@ export function monthFigures(input: {
   )
   let planned = 0
   let projected = 0
+  const projectedBy = new Map<number | null, number>()
   for (const id of planIds) {
     const p = projection.get(id)
     const plan = (id !== null ? budgetOf.get(id) : undefined) ?? p?.projected ?? 0
     const everyday = Math.max(0, plan - (p?.recurring ?? 0))
+    const heading = (monthSpend.get(id) ?? 0) + (due.get(id) ?? 0) + everyday * left
     planned += plan
-    projected += (monthSpend.get(id) ?? 0) + (due.get(id) ?? 0) + everyday * left
+    projected += heading
+    projectedBy.set(id, heading)
   }
   const oneOffPaid = sum(oneOffRows.map((r) => r.spent))
   const oneOffDue = sum(input.oneOffs.map((o) => o.outThisMonth))
@@ -256,6 +278,70 @@ export function monthFigures(input: {
   const expectedIn = round2(so.in + expectedFrom(input.paysDue))
   const mine = input.mine ? new Set(input.mine) : null
 
+  // the flow: money in by income category, money out by bills, everyday and one-offs
+  const nameOf = new Map(categories.map((c) => [c.id, c.name]))
+  const incomeBy = new Map<number | null, number>()
+  for (const t of inMonth.filter(isIn)) incomeBy.set(t.categoryId, (incomeBy.get(t.categoryId) ?? 0) + t.amount)
+  const incomeNodes: FlowNode[] = [...incomeBy]
+    .map(([id, amount]) => ({
+      kind: "income" as const,
+      name: id === null ? "Other money in" : (nameOf.get(id) ?? "Income"),
+      amount: round2(amount),
+      parts: merchants(inMonth.filter((t) => isIn(t) && t.categoryId === id))
+        .map((m) => ({ name: m.name, amount: -m.spent }))
+        .filter((m) => m.amount > 0)
+        .sort((a, b) => b.amount - a.amount),
+    }))
+    .filter((n) => n.amount > 0)
+    .sort((a, b) => b.amount - a.amount)
+  const still = input.paysDue.filter((p) => p.status !== "missed")
+  const dueNode: FlowNode[] = still.length
+    ? [
+        {
+          kind: "due",
+          name: "Pays still due",
+          amount: expectedFrom(still),
+          parts: still.map((p) => ({ name: p.name, amount: round2(p.amount) })),
+        },
+      ]
+    : []
+
+  /** `ahead` counts what's still due to go out this month */
+  const spendUses = (by: Map<number | null, number>, ahead: boolean): FlowNode[] => {
+    const group = (kind: "bills" | "everyday", name: string): FlowNode => {
+      const parts = [...by]
+        .filter(([id, v]) => v > 0 && (kind === "bills") === (id !== null && isBill(id)))
+        .map(([id, v]) => ({ name: id === null ? "Uncategorized" : (nameOf.get(id) ?? "Other"), amount: round2(v) }))
+        .sort((a, b) => b.amount - a.amount)
+      return { kind, name, amount: round2(sum(parts.map((p) => p.amount))), parts }
+    }
+    const oneOffParts = oneOffRows
+      .map((r) => ({ name: r.name, amount: round2(ahead ? r.spent + r.due : r.spent) }))
+      .filter((p) => p.amount > 0)
+      .sort((a, b) => b.amount - a.amount)
+    return [
+      group("bills", "Bills"),
+      group("everyday", "Everyday spending"),
+      {
+        kind: "one_offs" as const,
+        name: "One-off payments",
+        amount: round2(ahead ? oneOffPaid + oneOffDue : oneOffPaid),
+        parts: oneOffParts,
+      },
+    ].filter((n) => n.amount > 0)
+  }
+
+  const flowOf = (sources: FlowNode[], uses: FlowNode[], leftOver: string): MonthFlow => {
+    const gap = round2(sum(sources.map((n) => n.amount)) - sum(uses.map((n) => n.amount)))
+    if (gap < 0) sources = [...sources, { kind: "from_savings", name: "From savings", amount: -gap, parts: [] }]
+    if (gap > 0) uses = [...uses, { kind: "left_over", name: leftOver, amount: gap, parts: [] }]
+    return { sources, uses, total: round2(sum(sources.map((n) => n.amount))) }
+  }
+  const flow = {
+    soFar: flowOf(incomeNodes, spendUses(monthSpend, false), "Not spent yet"),
+    byMonthEnd: flowOf([...incomeNodes, ...dueNode], spendUses(projectedBy, true), "Left over"),
+  }
+
   return {
     month: { start: month.start, last, daysLeft, share },
     in: { soFar: so.in, stillDue: input.paysDue, expected: expectedIn },
@@ -274,6 +360,7 @@ export function monthFigures(input: {
       unbudgeted: round2(ltsUnbudgeted),
     },
     rows: ordered,
+    flow,
     yours: mine ? totals(inMonth.filter((t) => mine.has(t.accountId))) : null,
   }
 }

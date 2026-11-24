@@ -8,6 +8,8 @@ import { AskCas } from "./ask-cas"
 import { BudgetTracking } from "./budget-tracking"
 import { DataHealthBanner } from "./data-health-banner"
 import { InboxList } from "./inbox-list"
+import { MoneyFlow } from "./money-flow"
+import { MyAllocationCard } from "./my-allocation"
 import { ViewSwitch } from "./view-switch"
 import { Meter } from "@/components/meter"
 import { PageHeader } from "@/components/page-header"
@@ -28,10 +30,11 @@ import { getUserId } from "@/lib/db"
 import type { OneOff, PlanVerdict } from "@/lib/db/schema"
 import { formatDate, formatMonth, formatMoney, type MoneyFormat } from "@/lib/format"
 import { getInbox } from "@/lib/inbox"
-import { loadMonthFigures } from "@/lib/month"
+import { loadMonthFigures, loadMyAllocation } from "@/lib/month"
 import type { MonthFigures } from "@/lib/month-figures"
 import { planOneOff, type OneOffPlan } from "@/lib/one-offs"
 import { getCurrentPlan } from "@/lib/plan-data"
+import { loadPlanInputs } from "@/lib/plan-inputs"
 import {
   getAccountHolders,
   getAccountsWithBalances,
@@ -91,13 +94,17 @@ export default async function HomePage({
   const scoped = view === "me" ? mine : null
 
   const today = todayLocal()
-  const [figures, inbox, current, categories, { oneOffs }, waiting] = await Promise.all([
-    loadMonthFigures({ mine: scoped }),
+  const inputs = loadPlanInputs()
+  const plan = getCurrentPlan()
+  const [figures, inbox, current, categories, { oneOffs }, waiting, allocation] = await Promise.all([
+    inputs.then((i) => loadMonthFigures({ mine: scoped, inputs: i })),
     getInbox(),
-    getCurrentPlan(),
+    plan,
     getCategories(),
     getOneOffs(),
     getPendingCorrections(),
+    // your view opens on what the plan does with your pay
+    view === "me" ? Promise.all([plan, inputs]).then(([p, i]) => loadMyAllocation({ mine, plan: p, inputs: i })) : null,
   ])
 
   const soon = format(addDays(parseISO(today), DUE_SOON_DAYS), "yyyy-MM-dd")
@@ -137,6 +144,8 @@ export default async function HomePage({
           </AlertAction>
         </Alert>
       )}
+
+      {allocation && <MyAllocationCard allocation={allocation} name={myName} today={today} fmt={fmt} />}
 
       <MonthCard figures={figures} today={today} yours={view === "me" ? myName : null} fmt={fmt} />
 
@@ -290,6 +299,10 @@ function MonthCard({
               </span>
             </p>
           </section>
+        </div>
+
+        <div className="border-t pt-5">
+          <MoneyFlow flow={figures.flow} fmt={fmt} />
         </div>
 
         <div className="grid gap-1 border-t pt-4 text-sm">

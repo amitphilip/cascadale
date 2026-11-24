@@ -149,6 +149,45 @@ describe("monthFigures", () => {
     expect(figures().leftToSpend).toMatchObject({ budgeted: 900, spent: 340, unbudgeted: 45, amount: 515 })
   })
 
+  test("the flow so far: income in, spending out, and the rest not spent yet", () => {
+    const { soFar } = figures().flow
+    expect(soFar.sources.map((n) => [n.kind, n.name, n.amount])).toEqual([["income", "Salary", 5000]])
+    expect(soFar.sources[0].parts[0]).toMatchObject({ amount: 5000 })
+    expect(soFar.uses.map((n) => [n.kind, n.amount])).toEqual([
+      ["bills", 1200],
+      // groceries 340, dining 45, uncategorized 30
+      ["everyday", 415],
+      ["one_offs", 800],
+      ["left_over", 2585],
+    ])
+    expect(soFar.uses.at(-1)!.name).toBe("Not spent yet")
+    expect(soFar.total).toBe(5000)
+  })
+
+  test("the flow by the month's end adds the pays still due and balances on the net", () => {
+    const f = figures()
+    const { byMonthEnd } = f.flow
+    expect(byMonthEnd.sources.map((n) => [n.kind, n.amount])).toEqual([
+      ["income", 5000],
+      ["due", 5000],
+    ])
+    expect(byMonthEnd.uses.find((n) => n.kind === "one_offs")!.amount).toBe(1200)
+    expect(byMonthEnd.uses.at(-1)!).toMatchObject({ kind: "left_over", name: "Left over" })
+    expect(byMonthEnd.uses.at(-1)!.amount).toBeCloseTo(f.net, 1)
+    expect(byMonthEnd.total).toBe(10000)
+  })
+
+  test("spending more than comes in draws from savings", () => {
+    const { byMonthEnd, soFar } = figures({ paysDue: [], oneOffs: [{ id: 7, name: "Japan trip", outThisMonth: 2000 }] }).flow
+    expect(soFar.uses.at(-1)!.kind).toBe("left_over")
+    const saved = byMonthEnd.sources.at(-1)!
+    expect(saved.kind).toBe("from_savings")
+    expect(byMonthEnd.uses.some((n) => n.kind === "left_over")).toBe(false)
+    const out = byMonthEnd.uses.reduce((s, n) => s + n.amount, 0)
+    expect(saved.amount).toBeCloseTo(out - 5000, 1)
+    expect(byMonthEnd.total).toBeCloseTo(out, 1)
+  })
+
   test("your line counts only your accounts", () => {
     const f = figures({ mine: [2] })
     expect(f.yours).toEqual({ in: 0, out: 0 })
