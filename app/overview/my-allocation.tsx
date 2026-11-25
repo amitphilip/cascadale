@@ -5,12 +5,11 @@ import { CaretRightIcon } from "@phosphor-icons/react/ssr"
 import { Meter, type MeterTone } from "@/components/meter"
 import { Card, CardContent } from "@/components/ui/card"
 import { formatMonth, formatMoney, type MoneyFormat } from "@/lib/format"
-import type {
-  AllocationStatus,
-  MyAllocation,
-  TrackedAllocation,
-} from "@/lib/my-allocation"
+import type { MyAllocationView } from "@/lib/month"
+import type { AllocationStatus, TrackedAllocation } from "@/lib/my-allocation"
 import { cn } from "@/lib/utils"
+
+import { ShortTermRefresh } from "./short-term-refresh"
 
 /** Cards hold to a phone's width with less padding. */
 const TIGHT = "max-sm:[--card-spacing:--spacing(5)]"
@@ -24,7 +23,13 @@ const TONE: Record<AllocationStatus, MeterTone> = {
   on_track: "primary",
   behind: "warning",
   untracked: "primary",
+  skipped: "primary",
 }
+
+/** Opens a chat with Cas in Claude about this pay's moves. */
+const TALK_TO_CAS = `https://claude.ai/new?q=${encodeURIComponent(
+  "Ask Cas: let's go over my short-term allocation for this pay. "
+)}`
 
 /** The My view's top card: what the plan does with your pay this pay cycle, and how it's going. */
 export function MyAllocationCard({
@@ -33,7 +38,7 @@ export function MyAllocationCard({
   today,
   fmt,
 }: {
-  allocation: MyAllocation
+  allocation: MyAllocationView
   /** your name */
   name: string
   today: string
@@ -113,6 +118,26 @@ export function MyAllocationCard({
             </p>
           )}
         </div>
+
+        {(a.shortTerm.summary || a.shortTerm.stale) && (
+          <div className="grid gap-1 rounded-lg bg-muted/60 px-3 py-2.5 text-sm">
+            {a.shortTerm.summary && (
+              <p className="text-pretty">
+                <span className="font-semibold">Cas: </span>
+                {a.shortTerm.summary}
+              </p>
+            )}
+            {a.shortTerm.stale && <ShortTermRefresh />}
+            <a
+              href={TALK_TO_CAS}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="w-fit text-xs font-medium text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+            >
+              Something off? Talk it through with Cas
+            </a>
+          </div>
+        )}
 
         <div className="grid gap-6 sm:grid-cols-3 sm:gap-8">
           <section className="grid content-start gap-2" aria-label="Your pay">
@@ -194,10 +219,11 @@ export function MyAllocationCard({
         </div>
 
         <div className="grid gap-5 border-t pt-5 lg:grid-cols-2 lg:gap-8">
-          {a.moves.length > 0 && (
+          {(a.moves.length > 0 || a.otherMoves.parts.length > 0) && (
             <Group
               title="From your pay"
               items={a.moves}
+              extras={a.otherMoves.parts}
               paced
               period={period}
               money={money}
@@ -213,25 +239,7 @@ export function MyAllocationCard({
           )}
         </div>
 
-        <div className="grid gap-1 border-t pt-4 text-sm">
-          {a.otherMoves.amount >= 1 && (
-            <p className="text-pretty">
-              <span className="font-semibold tabular-nums">
-                {money(a.otherMoves.amount)}
-              </span>
-              <span className="text-muted-foreground">
-                {" "}
-                also moved out that the plan doesn&rsquo;t name:{" "}
-                {a.otherMoves.parts
-                  .slice(0, 3)
-                  .map((p) => `${p.name} ${money(p.amount)}`)
-                  .join(", ")}
-                {a.otherMoves.parts.length > 3 &&
-                  `, and ${a.otherMoves.parts.length - 3} more`}
-                .
-              </span>
-            </p>
-          )}
+        <div className="border-t pt-4 text-sm">
           <Link
             href="/plan"
             className="inline-flex min-h-10 w-fit items-center gap-1 font-medium underline-offset-4 hover:underline"
@@ -247,12 +255,15 @@ export function MyAllocationCard({
 function Group({
   title,
   items,
+  extras = [],
   paced = false,
   period,
   money,
 }: {
   title: string
   items: TrackedAllocation[]
+  /** moves out of your pay the plan doesn't name, decided as they go */
+  extras?: { name: string; amount: number }[]
   /** tick where each should be by now; bills go when they're due, so they don't */
   paced?: boolean
   /** "this pay" or "the month" */
@@ -269,7 +280,10 @@ function Group({
       >
         {title}
         <span className="tabular-nums">
-          {money(items.reduce((s, i) => s + i.planned, 0))}
+          {money(
+            items.reduce((s, i) => s + i.planned, 0) +
+              extras.reduce((s, e) => s + e.amount, 0)
+          )}
         </span>
       </h3>
       <ul className="grid divide-y divide-border/70">
@@ -278,7 +292,14 @@ function Group({
             <div className="flex items-baseline justify-between gap-3">
               {/* where it goes sits under the title, so a long title can't hide it */}
               <span className="grid min-w-0">
-                <span className="truncate font-medium">{i.title}</span>
+                <span className="flex min-w-0 items-baseline gap-1.5">
+                  <span className="truncate font-medium">{i.title}</span>
+                  {i.extra && (
+                    <span className="shrink-0 text-[0.625rem] font-semibold tracking-[0.06em] text-muted-foreground uppercase">
+                      This pay
+                    </span>
+                  )}
+                </span>
                 {i.to && i.to !== i.title && (
                   <span className="truncate text-xs text-muted-foreground">
                     → {i.to}
@@ -305,6 +326,25 @@ function Group({
               />
             )}
             <Status item={i} period={period} money={money} />
+            {i.note && (
+              <p className="text-xs text-pretty text-muted-foreground">
+                <span className="font-medium text-foreground/80">Cas:</span>{" "}
+                {i.note}
+              </p>
+            )}
+          </li>
+        ))}
+        {extras.map((e) => (
+          <li key={`extra-${e.name}`} className="grid gap-1 py-2.5 first:pt-1">
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="truncate font-medium">{e.name}</span>
+              <span className="shrink-0 text-sm font-medium tabular-nums">
+                {money(e.amount)}
+              </span>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Moved {period}, outside the plan
+            </p>
           </li>
         ))}
       </ul>
@@ -336,6 +376,8 @@ function Status({
           On track · {money(i.planned - i.done!)} still to go
         </p>
       )
+    case "skipped":
+      return <p className="text-xs text-muted-foreground">Not this pay</p>
     case "untracked":
       return (
         <p className="text-xs text-muted-foreground">

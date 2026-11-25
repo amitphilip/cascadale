@@ -37,6 +37,7 @@ import {
   type OneOff,
 } from "@/lib/db/schema"
 import { makePlan } from "@/lib/cas/plan"
+import { currentShortTerm, refreshShortTerm, setShortTerm } from "@/lib/cas/short-term"
 import { expectedFrom } from "@/lib/income"
 import { getInbox } from "@/lib/inbox"
 import { loadMonthFigures } from "@/lib/month"
@@ -571,6 +572,75 @@ export const TOOLS: CasTool[] = [
         },
       }
     },
+  }),
+
+  tool({
+    name: "get_short_term",
+    title: "This pay's moves",
+    access: "read",
+    description:
+      "The signed-in person's short-term allocation: the transfers for their pay this pay cycle (payday to the next), which Cas works out from the plan (the long-term allocation) and what has happened since payday, and looks at again whenever a sync brings in a pay or a move. lines are Cas's: one with a planItemId sets that plan move's amount for this pay (0 skips it); one without is a move the plan doesn't name, to a household account (toAccountId) or out of the household (match, the merchant key its transactions carry). by is cas, or you when the person set it. moves is every move from their pay this cycle as Home shows it: the plan's (id is the plan item) and the lines of their own (negative id), each with planned this pay, byNow, done so far and status, and note (Cas's reason). otherMoves are transfers out that nothing covers. accounts lists the ids to use. stale is true when a sync has brought something in since Cas last looked: redo_short_term looks again.",
+    run: async () => {
+      const current = await currentShortTerm()
+      if (!current) return { shortTerm: null, reason: "No plan yet, or no accounts are marked as yours." }
+      const { basis, saved, allocation, stale } = current
+      const mine = new Set(basis.args.mine)
+      return {
+        cycle: allocation.cycle,
+        pay: allocation.pay,
+        summary: saved?.summary ?? null,
+        madeBy: saved?.madeBy ?? null,
+        updatedAt: saved?.updatedAt ?? null,
+        stale,
+        lines: saved?.lines ?? [],
+        moves: allocation.moves,
+        otherMoves: allocation.otherMoves,
+        movesSoFar: basis.moves,
+        accounts: basis.inputs.accounts.map((a) => ({ id: a.id, name: a.name, type: a.type, balance: a.balance, yours: mine.has(a.id) })),
+      }
+    },
+  }),
+
+  tool({
+    name: "redo_short_term",
+    title: "Have Cas redo this pay's moves",
+    access: "action",
+    description:
+      "Have Cas work out this pay's transfers again now, replacing its short-term allocation (lines the person set are kept unless overtaken). Pass instruction with what they want changed, in their words, e.g. 'the $200 on the 25th was a loan to my brother, not paydown'; for something that should hold beyond this pay, also save_note it as a decision. Takes up to a minute and uses the Anthropic API key saved in Settings.",
+    input: {
+      instruction: z.string().trim().max(2000).optional().describe("What they want Cas to take into account, in their words"),
+    },
+    run: async ({ instruction }) => {
+      const out = await refreshShortTerm({ force: true, instruction: instruction ?? null })
+      if (!out) throw new Error("Cas can't allocate this pay: there's no plan, no accounts marked as yours, or no Anthropic API key in Settings.")
+      return out.shortTerm
+    },
+  }),
+
+  tool({
+    name: "set_short_term",
+    title: "Set this pay's moves",
+    access: "action",
+    description:
+      "Set the transfers for the signed-in person's pay this pay cycle exactly as they say, replacing the whole list (pass every line to keep, from get_short_term). Each line is theirs, so Cas keeps it when it looks again. A line with planItemId sets that plan move's amount for this pay (0 skips it); without, it's a move the plan doesn't name: give toAccountId for a household account, or for money leaving the household toAccountId null and match (the merchant key from get_short_term's movesSoFar). fromAccountId must be one of theirs.",
+    input: {
+      lines: z
+        .array(
+          z.object({
+            planItemId: z.number().int().positive().nullable(),
+            title: z.string().trim().min(1).max(60),
+            fromAccountId: z.number().int().positive(),
+            toAccountId: z.number().int().positive().nullable(),
+            match: z.string().trim().min(1).nullable(),
+            amount: z.number().nonnegative(),
+            dueDate: isoDate.nullable().describe("When it should have gone by; null for straight away"),
+            reason: z.string().trim().min(1).max(200),
+          })
+        )
+        .describe("Every line for this pay"),
+      summary: z.string().trim().max(400).optional().describe("A new one-line summary; omit to keep Cas's"),
+    },
+    run: async ({ lines, summary }) => setShortTerm(lines, summary),
   }),
 
   tool({

@@ -8,6 +8,8 @@ import {
   type MoveTx,
   type PaySource,
 } from "@/lib/my-allocation"
+import { cycleMoves, shortTermFingerprint, type ShortTermLine } from "@/lib/short-term"
+import { merchantKey } from "@/supabase/functions/_shared/rules"
 
 // Amit's November: a fortnightly pay into Check (1) on the 11th, the next due on the 25th
 const CHECK = 1
@@ -387,5 +389,85 @@ describe("myAllocation over the pay cycle", () => {
     })
     expect(late.cycle.late).toBe(true)
     expect(late.spending.spent).toBe(140.5)
+  })
+})
+
+describe("Cas's short-term allocation", () => {
+  const line = (l: Partial<ShortTermLine>): ShortTermLine => ({
+    id: "l1",
+    planItemId: null,
+    title: "Line",
+    fromAccountId: CHECK,
+    toAccountId: null,
+    match: null,
+    amount: 0,
+    dueDate: null,
+    reason: "Because",
+    by: "cas",
+    ...l,
+  })
+  const card = merchantKey("MB TRANSFER TO CARD 2699THANK YOU")
+  const a = myAllocation({
+    ...base,
+    shortTerm: [
+      // this pay's mortgage is what went, and the paydown waits for the late pay
+      line({ planItemId: 110, amount: 2020, reason: "$2,020 is what the Joint needed" }),
+      line({ planItemId: 125, amount: 0, reason: "Pay is late" }),
+      // the card payment, out of the household
+      line({ title: "Pay off credit card", match: card, amount: 1687, reason: "Clears the statement" }),
+      // a top-up still to make, later in the cycle
+      line({ title: "Top up AOC", toAccountId: AOC, amount: 100, dueDate: "2026-11-28", reason: "Behind by $100" }),
+    ],
+  })
+  const move = (id: number) => a.moves.find((m) => m.id === id)!
+
+  test("a line for a plan move sets its amount this pay, with Cas's reason", () => {
+    expect(move(110)).toMatchObject({ planned: 2020, byNow: 2020, done: 2020, status: "done", note: "$2,020 is what the Joint needed" })
+  })
+
+  test("a plan move set to nothing this pay is skipped", () => {
+    expect(move(125)).toMatchObject({ planned: 0, done: 0, status: "skipped" })
+  })
+
+  test("a move of Cas's out of the household is done by its merchant's transfers", () => {
+    expect(move(-3)).toMatchObject({ title: "Pay off credit card", planned: 1687, done: 1687, status: "done", extra: true })
+  })
+
+  test("a move of Cas's still to come isn't due yet", () => {
+    expect(move(-4)).toMatchObject({ to: "AOC", planned: 100, byNow: 0, done: 0, status: "on_track", extra: true })
+  })
+
+  test("what Cas's moves take isn't an other move", () => {
+    expect(a.otherMoves.amount).toBe(1.61)
+  })
+
+  test("Cas's moves come out of your spending", () => {
+    // 10,244.72 − (2,020 + 260 + 550 + 0 + 634 + 1,687 + 100)
+    expect(a.spending.allowance).toBe(4993.72)
+  })
+})
+
+describe("cycleMoves and the fingerprint", () => {
+  const moves = cycleMoves({
+    txs,
+    mine: [CHECK],
+    transferCategories: new Set([TRANSFER]),
+    start: "2026-11-11",
+    through: "2026-11-25",
+  })
+
+  test("a paired transfer goes to its account; one with no other side by merchant", () => {
+    expect(moves.map((m) => [m.amount, m.toAccountId, m.match])).toEqual([
+      [2020, JOINT, null],
+      [1687, null, merchantKey("MB TRANSFER TO CARD 2699THANK YOU")],
+      [1, null, merchantKey("SAVETHECHANGE 21 Nov 26")],
+      [0.61, null, merchantKey("SAVETHECHANGE 22 Nov 26")],
+    ])
+  })
+
+  test("spending doesn't change the fingerprint; a move does", () => {
+    const fp = (m = moves) => shortTermFingerprint({ cycleStart: "2026-11-11", planId: 5, pays: [1], moves: m })
+    expect(fp()).toBe(fp([...moves]))
+    expect(fp(moves.slice(1))).not.toBe(fp())
   })
 })

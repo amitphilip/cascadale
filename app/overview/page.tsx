@@ -104,7 +104,9 @@ export default async function HomePage({
     getOneOffs(),
     getPendingCorrections(),
     // your view opens on what the plan does with your pay
-    view === "me" ? Promise.all([plan, inputs]).then(([p, i]) => loadMyAllocation({ mine, plan: p, inputs: i })) : null,
+    view === "me"
+      ? Promise.all([plan, inputs]).then(([p, i]) => loadMyAllocation({ memberId: userId, mine, plan: p, inputs: i }))
+      : null,
   ])
 
   const soon = format(addDays(parseISO(today), DUE_SOON_DAYS), "yyyy-MM-dd")

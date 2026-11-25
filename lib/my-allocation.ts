@@ -16,6 +16,10 @@
 //   the category's regular bills that fall due in the cycle.
 // - Your spending: your pay less the moves and bills, against everything else spent from
 //   your accounts so far. Transfers out the plan doesn't name show as other moves.
+// - Cas's short-term allocation (lib/short-term.ts): this pay's transfers. A line tied to a
+//   plan allocation sets its amount for this pay; one that isn't is a move of its own, done
+//   by the transfers from its account into its account (or, for money leaving the household,
+//   by its merchant). What neither takes is still an other move.
 
 import { addDays, differenceInCalendarDays, format, parseISO } from "date-fns"
 
@@ -26,6 +30,7 @@ import type {
   PlanItem,
   PlanPurpose,
 } from "@/lib/db/schema"
+import type { ShortTermLine } from "@/lib/short-term"
 import { merchantName } from "@/supabase/functions/_shared/cas-queue"
 import { PAY_MIN } from "@/supabase/functions/_shared/nudges"
 import { merchantKey } from "@/supabase/functions/_shared/rules"
@@ -149,7 +154,7 @@ export type MoveTx = {
   categoryId: number | null
 }
 
-export type AllocationStatus = "done" | "on_track" | "behind" | "untracked"
+export type AllocationStatus = "done" | "on_track" | "behind" | "untracked" | "skipped"
 
 export type TrackedAllocation = {
   id: number
@@ -166,6 +171,10 @@ export type TrackedAllocation = {
   /** what has gone in the cycle; null when there's no way to tell (no account or category to match) */
   done: number | null
   status: AllocationStatus
+  /** Cas's word on it this pay, from the short-term allocation */
+  note: string | null
+  /** a move of Cas's for this pay that the plan doesn't name */
+  extra: boolean
 }
 
 export type MyAllocation = {
@@ -217,8 +226,19 @@ export function myAllocation(input: {
   /** how often each account's main pay comes */
   payEvery: Map<number, PayEvery>
   accountName: Map<number, string>
+  /** Cas's transfers for this pay */
+  shortTerm?: ShortTermLine[]
 }): MyAllocation {
   const { today, txs, cycle } = input
+  const lines = input.shortTerm ?? []
+  const forPlan = new Map(
+    lines.flatMap((l) => (l.planItemId === null ? [] : [[l.planItemId, l] as const]))
+  )
+  /** a line's amount, and what of it should have gone by now */
+  const lineSchedule = (l: ShortTermLine) => ({
+    planned: round2(l.amount),
+    byNow: l.dueDate === null || l.dueDate <= today ? round2(l.amount) : 0,
+  })
   // a late pay keeps the cycle open through today
   const through = cycle.end > today ? cycle.end : shift(today, 1)
   const share = elapsed(cycle, today)
@@ -321,7 +341,9 @@ export function myAllocation(input: {
   ): AllocationStatus =>
     done === null
       ? "untracked"
-      : done >= planned - slack(planned)
+      : planned < 1 && done < 1
+        ? "skipped"
+        : done >= planned - slack(planned)
         ? "done"
         : done >= byNow - slack(byNow)
           ? "on_track"
@@ -334,9 +356,10 @@ export function myAllocation(input: {
 
   const moves: TrackedAllocation[] = recurring
     .filter((a) => a.fromAccountId !== null && mine.has(a.fromAccountId))
-    .map((a) => {
+    .map((a): TrackedAllocation => {
       const from = a.fromAccountId!
-      const s = schedule(a.amount!, a.every, from)
+      const line = forPlan.get(a.id)
+      const s = line ? lineSchedule(line) : schedule(a.amount!, a.every, from)
       let done: number | null = null
       if (a.categoryId !== null) {
         done = spentIn(a.categoryId, (id) => id === from)
@@ -362,6 +385,8 @@ export function myAllocation(input: {
         ...s,
         done,
         status: status(s.planned, s.byNow, done),
+        note: line?.reason ?? null,
+        extra: false,
       }
     })
   const moveCategories = new Set(
@@ -427,15 +452,59 @@ export function myAllocation(input: {
         done,
         // a bill lands when it lands, so it's behind only once the cycle is out of room
         status: done >= planned - slack(planned) ? "done" : "on_track",
+        note: null,
+        extra: false,
       },
     ]
+  })
+
+  // Cas's moves for this pay that the plan doesn't name, after the plan's took their share
+  const accountOf = new Map(pairs.map((p) => [p.outId, p.toAccountId]))
+  lines.forEach((l, i) => {
+    if (l.planItemId !== null || !mine.has(l.fromAccountId)) return
+    const s = lineSchedule(l)
+    let done: number | null = null
+    if (l.toAccountId !== null) {
+      const e = pool.get(`${l.fromAccountId}>${l.toAccountId}`)
+      done = e ? round2(Math.min(e.amount, s.planned)) : 0
+      if (e) {
+        e.amount = Math.max(0, e.amount - done)
+        e.outIds.forEach((id) => matched.add(id))
+      }
+    } else if (l.match !== null) {
+      const outs = inCycle.filter(
+        (t) =>
+          t.accountId === l.fromAccountId &&
+          t.amount < 0 &&
+          !matched.has(t.id) &&
+          !accountOf.has(t.id) &&
+          merchantKey(t.description) === l.match
+      )
+      done = round2(Math.min(-sum(outs.map((t) => t.amount)), s.planned))
+      outs.forEach((t) => matched.add(t.id))
+    }
+    moves.push({
+      id: -(i + 1),
+      title: l.title,
+      purpose: null,
+      to:
+        l.toAccountId !== null
+          ? (input.accountName.get(l.toAccountId) ?? null)
+          : null,
+      amount: l.amount,
+      every: cycle.pay?.every ?? "month",
+      ...s,
+      done,
+      status: status(s.planned, s.byNow, done),
+      note: l.reason,
+      extra: true,
+    })
   })
 
   const tracked = [...moves, ...bills].filter((a) => a.done !== null)
   const planned = round2(sum([...moves, ...bills].map((a) => a.planned)))
 
   // transfers out of your accounts that no allocation took
-  const accountOf = new Map(pairs.map((p) => [p.outId, p.toAccountId]))
   const isTransfer = (t: MoveTx) =>
     t.categoryId !== null && kind.get(t.categoryId) === "transfer"
   const others = new Map<string, number>()
