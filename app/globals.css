@@ -131,6 +131,9 @@
 @layer base {
   * {
     @apply border-border outline-ring/50;
+    /* a grid's implicit columns may shrink to its container, so a truncated name or a
+       nowrap row can't stretch a card past a phone's width; explicit grid-cols-* still win */
+    grid-auto-columns: minmax(0, auto);
     }
   body {
     @apply overflow-x-clip bg-background text-foreground;

@@ -129,7 +129,7 @@ export default async function HomePage({
       </PageHeader>
 
       <Suspense fallback={null}>
-        <DataHealthBanner />
+        <DataHealthBanner fmt={fmt} />
       </Suspense>
 
       {scoped && scoped.length === 0 && (
@@ -251,8 +251,10 @@ function MonthCard({
               <ul className="mt-1 grid gap-1 text-xs text-muted-foreground">
                 {still.map((p) => (
                   <li key={`${p.name}:${p.date}`} className="flex justify-between gap-3">
-                    <span className={cn("truncate", p.status === "late" && "text-warning")}>
-                      {p.name} · {p.status === "late" ? `late, due ${day(p.date)}` : day(p.date)}
+                    {/* a long payer name gives way before when it's due */}
+                    <span className={cn("flex min-w-0 gap-1", p.status === "late" && "text-warning")}>
+                      <span className="truncate">{p.name}</span>
+                      <span className="shrink-0">· {p.status === "late" ? `late, due ${day(p.date)}` : day(p.date)}</span>
                     </span>
                     <span className="shrink-0 tabular-nums">{money(p.amount)}</span>
                   </li>

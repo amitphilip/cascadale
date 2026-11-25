@@ -98,12 +98,13 @@ export async function loadPlanInputs() {
           cadence: CADENCE_LABELS[s.cadence],
           amount: round2(s.latest),
           monthly: round2(s.monthly),
+          lastDate: s.lastDate,
           nextDate: s.nextDate,
           account: accountName.get(s.accountId) ?? null,
           accountId: s.accountId,
         })),
         ...(other > 0
-          ? [{ name: `Other ${nameOf(l.categoryId, 1)}`, category: nameOf(l.categoryId, 1), cadence: "Irregular", amount: other, monthly: other, nextDate: null, account: null, accountId: null }]
+          ? [{ name: `Other ${nameOf(l.categoryId, 1)}`, category: nameOf(l.categoryId, 1), cadence: "Irregular", amount: other, monthly: other, lastDate: null, nextDate: null, account: null, accountId: null }]
           : []),
       ]
     }),
@@ -134,8 +135,11 @@ export async function loadPlanInputs() {
             cadence: CADENCE_LABELS[s.cadence],
             amount: round2(s.latest),
             monthly: round2(s.monthly),
+            lastDate: s.lastDate,
             nextDate: s.nextDate,
             account: accountName.get(s.accountId) ?? null,
+            accountId: s.accountId,
+            categoryId: l.categoryId,
           }))
       )
       .sort((a, b) => b.monthly - a.monthly),

@@ -1,5 +1,5 @@
 import Link from "next/link"
-import { parseISO } from "date-fns"
+import { addDays, format, parseISO } from "date-fns"
 import { CaretRightIcon } from "@phosphor-icons/react/ssr"
 
 import { Meter, type MeterTone } from "@/components/meter"
@@ -26,7 +26,7 @@ const TONE: Record<AllocationStatus, MeterTone> = {
   untracked: "primary",
 }
 
-/** The My view's top card: what the plan does with your pay this month, and how it's going. */
+/** The My view's top card: what the plan does with your pay this pay cycle, and how it's going. */
 export function MyAllocationCard({
   allocation: a,
   name,
@@ -48,8 +48,16 @@ export function MyAllocationCard({
     }).format(parseISO(iso))
   const behind = Math.round(a.byNow - a.done)
   const onPace = behind < Math.max(20, a.byNow * 0.02)
-  const { spending } = a
+  const { spending, cycle } = a
   const over = spending.left < 0
+  // the cycle runs to the day before the next pay
+  const lastDay = format(addDays(parseISO(cycle.end), -1), "yyyy-MM-dd")
+  const short = (iso: string) =>
+    new Intl.DateTimeFormat(fmt.locale, {
+      day: "numeric",
+      month: "short",
+    }).format(parseISO(iso))
+  const period = cycle.pay ? "this pay" : "the month"
 
   if (a.moves.length === 0 && a.bills.length === 0) {
     return (
@@ -78,13 +86,30 @@ export function MyAllocationCard({
     <Card className={TIGHT}>
       <CardContent className="grid gap-6">
         <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-          <h2 className="font-heading text-lg font-semibold">
-            {name}&rsquo;s allocation for{" "}
-            {formatMonth(today.slice(0, 7), fmt.locale)}
-          </h2>
+          <div className="grid gap-0.5">
+            <h2 className="font-heading text-lg font-semibold">
+              {name}&rsquo;s allocation{" "}
+              {cycle.pay
+                ? "this pay"
+                : `for ${formatMonth(today.slice(0, 7), fmt.locale)}`}
+            </h2>
+            {cycle.pay && (
+              <p className="text-sm text-muted-foreground tabular-nums">
+                {cycle.late
+                  ? `Since payday, ${short(cycle.start)}`
+                  : `${short(cycle.start)} – ${short(lastDay)}`}
+              </p>
+            )}
+          </div>
           {a.pay.next && (
-            <p className="text-sm text-muted-foreground tabular-nums">
-              Next pay {day(a.pay.next.date)} · {money(a.pay.next.amount)}
+            <p
+              className={cn(
+                "text-sm tabular-nums",
+                cycle.late ? "text-warning" : "text-muted-foreground"
+              )}
+            >
+              {cycle.late ? "Next pay late, due" : "Next pay"}{" "}
+              {day(a.pay.next.date)} · {money(a.pay.next.amount)}
             </p>
           )}
         </div>
@@ -170,12 +195,19 @@ export function MyAllocationCard({
 
         <div className="grid gap-5 border-t pt-5 lg:grid-cols-2 lg:gap-8">
           {a.moves.length > 0 && (
-            <Group title="From your pay" items={a.moves} paced money={money} />
+            <Group
+              title="From your pay"
+              items={a.moves}
+              paced
+              period={period}
+              money={money}
+            />
           )}
           {a.bills.length > 0 && (
             <Group
               title="Paid from your account"
               items={a.bills}
+              period={period}
               money={money}
             />
           )}
@@ -216,12 +248,15 @@ function Group({
   title,
   items,
   paced = false,
+  period,
   money,
 }: {
   title: string
   items: TrackedAllocation[]
   /** tick where each should be by now; bills go when they're due, so they don't */
   paced?: boolean
+  /** "this pay" or "the month" */
+  period: string
   money: (n: number) => string
 }) {
   return (
@@ -234,18 +269,18 @@ function Group({
       >
         {title}
         <span className="tabular-nums">
-          {money(items.reduce((s, i) => s + i.month, 0))}
+          {money(items.reduce((s, i) => s + i.planned, 0))}
         </span>
       </h3>
       <ul className="grid divide-y divide-border/70">
         {items.map((i) => (
           <li key={i.id} className="grid gap-1.5 py-2.5 first:pt-1">
             <div className="flex items-baseline justify-between gap-3">
-              <span className="min-w-0 truncate font-medium">
-                {i.title}
+              {/* where it goes sits under the title, so a long title can't hide it */}
+              <span className="grid min-w-0">
+                <span className="truncate font-medium">{i.title}</span>
                 {i.to && i.to !== i.title && (
-                  <span className="font-normal text-muted-foreground">
-                    {" "}
+                  <span className="truncate text-xs text-muted-foreground">
                     → {i.to}
                   </span>
                 )}
@@ -256,20 +291,20 @@ function Group({
                 )}
                 <span className="text-muted-foreground">
                   {i.done !== null ? "of " : ""}
-                  {money(i.month)}
+                  {money(i.planned)}
                 </span>
               </span>
             </div>
             {i.done !== null && (
               <Meter
                 value={i.done}
-                max={i.month}
-                mark={paced && i.month > 0 ? i.byNow / i.month : undefined}
+                max={i.planned}
+                mark={paced && i.planned > 0 ? i.byNow / i.planned : undefined}
                 tone={TONE[i.status]}
-                label={`${i.title}: ${money(i.done)} of ${money(i.month)}`}
+                label={`${i.title}: ${money(i.done)} of ${money(i.planned)}`}
               />
             )}
-            <Status item={i} money={money} />
+            <Status item={i} period={period} money={money} />
           </li>
         ))}
       </ul>
@@ -279,14 +314,16 @@ function Group({
 
 function Status({
   item: i,
+  period,
   money,
 }: {
   item: TrackedAllocation
+  period: string
   money: (n: number) => string
 }) {
   switch (i.status) {
     case "done":
-      return <p className="text-xs text-positive">Done for the month</p>
+      return <p className="text-xs text-positive">Done for {period}</p>
     case "behind":
       return (
         <p className="text-xs text-warning tabular-nums">
@@ -296,7 +333,7 @@ function Status({
     case "on_track":
       return (
         <p className="text-xs text-muted-foreground tabular-nums">
-          On track · {money(i.month - i.done!)} still to go
+          On track · {money(i.planned - i.done!)} still to go
         </p>
       )
     case "untracked":

@@ -1,6 +1,13 @@
 import { describe, expect, test } from "vitest"
 
-import { myAllocation, type MoveTx } from "@/lib/my-allocation"
+import { monthOf } from "@/lib/budget-tracking"
+import {
+  myAllocation,
+  payCycle,
+  type BillSeries,
+  type MoveTx,
+  type PaySource,
+} from "@/lib/my-allocation"
 
 // Amit's November: a fortnightly pay into Check (1) on the 11th, the next due on the 25th
 const CHECK = 1
@@ -56,8 +63,31 @@ const txs = [
   tx(CARD, "2026-11-12", -50, DINING),
 ]
 
+const wood: PaySource = {
+  name: "Wood Partners",
+  accountId: CHECK,
+  every: "fortnight",
+  amount: 5122.36,
+  monthly: 11097.91,
+  lastDate: "2026-11-11",
+  nextDate: "2026-11-25",
+}
+
+// the power bill, paid on the 2nd
+const power: BillSeries = {
+  categoryId: UTILITIES,
+  accountId: CHECK,
+  days: 30,
+  amount: 386.68,
+  monthly: 386.68,
+  lastDate: "2026-11-02",
+  nextDate: "2026-12-02",
+}
+
+// these run on the calendar month; the pay cycle's tests are below
 const base = {
   today: "2026-11-24",
+  cycle: { ...monthOf("2026-11-24"), pay: null },
   mine: [CHECK],
   allocations: [
     {
@@ -123,15 +153,8 @@ const base = {
   ],
   txs,
   categories,
-  paysDue: [
-    {
-      name: "Wood Partners",
-      accountId: CHECK,
-      date: "2026-11-25",
-      amount: 5122.36,
-      status: "due" as const,
-    },
-  ],
+  sources: [wood],
+  bills: [power],
   payEvery: new Map([[CHECK, "fortnight" as const]]),
   accountName: new Map([
     [JOINT, "Joint"],
@@ -140,7 +163,7 @@ const base = {
   ]),
 }
 
-describe("myAllocation", () => {
+describe("myAllocation over the month", () => {
   const a = myAllocation(base)
   const move = (id: number) => a.moves.find((m) => m.id === id)!
 
@@ -155,7 +178,7 @@ describe("myAllocation", () => {
 
   test("a move on your pay's cadence is per pay: two this month, one landed", () => {
     expect(move(110)).toMatchObject({
-      month: 5110,
+      planned: 5110,
       byNow: 2555,
       done: 2020,
       status: "behind",
@@ -165,7 +188,7 @@ describe("myAllocation", () => {
 
   test("moves into the same account share what moved there, in plan order", () => {
     expect(move(125)).toMatchObject({
-      month: 400,
+      planned: 400,
       byNow: 200,
       done: 0,
       status: "behind",
@@ -174,7 +197,7 @@ describe("myAllocation", () => {
 
   test("a move tied to a category counts that category's spending from the account", () => {
     expect(move(111)).toMatchObject({
-      month: 260,
+      planned: 260,
       byNow: 130,
       done: 180,
       status: "on_track",
@@ -189,7 +212,7 @@ describe("myAllocation", () => {
     expect(a.bills).toEqual([
       expect.objectContaining({
         id: 112,
-        month: 634,
+        planned: 634,
         done: 386.68,
         status: "on_track",
       }),
@@ -209,7 +232,7 @@ describe("myAllocation", () => {
     expect(a.spending.spent).toBe(100.5)
   })
 
-  test("done so far counts the tracked moves and bills, capped at each one's month", () => {
+  test("done so far counts the tracked moves and bills, capped at each one's plan", () => {
     expect(a.done).toBe(2020 + 180 + 0 + 0 + 386.68)
   })
 
@@ -231,5 +254,138 @@ describe("myAllocation", () => {
       done: 550,
       status: "done",
     })
+  })
+})
+
+describe("payCycle", () => {
+  test("runs from your main pay's last payday to its next", () => {
+    const side = {
+      ...wood,
+      name: "Tutoring",
+      every: "week" as const,
+      amount: 600,
+      monthly: 2600,
+    }
+    expect(
+      payCycle({ today: "2026-11-24", mine: [CHECK], sources: [side, wood] })
+    ).toEqual({
+      start: "2026-11-11",
+      end: "2026-11-25",
+      days: 14,
+      pay: {
+        name: "Wood Partners",
+        accountId: CHECK,
+        every: "fortnight",
+        amount: 5122.36,
+      },
+    })
+  })
+
+  test("a pay a few days late keeps its cycle open", () => {
+    expect(
+      payCycle({ today: "2026-11-28", mine: [CHECK], sources: [wood] }).start
+    ).toBe("2026-11-11")
+  })
+
+  test("the calendar month without a regular pay of yours to go by", () => {
+    const month = { ...monthOf("2026-12-03"), pay: null }
+    // well overdue
+    expect(
+      payCycle({ today: "2026-12-03", mine: [CHECK], sources: [wood] })
+    ).toEqual(month)
+    // someone else's
+    expect(
+      payCycle({ today: "2026-12-03", mine: [JOINT], sources: [wood] })
+    ).toEqual(month)
+  })
+})
+
+describe("myAllocation over the pay cycle", () => {
+  const cycle = payCycle({
+    today: base.today,
+    mine: base.mine,
+    sources: [wood],
+  })
+  const a = myAllocation({ ...base, cycle })
+  const move = (id: number) => a.moves.find((m) => m.id === id)!
+
+  test("your pay is the one that began the cycle; the next begins the next", () => {
+    expect(a.pay).toEqual({
+      soFar: 5122.36,
+      stillDue: 0,
+      total: 5122.36,
+      next: { date: "2026-11-25", amount: 5122.36 },
+    })
+    expect(a.cycle.late).toBe(false)
+  })
+
+  test("a move on the cycle's pay is its amount once, all due from payday", () => {
+    expect(move(110)).toMatchObject({
+      planned: 2555,
+      byNow: 2555,
+      done: 2020,
+      status: "behind",
+    })
+    expect(move(123)).toMatchObject({ planned: 275, byNow: 275, done: 0 })
+  })
+
+  test("a category's spending counts from the cycle's start", () => {
+    // the 13th and 20th; the 6th was last cycle
+    expect(move(111)).toMatchObject({
+      planned: 130,
+      done: 120,
+      status: "behind",
+    })
+  })
+
+  test("a bill not due in the cycle isn't this pay's", () => {
+    expect(a.bills).toEqual([])
+  })
+
+  test("a bill due in the cycle counts in full", () => {
+    const due = myAllocation({
+      ...base,
+      cycle,
+      bills: [{ ...power, nextDate: "2026-11-24" }],
+    })
+    expect(due.bills).toEqual([
+      expect.objectContaining({
+        id: 112,
+        planned: 634,
+        done: 0,
+        status: "on_track",
+      }),
+    ])
+  })
+
+  test("a bill with no regular payment to go by counts the cycle's share of its month", () => {
+    const pro = myAllocation({ ...base, cycle, bills: [] })
+    expect(pro.bills[0].planned).toBe(291.61)
+  })
+
+  test("your spending is this pay less the plan, paced to the next pay", () => {
+    expect(a.planned).toBe(3160)
+    expect(a.spending).toEqual({
+      allowance: 1962.36,
+      spent: 100.5,
+      byNow: 1962.36,
+      left: 1861.86,
+    })
+  })
+
+  test("other moves count the cycle's", () => {
+    expect(a.otherMoves.amount).toBe(1688.61)
+  })
+
+  test("a late pay keeps the cycle going through today", () => {
+    const today = "2026-11-27"
+    const late = myAllocation({
+      ...base,
+      today,
+      cycle: payCycle({ today, mine: base.mine, sources: [wood] }),
+      txs: [...txs, tx(CHECK, "2026-11-26", -40, DINING)],
+    })
+    expect(late.cycle.late).toBe(true)
+    expect(late.spending.spent).toBe(140.5)
   })
 })

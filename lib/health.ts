@@ -12,6 +12,11 @@ export const STALE_SYNC_HOURS = 26
 export const STALE_REFRESH_HOURS = 36
 /** Differences under this are rounding, not drift. */
 const DRIFT_TOLERANCE = 1
+/**
+ * With payments still pending, a gap under this is them settling, not drift: a card hold
+ * often posts at a different amount (a tip, a fuel pre-authorisation). Checked again once they post.
+ */
+const SETTLING_TOLERANCE = 50
 /** A pending transaction posts within this many days, at the same amount. */
 export const PENDING_MATCH_DAYS = 4
 
@@ -30,7 +35,7 @@ export type FeedAccount = {
 
 export type HealthInput = {
   now: Date
-  accounts: { id: number; name: string; type: string; balance: number; archived: boolean }[]
+  accounts: { id: number; name: string; type: string; balance: number; archived: boolean; institution?: string | null }[]
   feed:
     | { connected: false }
     | { connected: true; error: string | null; accounts: FeedAccount[] }
@@ -109,6 +114,28 @@ export function buildDataHealth(input: HealthInput) {
       const drift = bank === null ? null : round2(a.balance - bank)
       const withPending = round2(a.balance + pendingTotal)
       const driftWithPending = bank === null ? null : round2(withPending - bank)
+      // Banks differ on what their balance counts: ASB leaves pending out, ANZ takes pending
+      // payments out straight away but doesn't add pending money in. The gap is what's left
+      // under whichever of those fits the bank's balance best.
+      const pendingOut = round2(own.filter((p) => p.amount < 0).reduce((s, p) => s + p.amount, 0))
+      const bases =
+        bank === null
+          ? []
+          : [
+              { basis: "posted" as const, balance: a.balance },
+              ...(own.length ? [{ basis: "with pending" as const, balance: withPending }] : []),
+              ...(pendingOut && pendingOut !== pendingTotal
+                ? [{ basis: "with pending payments out" as const, balance: round2(a.balance + pendingOut) }]
+                : []),
+            ]
+      const best = bases.reduce<(typeof bases)[number] | null>(
+        (b, c) => (b === null || Math.abs(c.balance - bank!) < Math.abs(b.balance - bank!) ? c : b),
+        null
+      )
+      const gap = best === null ? null : round2(best.balance - bank!)
+      const isDrifted = drift !== null && Math.abs(drift) >= DRIFT_TOLERANCE
+      const explainedByPending = isDrifted && Math.abs(gap!) < DRIFT_TOLERANCE
+      const settling = isDrifted && !explainedByPending && own.length > 0 && Math.abs(gap!) < SETTLING_TOLERANCE
       return {
         accountId: a.id,
         name: a.name,
@@ -126,8 +153,14 @@ export function buildDataHealth(input: HealthInput) {
         pending: { count: own.length, total: pendingTotal },
         balanceWithPending: withPending,
         driftWithPending,
-        driftExplainedByPending:
-          drift !== null && Math.abs(drift) >= DRIFT_TOLERANCE && Math.abs(driftWithPending!) < DRIFT_TOLERANCE,
+        /** Cascadale's balance less the bank's, counting pending the way the bank seems to */
+        gap,
+        /** which of Cascadale's balances the bank's matches best: posted, or with some or all pending */
+        gapBasis: best?.basis ?? null,
+        gapBalance: best?.balance ?? null,
+        driftExplainedByPending: explainedByPending,
+        /** a small gap with payments still pending: likely them settling, check again once they post */
+        driftSettling: settling,
       }
     })
 
@@ -138,12 +171,19 @@ export function buildDataHealth(input: HealthInput) {
   // lead with the gap that's left once they're counted, since that's the one to reconcile.
   for (const a of drifted) {
     if (a.driftExplainedByPending) continue
-    const gap = a.pending.count ? a.driftWithPending! : a.drift!
+    const gap = a.gap!
     const side = gap < 0 ? "below" : "above"
+    const counted =
+      a.gapBasis === "with pending"
+        ? ` once its ${a.pending.count} pending ${a.pending.count === 1 ? "transaction is" : "transactions are"} counted`
+        : a.gapBasis === "with pending payments out"
+          ? " once its pending payments out are counted (the bank takes those off before they post)"
+          : ""
+    const figures = `(${a.gapBalance!.toFixed(2)} vs ${a.bankBalance!.toFixed(2)})`
     warnings.push(
-      a.pending.count
-        ? `${a.name} is ${Math.abs(gap).toFixed(2)} ${side} the bank once its ${a.pending.count} pending ${a.pending.count === 1 ? "transaction is" : "transactions are"} counted (${a.balanceWithPending.toFixed(2)} vs ${a.bankBalance!.toFixed(2)})`
-        : `${a.name} is ${Math.abs(gap).toFixed(2)} ${side} the bank (${a.balance.toFixed(2)} vs ${a.bankBalance!.toFixed(2)})`
+      a.driftSettling
+        ? `${a.name} is ${Math.abs(gap).toFixed(2)} ${side} the bank${counted} ${figures}, with ${a.pending.count} still pending: likely card payments settling at a different amount, so check again once they post`
+        : `${a.name} is ${Math.abs(gap).toFixed(2)} ${side} the bank${counted} ${figures}`
     )
   }
 
@@ -159,11 +199,17 @@ export function buildDataHealth(input: HealthInput) {
     bankFeeds: !input.feed.connected ? "not_connected" : input.feed.error ? "error" : "connected",
     staleAccounts: stale.map((a) => a.name),
     drift: drifted.map((a) => ({
+      accountId: a.accountId,
       account: a.name,
+      institution: input.accounts.find((x) => x.id === a.accountId)?.institution ?? null,
       cascadale: a.balance,
       bank: a.bankBalance,
       difference: a.drift,
+      /** what's left once pending is counted the way the bank does: the one to reconcile */
+      gap: a.gap,
+      pendingCount: a.pending.count,
       explainedByPending: a.driftExplainedByPending,
+      settling: a.driftSettling,
     })),
     accounts,
     pendingTransactions: pending.map((p) => ({
