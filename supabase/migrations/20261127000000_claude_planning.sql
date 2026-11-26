@@ -60,6 +60,11 @@ alter table accounts
   add column spendable boolean;
 
 -- ── Change log ───────────────────────────────────────────────────────────────
+-- Cas's write log (20261029000000_plan_instructions.sql) keeps its rows under a new name;
+-- nothing reads it any more. cas_notes.applied_change_id follows the rename.
+alter table plan_changes rename to plan_changes_legacy;
+alter index plan_changes_pkey rename to plan_changes_legacy_pkey;
+
 -- Every change to the plan, the short-term allocations and committed purchases.
 create table plan_changes (
   user_id uuid not null default public.data_owner() references auth.users (id) on delete cascade,
