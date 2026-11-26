@@ -23,8 +23,8 @@ export type ShortTermLine = {
   /** when it should have gone by; null for straight away */
   dueDate: string | null
   reason: string
-  /** cas: Cas decided it; you: someone set it by talking to Cas in Claude */
-  by: "cas" | "you"
+  /** cas: the old Cas agent decided it; claude: Claude set it through the MCP tools; you: set in the app */
+  by: "cas" | "claude" | "you"
 }
 
 type Tx = {

@@ -8,6 +8,7 @@ import { describeError } from "@/lib/categorize"
 import { CAS_PRACTICE, CAS_ROLE } from "@/lib/cas/knowledge"
 import type { CasTool } from "@/lib/cas/tool"
 import { TOOLS } from "@/lib/cas/tools"
+import { CAS_DISABLED_MESSAGE, casEnabled } from "@/lib/flags"
 import type { DataHealth } from "@/lib/health"
 import { todayLocal } from "@/supabase/functions/_shared/akahu"
 
@@ -78,6 +79,7 @@ async function runAgent(
  * (getDb follows the request's token or cookies) and returns its answer.
  */
 export async function askCas(question: string, context?: string, health?: DataHealth) {
+  if (!casEnabled()) throw new Error(CAS_DISABLED_MESSAGE)
   const used: string[] = []
   const tools = runnable(
     TOOLS.filter((t) => t.access !== "action"),

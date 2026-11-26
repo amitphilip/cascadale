@@ -6,7 +6,11 @@ import { z } from "zod"
 import { anthropicClient } from "@/lib/anthropic"
 import { describeError } from "@/lib/categorize"
 import { getDb, must } from "@/lib/db"
-import { PLAN_EVERY, PLAN_PURPOSES, PLAN_VERDICTS } from "@/lib/db/schema"
+import { PLAN_EVERY, PLAN_VERDICTS } from "@/lib/db/schema"
+import { CAS_DISABLED_MESSAGE, casEnabled } from "@/lib/flags"
+
+/** The purposes Cas's plans used; debt came later, with Claude's plan tools. */
+const PLAN_PURPOSES = ["bills", "budget", "one_off", "savings", "goal", "buffer"] as const
 import { loadPlanInputs, type PlanInputs } from "@/lib/plan-inputs"
 import { getOpenCasNotes } from "@/lib/queries"
 
@@ -90,6 +94,7 @@ Keep every text short and plain: lead with the number, no preamble.`
 
 /** Ask Cas for a plan from today's inputs and these goals, and save it as the current plan. */
 export async function makePlan(goals: string | null, madeBy: "website" | "mcp") {
+  if (!casEnabled()) throw new Error(CAS_DISABLED_MESSAGE)
   const inputs = await loadPlanInputs()
   if (!inputs) throw new Error("Import some transactions first, so there's something to plan from.")
   const notes = (await getOpenCasNotes(30)).filter((n) => n.kind === "decision" || n.kind === "preference")

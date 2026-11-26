@@ -150,10 +150,10 @@ export const COLUMNS = {
   plans:
     "id, goals, summary, verdict, verdictNote:verdict_note, goalChecks:goal_checks, figures, madeBy:made_by, createdAt:created_at",
   planItems:
-    "id, planId:plan_id, kind, purpose, title, detail, amount, every, categoryId:category_id, oneOffId:one_off_id, accountId:account_id, fromAccountId:from_account_id, dueDate:due_date, doneAt:done_at, position",
+    "id, planId:plan_id, kind, purpose, title, detail, amount, every, categoryId:category_id, oneOffId:one_off_id, accountId:account_id, fromAccountId:from_account_id, fromMemberId:from_member_id, startDate:start_date, endDate:end_date, target, notes, matchKeys:match_keys, dueDate:due_date, doneAt:done_at, removedAt:removed_at, updatedAt:updated_at, position",
   casNudges: "id, kind, title, body, dedupeKey:dedupe_key, dueDate:due_date, createdAt:created_at, pushedAt:pushed_at, doneAt:done_at",
   casNotes:
-    "id, kind, content, dueDate:due_date, affectsPlan:affects_plan, appliedAt:applied_at, ref, createdAt:created_at, resolvedAt:resolved_at, resolution",
+    "id, kind, content, dueDate:due_date, affectsPlan:affects_plan, appliedAt:applied_at, ref, subject, payerMemberId:payer_member_id, createdAt:created_at, resolvedAt:resolved_at, resolution",
 } as const
 
 export { schema }

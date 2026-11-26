@@ -6,6 +6,7 @@ import { z } from "zod"
 import { anthropicClient, getApiKey } from "@/lib/anthropic"
 import { describeError } from "@/lib/categorize"
 import { getUserId } from "@/lib/db"
+import { casEnabled } from "@/lib/flags"
 import { loadAllocationBasis, type AllocationBasis } from "@/lib/month"
 import { myAllocation } from "@/lib/my-allocation"
 import { getCurrentPlan } from "@/lib/plan-data"
@@ -74,10 +75,10 @@ The lines:
 - Amounts: an already-made move at its exact amount; others tidy, whole dollars and to the nearest $5 above $100.
 - Use ids only from the data. Refer to accounts by name in text, never by id.`
 
-/** The signed-in person and the accounts that are theirs. */
-export async function myAccounts() {
-  const [memberId, holders] = await Promise.all([getUserId(), getAccountHolders()])
-  return { memberId, mine: [...holders].filter(([, h]) => h === memberId).map(([id]) => id) }
+/** A household member (the signed-in person by default) and the accounts that are theirs. */
+export async function myAccounts(memberId?: string) {
+  const [id, holders] = await Promise.all([memberId ?? getUserId(), getAccountHolders()])
+  return { memberId: id, mine: [...holders].filter(([, h]) => h === id).map(([a]) => a) }
 }
 
 /** What Cas reads to work out the short-term allocation. */
@@ -203,6 +204,9 @@ async function loadBasis(mine: number[]) {
  * Anthropic API key.
  */
 export async function refreshShortTerm(opts: { force?: boolean; instruction?: string | null } = {}) {
+  // with Cas off a sync only marks the allocation stale (its fingerprint moves on); Claude
+  // looks at it with get_short_term and sets it with set_short_term
+  if (!casEnabled()) return null
   const { memberId, mine } = await myAccounts()
   if (!(await getApiKey()) || !(await shortTermReady())) return null
   const basis = await loadBasis(mine)
@@ -217,7 +221,7 @@ export async function refreshShortTerm(opts: { force?: boolean; instruction?: st
     notes.filter((n) => n.kind === "decision" || n.kind === "preference").map((n) => `${n.kind}: ${n.content}`),
     opts.instruction ?? null
   )
-  const yours = (saved?.lines ?? []).filter((l) => l.by === "you")
+  const yours = (saved?.lines ?? []).filter((l) => l.by !== "cas")
   const lines = cleanLines(
     answer.lines.map((l) => {
       const line = {
@@ -231,7 +235,7 @@ export async function refreshShortTerm(opts: { force?: boolean; instruction?: st
         reason: l.reason,
       }
       // a line the person set, kept as it was, stays theirs
-      const kept = yours.some(
+      const kept = yours.find(
         (y) =>
           y.planItemId === line.planItemId &&
           y.fromAccountId === line.fromAccountId &&
@@ -239,7 +243,7 @@ export async function refreshShortTerm(opts: { force?: boolean; instruction?: st
           y.match === line.match &&
           Math.abs(y.amount - line.amount) < 0.005
       )
-      return { ...line, by: kept ? ("you" as const) : ("cas" as const) }
+      return { ...line, by: kept ? kept.by : ("cas" as const) }
     }),
     knownIds(basis)
   )
@@ -255,47 +259,62 @@ export async function refreshShortTerm(opts: { force?: boolean; instruction?: st
   return { shortTerm, looked: true }
 }
 
-/** This pay's short-term allocation as it stands, with how each line is going. */
-export async function currentShortTerm() {
-  const { memberId, mine } = await myAccounts()
+/** A member's short-term allocation for this pay as it stands, with how each line is going. */
+export async function currentShortTerm(forMember?: string) {
+  const { memberId, mine } = await myAccounts(forMember)
   const basis = await loadBasis(mine)
   if (!basis) return null
   const saved = await getShortTerm(memberId, basis.args.cycle.start)
   const allocation = myAllocation({ ...basis.args, shortTerm: saved?.lines ?? [] })
-  return { basis, saved, allocation, stale: saved?.fingerprint !== basis.fingerprint }
+  return { memberId, basis, saved, allocation, stale: saved?.fingerprint !== basis.fingerprint }
 }
 
+/** Lines checked against the data: an account that isn't theirs or the household's, a plan move not leaving their accounts. */
+export function checkLines(lines: Omit<ShortTermLine, "id" | "by">[], known: ReturnType<typeof knownIds>) {
+  for (const l of lines) {
+    if (!known.mine.has(l.fromAccountId)) throw new Error(`Account ${l.fromAccountId} isn't one of theirs to move from`)
+    if (l.toAccountId !== null && !known.accounts.has(l.toAccountId)) throw new Error(`Account ${l.toAccountId} isn't the household's`)
+    if (l.planItemId !== null && !known.planItems.has(l.planItemId)) {
+      throw new Error(`Plan move ${l.planItemId} isn't one leaving their accounts`)
+    }
+    if (l.toAccountId === null && l.planItemId === null && !l.match) {
+      throw new Error(`"${l.title}" needs a toAccountId or, for money leaving the household, a match`)
+    }
+  }
+}
+
+export { knownIds, loadBasis }
+
 /**
- * Set this pay's lines as the person asked in Claude. Each line is theirs, so Cas keeps it
- * when it looks again; the fingerprint is kept, so it doesn't look again until a sync
- * brings in something new.
+ * Set a member's lines for this pay (the signed-in person by default), replacing the whole
+ * list. The fingerprint is saved with them, which clears stale until a sync brings in a new
+ * pay or move. `by` is who made the change: claude through the MCP tools, you in the app.
  */
-export async function setShortTerm(lines: Omit<ShortTermLine, "id" | "by">[], summary?: string | null) {
-  const { memberId, mine } = await myAccounts()
+export async function setShortTerm(
+  lines: Omit<ShortTermLine, "id" | "by">[],
+  summary?: string | null,
+  opts: { memberId?: string; by?: "claude" | "you" } = {}
+) {
+  const by = opts.by ?? "claude"
+  const { memberId, mine } = await myAccounts(opts.memberId)
   const basis = await loadBasis(mine)
-  if (!basis) throw new Error("There's no plan, or no accounts marked as yours, to allocate this pay from.")
+  if (!basis) throw new Error("There's no plan, or no accounts marked as theirs, to allocate this pay from.")
   const { cycle } = basis.args
   const saved = await getShortTerm(memberId, cycle.start)
   const known = knownIds(basis)
-  for (const l of lines) {
-    if (!known.mine.has(l.fromAccountId)) throw new Error(`Account ${l.fromAccountId} isn't one of yours to move from`)
-    if (l.toAccountId !== null && !known.accounts.has(l.toAccountId)) throw new Error(`Account ${l.toAccountId} isn't the household's`)
-    if (l.planItemId !== null && !known.planItems.has(l.planItemId)) {
-      throw new Error(`Plan move ${l.planItemId} isn't one leaving your accounts`)
-    }
-    if (l.toAccountId === null && !l.match) throw new Error(`"${l.title}" needs a toAccountId or, for money leaving the household, a match`)
-  }
+  checkLines(lines, known)
   const cleaned = cleanLines(
-    lines.map((l) => ({ ...l, by: "you" as const })),
+    lines.map((l) => ({ ...l, by })),
     known
   )
-  return saveShortTerm({
+  const shortTerm = await saveShortTerm({
     memberId,
     cycleStart: cycle.start,
     cycleEnd: cycle.end,
     lines: cleaned,
     summary: summary === undefined ? (saved?.summary ?? null) : summary,
     fingerprint: basis.fingerprint,
-    madeBy: "you",
+    madeBy: by,
   })
+  return { before: saved, shortTerm }
 }

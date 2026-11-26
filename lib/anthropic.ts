@@ -3,6 +3,7 @@ import "server-only"
 import Anthropic from "@anthropic-ai/sdk"
 
 import { getDb, must } from "@/lib/db"
+import { CAS_DISABLED_MESSAGE, casEnabled } from "@/lib/flags"
 
 export const API_KEY_SETTING = "anthropicApiKey"
 
@@ -18,7 +19,12 @@ export async function getApiKey() {
   return (await savedKey()) || process.env.ANTHROPIC_API_KEY || null
 }
 
+/**
+ * The one way the app reaches the Anthropic API. With Cas switched off (lib/flags.ts) it
+ * refuses, so nothing in a sync or an MCP call can call the API by accident.
+ */
 export async function anthropicClient() {
+  if (!casEnabled()) throw new Error(CAS_DISABLED_MESSAGE)
   const apiKey = await getApiKey()
   if (!apiKey) throw new Error("Add your Anthropic API key in Settings to use AI features")
   return new Anthropic({ apiKey })

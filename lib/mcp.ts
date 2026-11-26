@@ -6,10 +6,11 @@ import { z } from "zod"
 
 import { bearerToken, tokenClient } from "@/lib/db"
 import { askCas } from "@/lib/cas/agent"
-import { CAS_PRACTICE, CAS_ROLE } from "@/lib/cas/knowledge"
+import { CAS_ROLE, practice } from "@/lib/cas/knowledge"
 import { withMoney } from "@/lib/cas/tool"
 import { TOOLS, type CasTool } from "@/lib/cas/tools"
 import { loadDataHealth } from "@/lib/data-health"
+import { casEnabled } from "@/lib/flags"
 import { getSettings } from "@/lib/queries"
 
 // MCP servers for clients such as claude.ai, each added as its own connector:
@@ -26,24 +27,49 @@ export const MCP_RESOURCES = {
   cas: "/api/mcp/cas",
 } as const
 
-const ACTION_NAMES = TOOLS.filter((t) => t.access === "action").map((t) => t.name)
+/** The tools offered now: the Cas agent's own (make_plan, redo_short_term, update_cas) only while Cas is on. */
+export function offeredTools(casOn = casEnabled()) {
+  return TOOLS.filter((t) => casOn || !t.requiresCas)
+}
+
+/**
+ * Old tool names kept working for one release after the rename to notes, each pointing at
+ * the tool it now is. Remove after the release that follows Cas's decommissioning.
+ */
+export const TOOL_ALIASES: Record<string, string> = {
+  read_notes: "get_notes",
+  get_cas_notes: "get_notes",
+  save_cas_note: "save_note",
+  resolve_cas_note: "resolve_note",
+}
+
+/** A tool's name on the Cascadale server: read_notes is get_notes there, as people already know it. */
+const publicName = (t: CasTool) => (t.name === "read_notes" ? "get_notes" : t.name)
 
 // On the Cascadale connector Claude itself is Cas: it gets Cas's role and practice, every
 // read, memory and action tool, and asks before changing anything. Nothing runs a second
-// agent, so answers are as quick as the tools (which matters for voice).
-const TOOLS_INSTRUCTIONS = `Cascadale is the user's household budgeting app: bank accounts synced hourly from Akahu, transactions, categories and budgets, recurring bills, one-off payments, a plan, net worth, and Cas's notes. These tools read that data and act on it directly, through the same services and database as the website.
+// agent, so answers are as quick as the tools (which matters for voice). With Cas switched
+// off (the default), Claude also does the planning, through the plan tools.
+function toolsInstructions(casOn: boolean) {
+  const actions = offeredTools(casOn)
+    .filter((t) => t.access === "action")
+    .map(publicName)
+  return `Cascadale is the user's household budgeting app: bank accounts synced hourly from Akahu, transactions, categories and budgets, recurring payments, one-off payments, a shared plan, each member's short-term allocation for their pay, net worth, and notes. These tools read that data and act on it directly, through the same services and database as the website. Cascadale keeps the data, the rules and the figures${casOn ? "" : "; you make the judgement calls, including the planning"}.
 
 When the user talks about their money, be Cas for them.
 
 ${CAS_ROLE}
 
-${CAS_PRACTICE}
+${practice(casOn)}
 
 Using these tools:
-- get_briefing is the best single overview; get_inbox is what Home shows them to do; the other read tools answer specific questions.
-- These tools change the user's real finances: ${ACTION_NAMES.join(", ")}. Confirm with the user before calling one, and tell them what changed from the tool's result. Notes (save_note, resolve_note) are Cas's memory and need no confirmation.
+- get_briefing is the best single overview; get_inbox is what Home shows them to do; ${casOn ? "" : "get_system_guide explains this household's setup for planning; "}the other read tools answer specific questions.
+- These tools change the user's real finances: ${actions.join(", ")}. Confirm with the user before calling one, and tell them what changed from the tool's result. Notes (save_note, resolve_note) are the household's memory and need no confirmation.
 - In voice or chat, answer in a few plain sentences: the verdict or number first, then what to do. Offer detail rather than reading out lists.
 - Every response carries the household's currency and locale; amounts are in that currency. Transaction amounts are signed: negative is money out.`
+}
+
+const CAS_INSTRUCTIONS_OFF = `This is the older Cas connector. Cas, the advisor agent, is switched off: Claude does the planning through the Cascadale connector's tools now. Use the Cascadale connector; this one only shows the household's notes (get_notes, resolve_note).`
 
 const CAS_INSTRUCTIONS = `This is the older Cas connector; the Cascadale connector now carries everything Cas does (its notes too), and answers faster. Prefer Cascadale's tools when both are connected.
 
@@ -105,22 +131,36 @@ function serverMeta(origin: string) {
 }
 
 /** Cascadale: every read, memory and action tool, with Claude as Cas. */
-function createToolsServer(origin: string) {
+export function createToolsServer(origin: string) {
+  const casOn = casEnabled()
   const server = new McpServer(
-    { name: "cascadale", title: "Cascadale", version: "0.2.0", ...serverMeta(origin) },
-    { instructions: TOOLS_INSTRUCTIONS }
+    { name: "cascadale", title: "Cascadale", version: "0.3.0", ...serverMeta(origin) },
+    { instructions: toolsInstructions(casOn) }
   )
-  // read_notes is get_notes here, as on the Cas connector people already know
-  for (const t of TOOLS) register(server, t, t.name === "read_notes" ? "get_notes" : t.name)
+  const tools = offeredTools(casOn)
+  for (const t of tools) register(server, t, publicName(t))
+  const byName = new Map(tools.map((t) => [publicName(t), t]))
+  for (const [alias, target] of Object.entries(TOOL_ALIASES)) {
+    const t = byName.get(target)
+    if (!t || byName.has(alias)) continue
+    register(server, { ...t, description: `Old name for ${target}, kept for one release: use ${target}. ${t.description}` }, alias)
+  }
   return server
 }
 
 /** Cas: the advisor agent, plus a view of its notes. */
-function createCasServer(origin: string) {
+export function createCasServer(origin: string) {
+  const casOn = casEnabled()
   const server = new McpServer(
-    { name: "cas", title: "Cas", version: "0.1.0", ...serverMeta(origin) },
-    { instructions: CAS_INSTRUCTIONS }
+    { name: "cas", title: "Cas", version: "0.2.0", ...serverMeta(origin) },
+    { instructions: casOn ? CAS_INSTRUCTIONS : CAS_INSTRUCTIONS_OFF }
   )
+
+  const byName = new Map(TOOLS.map((t) => [t.name, t]))
+  register(server, byName.get("read_notes")!, "get_notes")
+  register(server, byName.get("resolve_note")!)
+  // ask_cas runs the agent on the Anthropic API: only while Cas is on
+  if (!casOn) return server
 
   server.registerTool(
     "ask_cas",
@@ -154,9 +194,6 @@ function createCasServer(origin: string) {
     }
   )
 
-  const byName = new Map(TOOLS.map((t) => [t.name, t]))
-  register(server, byName.get("read_notes")!, "get_notes")
-  register(server, byName.get("resolve_note")!)
   return server
 }
 

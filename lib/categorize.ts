@@ -6,6 +6,7 @@ import { z } from "zod"
 import { anthropicClient } from "@/lib/anthropic"
 import { COLUMNS, DbError, getDb, must, selectAll, type Db } from "@/lib/db"
 import type { AccountType, Category, Rule } from "@/lib/db/schema"
+import { casEnabled } from "@/lib/flags"
 import { buildMatcher, merchantKey } from "@/lib/rules"
 
 const MODEL = "claude-opus-5-5"
@@ -398,6 +399,11 @@ export async function autoCategorize(): Promise<AutoCategorizeResult> {
   }
   if (merchants.size === 0) {
     return { byRules, merchantsAsked: 0, byAi: 0, remaining: 0 }
+  }
+  // With Cas off nothing calls the API: what the rules don't take waits in the review queue
+  // (and the sync's to-dos) for Claude and the household to categorize.
+  if (!casEnabled()) {
+    return { byRules, merchantsAsked: 0, byAi: 0, remaining: rows.length }
   }
 
   const cats = await must<Pick<Category, "id" | "name" | "kind">[]>(

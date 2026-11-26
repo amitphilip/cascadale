@@ -127,7 +127,14 @@ export function MyAllocationCard({
                 {a.shortTerm.summary}
               </p>
             )}
-            {a.shortTerm.stale && <ShortTermRefresh />}
+            {a.shortTerm.stale &&
+              (a.shortTerm.autoRefresh ? (
+                <ShortTermRefresh />
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  A pay or a move has come in since this was set. Ask Claude to look at it again.
+                </p>
+              ))}
             <a
               href={TALK_TO_CAS}
               target="_blank"

@@ -193,7 +193,7 @@ export type OneOff = {
 export const PLAN_VERDICTS = ["realistic", "stretch", "unrealistic"] as const
 export type PlanVerdict = (typeof PLAN_VERDICTS)[number]
 
-export const PLAN_PURPOSES = ["bills", "budget", "one_off", "savings", "goal", "buffer"] as const
+export const PLAN_PURPOSES = ["bills", "budget", "one_off", "savings", "goal", "buffer", "debt"] as const
 export type PlanPurpose = (typeof PLAN_PURPOSES)[number]
 
 export const PLAN_EVERY = ["week", "fortnight", "month", "once"] as const
@@ -210,18 +210,26 @@ export type PlanFigures = {
   leftOver: number
 }
 
-/** A plan Cas made (plans). The newest is the current one. */
+/**
+ * A plan (plans). The newest is the current one. Cas made them whole (website, mcp); now
+ * Claude keeps the current one item by item through the plan tools (claude), or you do in
+ * the app (you), and those have no verdict.
+ */
 export type Plan = {
   id: number
   goals: string | null
   summary: string
-  verdict: PlanVerdict
-  verdictNote: string
+  verdict: PlanVerdict | null
+  verdictNote: string | null
   goalChecks: { goal: string; fits: boolean; note: string }[]
   figures: PlanFigures
-  madeBy: "website" | "mcp"
+  madeBy: "website" | "mcp" | "claude" | "you"
   createdAt: string
 }
+
+/** Who made a change: Claude through the MCP tools, or a person in the app. */
+export const CHANGE_MAKERS = ["claude", "you"] as const
+export type ChangeMaker = (typeof CHANGE_MAKERS)[number]
 
 /** An allocation or action on a plan (plan_items). */
 export type PlanItem = {
@@ -239,8 +247,21 @@ export type PlanItem = {
   accountId: number | null
   /** where the money leaves from, usually the account a pay lands in */
   fromAccountId: number | null
+  /** whose pay it comes from; null when it's shared or not from a pay */
+  fromMemberId: string | null
+  /** when it runs from and to; null for open-ended */
+  startDate: string | null
+  endDate: string | null
+  /** for a savings goal, debt or one-off: the amount it's working towards */
+  target: number | null
+  notes: string | null
+  /** merchant keys (or account transfers as "to:<accountId>") that pay it, for plan_vs_actual */
+  matchKeys: string[]
   dueDate: string | null
   doneAt: string | null
+  /** soft-deleted: kept for its history, no longer part of the plan */
+  removedAt: string | null
+  updatedAt: string | null
   position: number
 }
 
@@ -271,6 +292,10 @@ export type CasNote = {
   appliedAt: string | null
   /** set on notes the app raises itself, e.g. "uncategorized:<merchant key>" from a sync */
   ref: string | null
+  /** for a decision about who pays for something: what it's about ("school fees") */
+  subject: string | null
+  /** and who pays it */
+  payerMemberId: string | null
   createdAt: string
   resolvedAt: string | null
   resolution: string | null

@@ -191,7 +191,7 @@ export default async function HomePage({
         </div>
 
         <div className="grid min-w-0 gap-6">
-          <PlanLine verdict={current?.plan.verdict ?? null} note={current?.plan.verdictNote ?? null} />
+          <PlanLine verdict={current?.plan.verdict ?? null} note={current ? (current.plan.verdictNote ?? current.plan.summary) : null} />
           <WatchCard dueSoon={dueSoon} today={today} fmt={fmt} />
           <AskCas />
         </div>

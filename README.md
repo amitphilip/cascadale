@@ -30,8 +30,11 @@ Postgres for the data, Storage for the original statement files.
    npm run dev        # http://localhost:3000
    ```
 
-Add your Anthropic API key under **Settings → AI** (stored in the `settings`
-table), or set `ANTHROPIC_API_KEY` in `.env`.
+Cascadale makes no Anthropic API calls unless `CAS_ENABLED=true`: Claude does the planning
+through the MCP tools (see "Planning with Claude" below). To bring Cas, the old in-app agent,
+back (it makes the plan, redoes the short-term allocation, answers `ask_cas` and categorizes
+merchants with AI), set `CAS_ENABLED=true` and add your Anthropic API key under
+**Settings → AI** (stored in the `settings` table), or set `ANTHROPIC_API_KEY` in `.env`.
 
 To sync bank feeds through Akahu, deploy the edge function and give it its secrets.
 `AKAHU_CRON_SECRET` is any long random string; the hourly job sends it to the function.
@@ -120,7 +123,7 @@ One MCP server to connect (Streamable HTTP), plus an older one kept for existing
 | Connector     | URL                  | Purpose                                                       |
 | ------------- | -------------------- | ------------------------------------------------------------- |
 | **Cascadale** | `/api/mcp`           | Your data, Cas's notes and the actions, with Claude as Cas      |
-| Cas (older)   | `/api/mcp/cas`       | `ask_cas` runs a second agent; no longer needed                 |
+| Cas (older)   | `/api/mcp/cas`       | Notes only; `ask_cas` only with `CAS_ENABLED=true`              |
 
 - **Cascadale** has every tool: reads (`get_briefing`, `get_inbox`, `search_transactions`, …),
   Cas's memory (`get_notes`, `save_note`, `resolve_note`) and actions (`sync_bank_feeds`,
@@ -138,7 +141,33 @@ One MCP server to connect (Streamable HTTP), plus an older one kept for existing
 - Every response carries the household's currency and locale (NZD and en-NZ
   unless Settings says otherwise).
 
-Tools are defined once in [lib/cas/tools.ts](lib/cas/tools.ts). Both
+### Planning with Claude
+
+With `CAS_ENABLED` off (the default), Claude is the only AI doing the planning. Cascadale keeps
+the data, the rules and the deterministic figures ([lib/planning](lib/planning)); Claude makes
+the judgement calls through these tools, live in a chat or on a schedule:
+
+- **Context:** `get_system_guide` (members and their pays, accounts and their purposes, the
+  standing rules from decision notes, what everything means, the order of planning, the rules
+  for Claude; the prose part is editable with `update_system_guide`), `set_account_purpose`.
+- **Detection (read-only):** `detect_recurring_payments`, `plan_vs_actual` (amounts over 5%
+  apart, the wrong payer, standing rules broken, recurring payments with no plan item),
+  `cycle_position`, `credit_card_due`.
+- **The plan:** `upsert_plan_item` and `remove_plan_item` make pending changes, each with a
+  reason; `approve_change` / `reject_change` decide them, as the signed-in member (a shared
+  item takes either member, a personal one its owner). `list_pending_changes`,
+  `get_plan_history`, `get_change_log`.
+- **This pay:** `get_short_term`, `preview_short_term`, `set_short_term` (per member; a sync
+  that brings in a pay or a move marks it stale, and setting it clears that).
+- **Affordability:** `what_if` (read-only: a verdict, the options with their knock-on effects
+  and the working context) and `commit_purchase` (records it as a one-off; this pay's changes
+  apply straight away, plan changes wait for approval).
+
+Every plan and short-term change is logged in `plan_changes` with who asked, who made it
+(`claude` or `you`), the reason, and the values before and after.
+
+Tools are defined once in [lib/cas/tools.ts](lib/cas/tools.ts) and
+[lib/planning/tools.ts](lib/planning/tools.ts). Both
 servers sign in through Supabase Auth's OAuth 2.1 server, so clients act as you,
 and row level security still applies.
 

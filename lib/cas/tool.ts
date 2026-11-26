@@ -13,6 +13,8 @@ export type CasTool = {
   title: string
   description: string
   access: ToolAccess
+  /** runs the Cas agent (the Anthropic API): offered only while CAS_ENABLED is on */
+  requiresCas?: boolean
   input: z.ZodRawShape
   run: (args: never) => Promise<unknown>
 }
@@ -22,6 +24,7 @@ export function tool<S extends z.ZodRawShape = Record<string, never>>(t: {
   title: string
   description: string
   access: ToolAccess
+  requiresCas?: boolean
   input?: S
   run: (args: z.infer<z.ZodObject<S>>) => Promise<unknown>
 }): CasTool {

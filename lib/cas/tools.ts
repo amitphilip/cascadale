@@ -38,6 +38,9 @@ import {
 } from "@/lib/db/schema"
 import { makePlan } from "@/lib/cas/plan"
 import { currentShortTerm, refreshShortTerm, setShortTerm } from "@/lib/cas/short-term"
+import { resolveMember } from "@/lib/planning/data"
+import { logChange } from "@/lib/planning/plan-edit"
+import { PLANNING_TOOLS, SHORT_TERM_LINE, toLine } from "@/lib/planning/tools"
 import { expectedFrom } from "@/lib/income"
 import { getInbox } from "@/lib/inbox"
 import { loadMonthFigures } from "@/lib/month"
@@ -554,7 +557,7 @@ export const TOOLS: CasTool[] = [
     title: "Plan",
     access: "read",
     description:
-      "The household's plan, as the Plan page shows it: Cas's verdict on whether it's realistic (realistic, stretch, unrealistic) with the reason and each goal weighed, where each pay goes (allocations, each with an amount per week, fortnight, month or once, and the budget category or one-off it's for), and the to-do actions (doneAt set when ticked off). Also today's figures it stands on: projected income, bills and budgets, one-off needs, what's left over, and budgets set well below how a category runs. today.figures are monthly: income (projected), committed (each category's budget, else its projection), projectedSpend (what spending runs at), oneOffs (the one-offs' monthly need), leftOver (income − committed − oneOffs) and leftOverAsProjected (the same with spending as it runs). today.categories has each budget's period and percent of income; today.oneOffs has each one-off payment's figures (see one_off_payments for what they mean). today.paysDue lists the regular pays still due this month. plan is null before Cas has made one.",
+      "The household's plan, as the Plan page shows it: where each pay goes (allocations, each with an id, purpose, amount per week, fortnight, month or once, fromMemberId and fromAccountId it leaves, accountId it goes into, startDate, endDate, target, notes and matchKeys) and the to-do actions (doneAt set when ticked off). verdict and verdictNote are set on plans Cas made whole, null on one kept item by item. Also today's figures it stands on: projected income, bills and budgets, one-off needs, what's left over, and budgets set well below how a category runs. today.figures are monthly: income (projected), committed (each category's budget, else its projection), projectedSpend (what spending runs at), oneOffs (the one-offs' monthly need), leftOver (income − committed − oneOffs) and leftOverAsProjected (the same with spending as it runs). today.categories has each budget's period and percent of income; today.oneOffs has each one-off payment's figures (see one_off_payments for what they mean). today.paysDue lists the regular pays still due this month. plan is null before there's one. Change it with upsert_plan_item and remove_plan_item (pending changes a member approves); check it with plan_vs_actual.",
     run: async () => {
       const [current, inputs] = await Promise.all([getCurrentPlan(), loadPlanInputs()])
       return {
@@ -579,13 +582,19 @@ export const TOOLS: CasTool[] = [
     title: "This pay's moves",
     access: "read",
     description:
-      "The signed-in person's short-term allocation: the transfers for their pay this pay cycle (payday to the next), which Cas works out from the plan (the long-term allocation) and what has happened since payday, and looks at again whenever a sync brings in a pay or a move. lines are Cas's: one with a planItemId sets that plan move's amount for this pay (0 skips it); one without is a move the plan doesn't name, to a household account (toAccountId) or out of the household (match, the merchant key its transactions carry). by is cas, or you when the person set it. moves is every move from their pay this cycle as Home shows it: the plan's (id is the plan item) and the lines of their own (negative id), each with planned this pay, byNow, done so far and status, and note (Cas's reason). otherMoves are transfers out that nothing covers. accounts lists the ids to use. stale is true when a sync has brought something in since Cas last looked: redo_short_term looks again.",
-    run: async () => {
-      const current = await currentShortTerm()
-      if (!current) return { shortTerm: null, reason: "No plan yet, or no accounts are marked as yours." }
+      "A member's short-term allocation (the signed-in person's by default): the transfers for their pay this pay cycle (payday to the next), on top of the plan (the long-term allocation). lines: one with a planItemId overrides that plan move's amount for this pay (0 skips it); one without is a move the plan doesn't name, to a household account (toAccountId) or out of the household (match, the merchant key its transactions carry). by is claude (set through these tools), you (in the app) or cas (the old agent). moves is every move from their pay this cycle as Home shows it: the plan's (id is the plan item) and their own lines (negative id), each with planned this pay, byNow, done so far and status, and note (the line's reason). otherMoves are transfers out that nothing covers. accounts lists the ids to use. stale is true when a sync has brought in a pay or a move since the lines were last set: look again (cycle_position, preview_short_term) and set_short_term.",
+    input: {
+      memberId: z.string().trim().min(1).optional().describe("The household member, by id or name; defaults to the signed-in person"),
+    },
+    run: async ({ memberId }) => {
+      const member = await resolveMember(memberId)
+      const current = await currentShortTerm(member.id)
+      if (!current) return { member: member.name, shortTerm: null, reason: "No plan yet, or no accounts are marked as theirs." }
       const { basis, saved, allocation, stale } = current
       const mine = new Set(basis.args.mine)
       return {
+        member: member.name,
+        memberId: member.id,
         cycle: allocation.cycle,
         pay: allocation.pay,
         summary: saved?.summary ?? null,
@@ -605,6 +614,7 @@ export const TOOLS: CasTool[] = [
     name: "redo_short_term",
     title: "Have Cas redo this pay's moves",
     access: "action",
+    requiresCas: true,
     description:
       "Have Cas work out this pay's transfers again now, replacing its short-term allocation (lines the person set are kept unless overtaken). Pass instruction with what they want changed, in their words, e.g. 'the $200 on the 25th was a loan to my brother, not paydown'; for something that should hold beyond this pay, also save_note it as a decision. Takes up to a minute and uses the Anthropic API key saved in Settings.",
     input: {
@@ -622,25 +632,27 @@ export const TOOLS: CasTool[] = [
     title: "Set this pay's moves",
     access: "action",
     description:
-      "Set the transfers for the signed-in person's pay this pay cycle exactly as they say, replacing the whole list (pass every line to keep, from get_short_term). Each line is theirs, so Cas keeps it when it looks again. A line with planItemId sets that plan move's amount for this pay (0 skips it); without, it's a move the plan doesn't name: give toAccountId for a household account, or for money leaving the household toAccountId null and match (the merchant key from get_short_term's movesSoFar). fromAccountId must be one of theirs.",
+      "CHANGES REAL DATA (confirm with the user first). Set the transfers for a member's pay this pay cycle (the signed-in person's by default), replacing the whole list: pass every line to keep (from get_short_term). A line with planItemId overrides that plan move's amount for this pay (0 skips it); a free line is a move the plan doesn't name: toAccountId for a household account, or for money leaving the household toAccountId null and match (the merchant key from get_short_term's movesSoFar). fromAccountId must be one of theirs. Each line needs its reason, and the change a reason too; it's logged, and clears stale. Try lines first with preview_short_term.",
     input: {
-      lines: z
-        .array(
-          z.object({
-            planItemId: z.number().int().positive().nullable(),
-            title: z.string().trim().min(1).max(60),
-            fromAccountId: z.number().int().positive(),
-            toAccountId: z.number().int().positive().nullable(),
-            match: z.string().trim().min(1).nullable(),
-            amount: z.number().nonnegative(),
-            dueDate: isoDate.nullable().describe("When it should have gone by; null for straight away"),
-            reason: z.string().trim().min(1).max(200),
-          })
-        )
-        .describe("Every line for this pay"),
-      summary: z.string().trim().max(400).optional().describe("A new one-line summary; omit to keep Cas's"),
+      memberId: z.string().trim().min(1).optional().describe("The household member, by id or name; defaults to the signed-in person"),
+      lines: z.array(z.object(SHORT_TERM_LINE)).describe("Every line for this pay"),
+      summary: z.string().trim().max(400).optional().describe("A new one-line summary of this pay; omit to keep the current one"),
+      reason: z.string().trim().min(1, "Give a reason").max(500).describe("Why the lines change, in their words where they gave one"),
     },
-    run: async ({ lines, summary }) => setShortTerm(lines, summary),
+    run: async ({ memberId, lines, summary, reason }) => {
+      const member = await resolveMember(memberId)
+      const { before, shortTerm } = await setShortTerm(lines.map(toLine), summary, { memberId: member.id, by: "claude" })
+      const asked = await resolveMember()
+      await logChange({
+        entity: "short_term",
+        entityId: shortTerm.id,
+        action: "set",
+        who: { askedBy: asked.id, madeBy: "claude", reason },
+        before: before ? { lines: before.lines, summary: before.summary } : null,
+        after: { lines: shortTerm.lines, summary: shortTerm.summary },
+      })
+      return { member: member.name, ...shortTerm, stale: false }
+    },
   }),
 
   tool({
@@ -660,14 +672,14 @@ export const TOOLS: CasTool[] = [
     run: () => getCorrections(),
   }),
 
-  // ── Cas's memory ──
+  // ── Notes: what Claude and the household remember ──
 
   tool({
     name: "read_notes",
-    title: "Cas notes",
+    title: "Notes",
     access: "memory",
     description:
-      "Cas's notes: observations, your decisions and preferences, and open to-dos. Open ones only unless includeResolved.",
+      "The household's notes: observations, decisions and preferences, and open to-dos. A decision with subject and payerMemberId (or worded \"<name> pays <subject>\") is a standing rule about who pays for what, which plan items are checked against. Open ones only unless includeResolved.",
     input: { includeResolved: z.boolean().optional() },
     run: ({ includeResolved }) => notes(includeResolved),
   }),
@@ -677,20 +689,31 @@ export const TOOLS: CasTool[] = [
     title: "Save a note",
     access: "memory",
     description:
-      "Remember something for later conversations: an observation worth tracking, a decision or preference you stated, or a to-do (with a due date if it has one). Write a to-do as one short line, action — why — how. One fact per note; don't save what the data already shows. ",
+      "Remember something for later conversations: an observation worth tracking, a decision or preference the household stated, or a to-do (with a due date if it has one). Write a to-do as one short line, action — why — how. One fact per note; don't save what the data already shows. For a decision about who pays for something, give subject (e.g. \"school fees\") and payerMemberId: it becomes a standing rule the plan is checked against. Pass noteId to change an existing note instead.",
     input: {
+      noteId: z.number().int().positive().optional().describe("The note to change; omit to add one"),
       kind: z.enum(NOTE_KINDS),
       content: z.string().trim().min(1).max(1000),
       dueDate: isoDate.optional(),
+      subject: z.string().trim().min(2).max(80).optional().describe("For a decision about who pays: what it's about"),
+      payerMemberId: z.string().trim().min(1).optional().describe("For a decision about who pays: the member who pays, by id or name"),
     },
-    run: async ({ kind, content, dueDate }) =>
-      must<CasNote>(
-        (await getDb())
-          .from("cas_notes")
-          .insert({ kind, content, due_date: dueDate ?? null })
-          .select(COLUMNS.casNotes)
-          .single()
-      ),
+    run: async ({ noteId, kind, content, dueDate, subject, payerMemberId }) => {
+      const payer = payerMemberId ? (await resolveMember(payerMemberId)).id : null
+      const row = {
+        kind,
+        content,
+        due_date: dueDate ?? null,
+        ...((subject || payer) && { subject: subject ?? null, payer_member_id: payer }),
+      }
+      const db = await getDb()
+      if (noteId) {
+        const [note] = await must<CasNote[]>(db.from("cas_notes").update(row).eq("id", noteId).select(COLUMNS.casNotes))
+        if (!note) throw new Error("Note not found")
+        return note
+      }
+      return must<CasNote>(db.from("cas_notes").insert(row).select(COLUMNS.casNotes).single())
+    },
   }),
 
   tool({
@@ -719,7 +742,7 @@ export const TOOLS: CasTool[] = [
     title: "Sync bank feeds now",
     access: "action",
     description:
-      "Pull new transactions from Akahu into every linked account now (it also runs hourly), categorize them with your rules, then with AI. Returns how many were added and categorized.",
+      "Pull new transactions from Akahu into every linked account now (it also runs hourly) and categorize them with your rules (AI only while Cas is switched on). Returns how many were added and categorized. A sync that brings in a pay or a move marks that member's short-term allocation stale.",
     run: () => act(syncAkahu()),
   }),
 
@@ -741,7 +764,7 @@ export const TOOLS: CasTool[] = [
     title: "Move a transaction",
     access: "action",
     description:
-      "Move one transaction to another category (categoryId, or null for uncategorized) or to count towards a one-off payment (oneOffId; it must be in the one-off's account), as Home's budget tracking does. Only that transaction changes now; it's queued for Cas, and with rememberForMerchant it becomes the merchant's rule when Cas takes the queue in (update_cas, or each morning).",
+      "Move one transaction to another category (categoryId, or null for uncategorized) or to count towards a one-off payment (oneOffId; it must be in the one-off's account), as Home's budget tracking does. Only that transaction changes now; it's queued, and with rememberForMerchant it becomes the merchant's rule when the queue is taken in each morning.",
     input: {
       transactionId: z.number().int().positive(),
       categoryId: z.number().int().positive().nullable().optional(),
@@ -764,6 +787,7 @@ export const TOOLS: CasTool[] = [
     name: "update_cas",
     title: "Take in the corrections",
     access: "action",
+    requiresCas: true,
     description:
       "Take in every correction waiting in the queue now, rather than with the morning run: moves marked rememberForMerchant become merchant rules (moving that merchant's other auto-categorized and uncategorized transactions with them); the rest are recorded as one-time exceptions. Returns how many were processed, rules set and transactions recategorized.",
     run: () => act(updateCas()),
@@ -797,7 +821,7 @@ export const TOOLS: CasTool[] = [
     title: "Auto-categorize",
     access: "action",
     description:
-      "Categorize every uncategorized transaction: your rules first, then AI for the rest (uses the Anthropic API key saved in Settings).",
+      "Categorize every uncategorized transaction with your rules (and, only while Cas is switched on, AI for the rest). What's left is in get_review_queue to categorize with categorize_merchant.",
     run: () => act(runAutoCategorize()),
   }),
 
@@ -877,6 +901,7 @@ export const TOOLS: CasTool[] = [
     name: "make_plan",
     title: "Have Cas make the plan",
     access: "action",
+    requiresCas: true,
     description:
       "Have Cas make a new plan from today's income, budgets, bills and one-off payments and the goals given, replacing the current one on the Plan page (the old one is kept as history). Pass the goals in their words, with amounts and dates where they gave them; omit to keep the current plan's goals. Takes a minute or two and uses the Anthropic API key saved in Settings. Returns the verdict and the new plan.",
     input: {
@@ -978,4 +1003,5 @@ export const TOOLS: CasTool[] = [
     run: ({ transactionId }) => act(unlinkOneOffTransaction(transactionId)),
   }),
 
+  ...PLANNING_TOOLS,
 ]

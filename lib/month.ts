@@ -5,6 +5,7 @@ import { addDays, format, parseISO } from "date-fns"
 import { monthOf, weekOf } from "@/lib/budget-tracking"
 import { monthFigures } from "@/lib/month-figures"
 import { myAllocation, payCycle, type PayEvery } from "@/lib/my-allocation"
+import { casEnabled } from "@/lib/flags"
 import { cycleMoves, shortTermFingerprint } from "@/lib/short-term"
 import { getShortTerm } from "@/lib/short-term-data"
 import { planOneOff } from "@/lib/one-offs"
@@ -105,7 +106,7 @@ export type AllocationBasis = NonNullable<Awaited<ReturnType<typeof loadAllocati
 /**
  * What the plan and Cas's short-term allocation do with your pay this pay cycle, and how
  * it's going (see lib/my-allocation.ts), for Home's My view. Null without a plan or
- * accounts of yours. shortTerm.stale says Cas hasn't looked since a sync brought in
+ * accounts of yours. shortTerm.stale says no one has looked since a sync brought in
  * something new.
  */
 export async function loadMyAllocation(opts: {
@@ -124,6 +125,8 @@ export async function loadMyAllocation(opts: {
       madeBy: saved?.madeBy ?? null,
       updatedAt: saved?.updatedAt ?? null,
       stale: saved?.fingerprint !== basis.fingerprint,
+      /** Cas looks again by itself when it's on; otherwise Claude does, when asked */
+      autoRefresh: casEnabled(),
     },
   }
 }

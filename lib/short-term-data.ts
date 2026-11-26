@@ -14,7 +14,7 @@ export type ShortTerm = {
   lines: ShortTermLine[]
   summary: string | null
   fingerprint: string
-  madeBy: "cas" | "you"
+  madeBy: "cas" | "claude" | "you"
   updatedAt: string
 }
 
@@ -53,7 +53,7 @@ export async function saveShortTerm(row: {
   lines: ShortTermLine[]
   summary: string | null
   fingerprint: string
-  madeBy: "cas" | "you"
+  madeBy: "cas" | "claude" | "you"
 }) {
   return must<ShortTerm>(
     (await getDb())
