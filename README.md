@@ -30,11 +30,8 @@ Postgres for the data, Storage for the original statement files.
    npm run dev        # http://localhost:3000
    ```
 
-Cascadale makes no Anthropic API calls unless `CAS_ENABLED=true`: Claude does the planning
-through the MCP tools (see "Planning with Claude" below). To bring Cas, the old in-app agent,
-back (it makes the plan, redoes the short-term allocation, answers `ask_cas` and categorizes
-merchants with AI), set `CAS_ENABLED=true` and add your Anthropic API key under
-**Settings → AI** (stored in the `settings` table), or set `ANTHROPIC_API_KEY` in `.env`.
+Cascadale makes no AI calls of its own: Claude, connected through the MCP server, does the
+planning and the categorizing the rules don't cover (see "Planning with Claude" below).
 
 To sync bank feeds through Akahu, deploy the edge function and give it its secrets.
 `AKAHU_CRON_SECRET` is any long random string; the hourly job sends it to the function.
@@ -118,24 +115,16 @@ once Cascadale is added to the Home Screen.
 
 ## Use it from Claude (MCP)
 
-One MCP server to connect (Streamable HTTP), plus an older one kept for existing connectors:
+One MCP server to connect (Streamable HTTP), **Cascadale** at `/api/mcp`: your data, the
+household's notes and the actions, with Claude as Cas.
 
-| Connector     | URL                  | Purpose                                                       |
-| ------------- | -------------------- | ------------------------------------------------------------- |
-| **Cascadale** | `/api/mcp`           | Your data, Cas's notes and the actions, with Claude as Cas      |
-| Cas (older)   | `/api/mcp/cas`       | Notes only; `ask_cas` only with `CAS_ENABLED=true`              |
-
-- **Cascadale** has every tool: reads (`get_briefing`, `get_inbox`, `search_transactions`, …),
-  Cas's memory (`get_notes`, `save_note`, `resolve_note`) and actions (`sync_bank_feeds`,
+- It has every tool: reads (`get_briefing`, `get_inbox`, `search_transactions`, …), the
+  household's memory (`get_notes`, `save_note`, `resolve_note`) and actions (`sync_bank_feeds`,
   `categorize_merchant`, `set_category_budgets`, `set_account_interest_rate`, `save_one_off`, …).
-  Its instructions carry Cas's role and practice ([lib/cas/knowledge.ts](lib/cas/knowledge.ts)),
-  so Claude answers as Cas directly, which is quick enough for voice. Actions change your data,
-  and Claude is told to ask you first.
-- **Cas** (older) has `ask_cas`, which hands a question to a separate agent
-  ([lib/cas/agent.ts](lib/cas/agent.ts)) using the Anthropic key from Settings. Remove its
-  connector once Cascadale is connected.
-
-- **Data health:** `get_briefing`, `get_overview` and `ask_cas` return `data_health`: each account's last sync and Akahu refresh
+  Its instructions carry Cas's role and practice ([lib/persona.ts](lib/persona.ts)), so Claude
+  answers as Cas, which is quick enough for voice. Actions change your data, and Claude is told
+  to ask you first.
+- **Data health:** `get_briefing` and `get_overview` return `data_health`: each account's last sync and Akahu refresh
   time, drift between Cascadale's balance and the bank's, pending transactions
   (included in balances, flagged, and dropped once they post).
 - Every response carries the household's currency and locale (NZD and en-NZ
@@ -143,7 +132,7 @@ One MCP server to connect (Streamable HTTP), plus an older one kept for existing
 
 ### Planning with Claude
 
-With `CAS_ENABLED` off (the default), Claude is the only AI doing the planning. Cascadale keeps
+Claude does the planning. Cascadale keeps
 the data, the rules and the deterministic figures ([lib/planning](lib/planning)); Claude makes
 the judgement calls through these tools, live in a chat or on a schedule:
 
@@ -166,10 +155,9 @@ the judgement calls through these tools, live in a chat or on a schedule:
 Every plan and short-term change is logged in `plan_changes` with who asked, who made it
 (`claude` or `you`), the reason, and the values before and after.
 
-Tools are defined once in [lib/cas/tools.ts](lib/cas/tools.ts) and
-[lib/planning/tools.ts](lib/planning/tools.ts). Both
-servers sign in through Supabase Auth's OAuth 2.1 server, so clients act as you,
-and row level security still applies.
+Tools are defined once in [lib/tools.ts](lib/tools.ts) and
+[lib/planning/tools.ts](lib/planning/tools.ts). The server signs in through Supabase Auth's
+OAuth 2.1 server, so clients act as you, and row level security still applies.
 
 1. `npm run db:push` to add the `cas_notes` table.
 2. In the Supabase dashboard, open **Authentication → OAuth Server**: enable it,
@@ -177,11 +165,8 @@ and row level security still applies.
    `/oauth/consent` (local `supabase/config.toml` already does this). Also set
    **Authentication → URL Configuration → Site URL** to where the app is deployed.
 3. Deploy the app somewhere public over HTTPS; claude.ai can't reach `localhost`.
-   `ask_cas` can take a few minutes, so allow long requests (its route sets
-   `maxDuration = 300`).
-4. In claude.ai, go to **Settings → Connectors → Add custom connector** twice:
-   Cascadale at `https://<your app>/api/mcp` and Cas at
-   `https://<your app>/api/mcp/cas`. Sign in and allow each.
+4. In claude.ai, go to **Settings → Connectors → Add custom connector** with
+   `https://<your app>/api/mcp`, then sign in and allow it.
 
 ## Development
 

@@ -29,7 +29,7 @@ vi.mock("@/lib/queries", () => ({
 vi.mock("@/lib/plan-data", () => ({
   getCurrentPlan: async () => ({ plan: { id: 5 }, allocations: [], actions: [] }),
 }))
-vi.mock("@/lib/cas/short-term", () => ({ setShortTerm }))
+vi.mock("@/lib/planning/short-term", () => ({ setShortTerm }))
 vi.mock("@/lib/planning/data", () => {
   const accounts = [
     { id: 1, name: "Check Account - Amit", type: "checking", balance: 2567.36, holderId: "amit-id", owner: "Amit", purpose: null, spendable: null, archived: false },

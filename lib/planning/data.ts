@@ -22,7 +22,7 @@ import type { BufferPot, CycleModel, Goal } from "@/lib/planning/what-if"
 import { getAccountHolders, getAccountsWithBalances, getCategories, getMonthMoves, getOneOffs, getPeople } from "@/lib/queries"
 import { cleanLines, type ShortTermLine } from "@/lib/short-term"
 import { getShortTerm } from "@/lib/short-term-data"
-import { knownIds, loadBasis } from "@/lib/cas/short-term"
+import { knownIds, loadBasis } from "@/lib/planning/short-term"
 import { todayLocal } from "@/supabase/functions/_shared/akahu"
 import { pairTransfers } from "@/supabase/functions/_shared/transfers"
 

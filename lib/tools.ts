@@ -17,13 +17,12 @@ import {
   setTransactionCategory,
   syncAkahu,
   unlinkOneOffTransaction,
-  updateCas,
   type ActionResult,
 } from "@/app/actions"
 import { getAkahuOverview, type AkahuOverview } from "@/lib/akahu"
 import { budgetPeriod, freshCategories } from "@/lib/budget-percent"
 import { monthOf, trackBudgets, weekOf, type Range } from "@/lib/budget-tracking"
-import { tool, isoDate, type CasTool } from "@/lib/cas/tool"
+import { tool, isoDate, type CascadaleTool } from "@/lib/tool"
 import { getCorrections } from "@/lib/cas-queue"
 import { loadDataHealth } from "@/lib/data-health"
 import { COLUMNS, getDb, getUserId, must } from "@/lib/db"
@@ -36,8 +35,7 @@ import {
   type CasNote,
   type OneOff,
 } from "@/lib/db/schema"
-import { makePlan } from "@/lib/cas/plan"
-import { currentShortTerm, refreshShortTerm, setShortTerm } from "@/lib/cas/short-term"
+import { currentShortTerm, setShortTerm } from "@/lib/planning/short-term"
 import { resolveMember } from "@/lib/planning/data"
 import { logChange } from "@/lib/planning/plan-edit"
 import { PLANNING_TOOLS, SHORT_TERM_LINE, toLine } from "@/lib/planning/tools"
@@ -75,12 +73,10 @@ import {
 } from "@/lib/queries"
 import { todayLocal } from "@/supabase/functions/_shared/akahu"
 
-export type { CasTool }
+export type { CascadaleTool }
 
-// Every tool over your finances, defined once. Cascadale's MCP server (lib/mcp.ts) offers the
-// read and action tools to clients such as claude.ai; the Cas agent (lib/cas/agent.ts)
-// gets the read and memory tools, so it never changes your finances itself: changes go
-// through the MCP client, which asks you first.
+// Every tool over your finances, defined once. Cascadale's MCP server (lib/mcp.ts) offers
+// them to clients such as claude.ai, which ask you before running an action tool.
 
 const yearMonth = z.string().regex(/^\d{4}-\d{2}$/, "Use yyyy-MM")
 const month = yearMonth
@@ -272,7 +268,7 @@ async function budgetProgress() {
   }
 }
 
-export const TOOLS: CasTool[] = [
+export const TOOLS: CascadaleTool[] = [
   tool({
     name: "get_briefing",
     title: "Briefing",
@@ -611,23 +607,6 @@ export const TOOLS: CasTool[] = [
   }),
 
   tool({
-    name: "redo_short_term",
-    title: "Have Cas redo this pay's moves",
-    access: "action",
-    requiresCas: true,
-    description:
-      "Have Cas work out this pay's transfers again now, replacing its short-term allocation (lines the person set are kept unless overtaken). Pass instruction with what they want changed, in their words, e.g. 'the $200 on the 25th was a loan to my brother, not paydown'; for something that should hold beyond this pay, also save_note it as a decision. Takes up to a minute and uses the Anthropic API key saved in Settings.",
-    input: {
-      instruction: z.string().trim().max(2000).optional().describe("What they want Cas to take into account, in their words"),
-    },
-    run: async ({ instruction }) => {
-      const out = await refreshShortTerm({ force: true, instruction: instruction ?? null })
-      if (!out) throw new Error("Cas can't allocate this pay: there's no plan, no accounts marked as yours, or no Anthropic API key in Settings.")
-      return out.shortTerm
-    },
-  }),
-
-  tool({
     name: "set_short_term",
     title: "Set this pay's moves",
     access: "action",
@@ -675,7 +654,7 @@ export const TOOLS: CasTool[] = [
   // ── Notes: what Claude and the household remember ──
 
   tool({
-    name: "read_notes",
+    name: "get_notes",
     title: "Notes",
     access: "memory",
     description:
@@ -742,7 +721,7 @@ export const TOOLS: CasTool[] = [
     title: "Sync bank feeds now",
     access: "action",
     description:
-      "Pull new transactions from Akahu into every linked account now (it also runs hourly) and categorize them with your rules (AI only while Cas is switched on). Returns how many were added and categorized. A sync that brings in a pay or a move marks that member's short-term allocation stale.",
+      "Pull new transactions from Akahu into every linked account now (it also runs hourly) and categorize them with your rules. Returns how many were added and categorized. A sync that brings in a pay or a move marks that member's short-term allocation stale.",
     run: () => act(syncAkahu()),
   }),
 
@@ -784,16 +763,6 @@ export const TOOLS: CasTool[] = [
   }),
 
   tool({
-    name: "update_cas",
-    title: "Take in the corrections",
-    access: "action",
-    requiresCas: true,
-    description:
-      "Take in every correction waiting in the queue now, rather than with the morning run: moves marked rememberForMerchant become merchant rules (moving that merchant's other auto-categorized and uncategorized transactions with them); the rest are recorded as one-time exceptions. Returns how many were processed, rules set and transactions recategorized.",
-    run: () => act(updateCas()),
-  }),
-
-  tool({
     name: "categorize_merchant",
     title: "Categorize a merchant",
     access: "action",
@@ -821,7 +790,7 @@ export const TOOLS: CasTool[] = [
     title: "Auto-categorize",
     access: "action",
     description:
-      "Categorize every uncategorized transaction with your rules (and, only while Cas is switched on, AI for the rest). What's left is in get_review_queue to categorize with categorize_merchant.",
+      "Categorize every uncategorized transaction with your merchant rules. What's left is in get_review_queue to categorize with categorize_merchant.",
     run: () => act(runAutoCategorize()),
   }),
 
@@ -895,23 +864,6 @@ export const TOOLS: CasTool[] = [
     description: "Delete an asset by its assetId from get_net_worth, taking its value out of net worth.",
     input: { assetId: z.number().int().positive() },
     run: ({ assetId }) => act(deleteAsset(assetId)),
-  }),
-
-  tool({
-    name: "make_plan",
-    title: "Have Cas make the plan",
-    access: "action",
-    requiresCas: true,
-    description:
-      "Have Cas make a new plan from today's income, budgets, bills and one-off payments and the goals given, replacing the current one on the Plan page (the old one is kept as history). Pass the goals in their words, with amounts and dates where they gave them; omit to keep the current plan's goals. Takes a minute or two and uses the Anthropic API key saved in Settings. Returns the verdict and the new plan.",
-    input: {
-      goals: z.string().trim().max(2000).optional().describe("What the plan should aim for; omit to keep the current goals"),
-    },
-    run: async ({ goals }) => {
-      const keep = goals === undefined ? ((await getCurrentPlan())?.plan.goals ?? null) : goals || null
-      const { planId, plan } = await makePlan(keep, "mcp")
-      return { planId, ...plan }
-    },
   }),
 
   tool({

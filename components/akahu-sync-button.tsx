@@ -22,7 +22,6 @@ export function AkahuSyncButton({ disabled }: { disabled?: boolean }) {
               : "") +
             `Synced ${r.inserted} new transactions` +
             (r.categorized ? `. ${r.categorized} matched by rules` : "") +
-            (r.aiCategorized ? `, ${r.aiCategorized} categorized by AI` : "") +
             ".",
           onSuccess: (r) => {
             if (r.failedAccounts) {
@@ -30,9 +29,6 @@ export function AkahuSyncButton({ disabled }: { disabled?: boolean }) {
                 `${r.failedAccounts} account${r.failedAccounts === 1 ? "" : "s"} didn't sync`,
                 { description: "See the error under each account in Settings, Import & sync." }
               )
-            }
-            if (r.aiError) {
-              toast.warning("AI categorization didn't run", { description: r.aiError })
             }
           },
         })

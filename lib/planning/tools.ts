@@ -2,7 +2,7 @@ import "server-only"
 
 import { z } from "zod"
 
-import { CHANGES_DATA, isoDate, tool, type CasTool } from "@/lib/cas/tool"
+import { CHANGES_DATA, isoDate, tool, type CascadaleTool } from "@/lib/tool"
 import { getDb, must } from "@/lib/db"
 import { buildSystemGuide, saveGuideText } from "@/lib/planning/guide"
 import {
@@ -72,7 +72,7 @@ export function toLine(l: {
   return { ...l, match: l.match ?? null, dueDate: l.dueDate ?? null }
 }
 
-export const PLANNING_TOOLS: CasTool[] = [
+export const PLANNING_TOOLS: CascadaleTool[] = [
   // ── Context ──
   tool({
     name: "get_system_guide",

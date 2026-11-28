@@ -16,9 +16,6 @@ export function AutoCategorizeButton({ uncategorized }: { uncategorized: number 
           success: (r) => {
             const parts = []
             if (r.byRules) parts.push(`${r.byRules} matched by rules`)
-            if (r.merchantsAsked) {
-              parts.push(`${r.byAi} categorized by AI from ${r.merchantsAsked} merchants`)
-            }
             if (r.remaining) parts.push(`${r.remaining} still uncategorized`)
             return parts.length ? parts.join(", ") : "Nothing to categorize"
           },

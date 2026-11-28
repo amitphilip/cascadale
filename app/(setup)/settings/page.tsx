@@ -3,7 +3,6 @@ import { headers } from "next/headers"
 import Link from "next/link"
 
 import { AkahuForm } from "./akahu-form"
-import { ApiKeyForm } from "./api-key-form"
 import { CopyField } from "./copy-field"
 import { InstallApp } from "./install-card"
 import { PushToggle } from "./push-card"
@@ -20,8 +19,7 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { getAkahuStatus } from "@/lib/akahu"
-import { MCP_RESOURCES } from "@/lib/mcp"
-import { getApiKeyStatus } from "@/lib/anthropic"
+import { MCP_RESOURCE } from "@/lib/mcp"
 import { getDb, getUserId } from "@/lib/db"
 import { getMyPrefs, getPeople, getSettings } from "@/lib/queries"
 
@@ -29,9 +27,8 @@ export const metadata: Metadata = { title: "Settings" }
 
 export default async function SettingsPage() {
   const userId = await getUserId()
-  const [current, apiKey, akahu, prefs, people, { data: auth }] = await Promise.all([
+  const [current, akahu, prefs, people, { data: auth }] = await Promise.all([
     getSettings(),
-    getApiKeyStatus(),
     getAkahuStatus(),
     getMyPrefs(userId),
     getPeople(),
@@ -92,18 +89,6 @@ export default async function SettingsPage() {
       </Card>
       <Card>
         <CardHeader>
-          <CardTitle>AI</CardTitle>
-          <CardDescription>
-            Transaction descriptions and summaries are sent to Anthropic when
-            you use AI features.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <ApiKeyForm status={apiKey} />
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
           <CardTitle>Bank feeds</CardTitle>
           <CardDescription>
             Sync transactions from your New Zealand bank accounts through an Akahu
@@ -116,27 +101,15 @@ export default async function SettingsPage() {
       </Card>
       <Card>
         <CardHeader>
-          <CardTitle>Claude connectors</CardTitle>
+          <CardTitle>Claude connector</CardTitle>
           <CardDescription>
             Talk to Cas from claude.ai or the Claude app. In Claude, go to Settings → Connectors →
             Add custom connector, paste this address, then sign in with your Cascadale account.
           </CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-4">
-          <div className="grid gap-1.5">
-            <p className="text-sm font-medium">Cascadale</p>
-            <CopyField value={`${origin}${MCP_RESOURCES.tools}`} label="Cascadale connector address" />
-            <p className="text-xs text-muted-foreground">
-              Your money, Cas&rsquo;s notes and the actions. This is the one to add.
-            </p>
-          </div>
-          <div className="grid gap-1.5">
-            <p className="text-sm font-medium">Cas (older)</p>
-            <CopyField value={`${origin}${MCP_RESOURCES.cas}`} label="Cas connector address" />
-            <p className="text-xs text-muted-foreground">
-              Kept for connectors already set up. Cascadale does everything it does, faster.
-            </p>
-          </div>
+        <CardContent className="grid gap-1.5">
+          <CopyField value={`${origin}${MCP_RESOURCE}`} label="Cascadale connector address" />
+          <p className="text-xs text-muted-foreground">Your money, the household&rsquo;s notes and the actions.</p>
         </CardContent>
       </Card>
       <Card>

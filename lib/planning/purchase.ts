@@ -1,7 +1,7 @@
 import "server-only"
 
 import { getDb, must } from "@/lib/db"
-import { setShortTerm } from "@/lib/cas/short-term"
+import { setShortTerm } from "@/lib/planning/short-term"
 import {
   cycleModel,
   loadCardPositions,

@@ -32,7 +32,6 @@ import {
   runAkahuSync,
   setAkahuIgnored,
 } from "@/lib/akahu"
-import { API_KEY_SETTING } from "@/lib/anthropic"
 import { categorizeInternalTransfers } from "@/lib/transfers"
 import { syncUncategorizedTodos } from "@/lib/uncategorized-todos"
 import {
@@ -305,7 +304,7 @@ export async function saveTransaction(form: FormData) {
   })
 }
 
-/** A category you chose by hand: never overwritten by rules or the LLM. */
+/** A category you chose by hand: never overwritten by rules. */
 function manualCategory(categoryId: number | null) {
   return {
     category_id: categoryId,
@@ -560,7 +559,7 @@ export async function resetRules() {
   })
 }
 
-/** Rules first, then the LLM for whatever is left. */
+/** Categorize what's uncategorized with the merchant rules. */
 export async function runAutoCategorize() {
   return run(async () => {
     const result = await autoCategorize()
@@ -759,22 +758,9 @@ export async function commitImport(input: {
       categorized,
     }
     if (result.inserted === 0) await deleteStored(input.storedName)
-    // Transfers between your accounts first, so the LLM doesn't read them as income or spending.
+    // Transfers between your accounts, so they aren't read as income or spending.
     const transfers = result.inserted > 0 ? await categorizeInternalTransfers(await getDb()) : null
-
-    // Rules already ran above; ask the LLM only about what's still left.
-    // Best effort: the import itself has succeeded either way.
-    let aiCategorized = 0
-    let aiError: string | null = null
-    if (result.inserted > result.categorized + (transfers?.categorized ?? 0)) {
-      try {
-        aiCategorized = (await autoCategorize()).byAi
-      } catch (err) {
-        aiError =
-          err instanceof Error ? err.message : "Auto-categorization failed"
-      }
-    }
-    return { ...result, transfersMatched: transfers?.categorized ?? 0, aiCategorized, aiError }
+    return { ...result, transfersMatched: transfers?.categorized ?? 0 }
   })
 }
 
@@ -873,8 +859,8 @@ export async function linkAkahuAccount(akahuId: string, target: "new" | number |
 
 /**
  * Pull new transactions into every linked account, adding accounts for Akahu ones that
- * have none (the akahu-sync edge function does this hourly too), then let the LLM
- * categorize what the rules didn't.
+ * have none (the akahu-sync edge function does this hourly too), and pair the transfers
+ * between them.
  */
 export async function syncAkahu() {
   return run(async () => {
@@ -883,24 +869,12 @@ export async function syncAkahu() {
     // The edge function pairs transfers too; this also covers accounts imported by hand.
     const transfers = await categorizeInternalTransfers(db)
 
-    // Best effort, as with statement imports: the sync has succeeded either way.
-    let aiCategorized = 0
-    let aiError: string | null = null
-    if (inserted > categorized + transfers.categorized) {
-      try {
-        aiCategorized = (await autoCategorize()).byAi
-      } catch (err) {
-        aiError = err instanceof Error ? err.message : "Auto-categorization failed"
-      }
-    }
-    // The edge function raised to-dos before AI ran; settle them on what's left.
+    // The edge function raised to-dos before transfers were paired; settle them on what's left.
     await refreshTodos(db)
     return {
       inserted,
       categorized,
       transfersMatched: transfers.categorized,
-      aiCategorized,
-      aiError,
       failedAccounts: failed.length,
       addedAccounts: created + matched,
     }
@@ -1094,34 +1068,6 @@ export async function saveSettings(form: FormData) {
       (await getDb())
         .from("settings")
         .upsert(Object.entries(data).map(([key, value]) => ({ key, value })))
-    )
-    return {}
-  })
-}
-
-const apiKeySchema = z.object({
-  apiKey: z
-    .string()
-    .trim()
-    .startsWith("sk-ant-", "That doesn't look like an Anthropic API key"),
-})
-
-export async function saveApiKey(form: FormData) {
-  return run(async () => {
-    const { apiKey } = apiKeySchema.parse(fields(form))
-    await must(
-      (await getDb())
-        .from("settings")
-        .upsert({ key: API_KEY_SETTING, value: apiKey })
-    )
-    return {}
-  })
-}
-
-export async function removeApiKey() {
-  return run(async () => {
-    await must(
-      (await getDb()).from("settings").delete().eq("key", API_KEY_SETTING)
     )
     return {}
   })

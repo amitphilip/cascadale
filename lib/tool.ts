@@ -1,20 +1,17 @@
 import { z } from "zod"
 
 /**
- * - read: only reads; on Cascadale's MCP server and for the agent
- * - memory: reads or writes Cas's own notes; for the agent (the Cas MCP server
- *   shows them too)
- * - action: changes your data; only on Cascadale's MCP server, so you confirm each one
+ * - read: only reads
+ * - memory: reads or writes the household's notes (no confirmation needed)
+ * - action: changes your data, so the client confirms each one with you
  */
 export type ToolAccess = "read" | "memory" | "action"
 
-export type CasTool = {
+export type CascadaleTool = {
   name: string
   title: string
   description: string
   access: ToolAccess
-  /** runs the Cas agent (the Anthropic API): offered only while CAS_ENABLED is on */
-  requiresCas?: boolean
   input: z.ZodRawShape
   run: (args: never) => Promise<unknown>
 }
@@ -24,10 +21,9 @@ export function tool<S extends z.ZodRawShape = Record<string, never>>(t: {
   title: string
   description: string
   access: ToolAccess
-  requiresCas?: boolean
   input?: S
   run: (args: z.infer<z.ZodObject<S>>) => Promise<unknown>
-}): CasTool {
+}): CascadaleTool {
   return { ...t, input: t.input ?? {} }
 }
 

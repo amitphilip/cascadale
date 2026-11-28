@@ -9,7 +9,6 @@ import type { MyAllocationView } from "@/lib/month"
 import type { AllocationStatus, TrackedAllocation } from "@/lib/my-allocation"
 import { cn } from "@/lib/utils"
 
-import { ShortTermRefresh } from "./short-term-refresh"
 
 /** Cards hold to a phone's width with less padding. */
 const TIGHT = "max-sm:[--card-spacing:--spacing(5)]"
@@ -77,7 +76,7 @@ export function MyAllocationCard({
               href="/plan"
               className="font-medium text-foreground underline-offset-4 hover:underline"
             >
-              Ask Cas to redo the plan
+              Go over the plan with Cas
             </Link>{" "}
             and each allocation from your pay shows here, with how it&rsquo;s
             going.
@@ -127,14 +126,11 @@ export function MyAllocationCard({
                 {a.shortTerm.summary}
               </p>
             )}
-            {a.shortTerm.stale &&
-              (a.shortTerm.autoRefresh ? (
-                <ShortTermRefresh />
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  A pay or a move has come in since this was set. Ask Claude to look at it again.
-                </p>
-              ))}
+            {a.shortTerm.stale && (
+              <p className="text-xs text-muted-foreground">
+                A pay or a move has come in since this was set. Ask Claude to look at it again.
+              </p>
+            )}
             <a
               href={TALK_TO_CAS}
               target="_blank"

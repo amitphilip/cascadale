@@ -5,7 +5,6 @@ import { addDays, format, parseISO } from "date-fns"
 import { monthOf, weekOf } from "@/lib/budget-tracking"
 import { monthFigures } from "@/lib/month-figures"
 import { myAllocation, payCycle, type PayEvery } from "@/lib/my-allocation"
-import { casEnabled } from "@/lib/flags"
 import { cycleMoves, shortTermFingerprint } from "@/lib/short-term"
 import { getShortTerm } from "@/lib/short-term-data"
 import { planOneOff } from "@/lib/one-offs"
@@ -125,8 +124,6 @@ export async function loadMyAllocation(opts: {
       madeBy: saved?.madeBy ?? null,
       updatedAt: saved?.updatedAt ?? null,
       stale: saved?.fingerprint !== basis.fingerprint,
-      /** Cas looks again by itself when it's on; otherwise Claude does, when asked */
-      autoRefresh: casEnabled(),
     },
   }
 }

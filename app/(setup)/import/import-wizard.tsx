@@ -267,14 +267,8 @@ export function ImportWizard({
                             : "") +
                           (r.duplicates ? `, ${r.duplicates} already existed` : "") +
                           (r.categorized ? `. ${r.categorized} matched by rules` : "") +
-                          (r.aiCategorized ? `, ${r.aiCategorized} categorized by AI` : "") +
                           ".",
                         onSuccess: (r) => {
-                          if (r.aiError) {
-                            toast.warning("AI categorization didn't run", {
-                              description: r.aiError,
-                            })
-                          }
                           reset()
                           onImported?.(r)
                         },

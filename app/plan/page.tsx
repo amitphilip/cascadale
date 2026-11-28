@@ -8,7 +8,7 @@ import {
   XIcon,
 } from "@phosphor-icons/react/ssr"
 
-import { ActionList, AskCasButton } from "./plan-controls"
+import { ActionList } from "./plan-controls"
 import { PageHeader } from "@/components/page-header"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -21,7 +21,6 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import type { PlanEvery, PlanPurpose, PlanVerdict } from "@/lib/db/schema"
-import { casEnabled } from "@/lib/flags"
 import { formatDate, formatMoney, type MoneyFormat } from "@/lib/format"
 import { getCurrentPlan, type CurrentPlan } from "@/lib/plan-data"
 import { loadPlanInputs, type PlanInputs } from "@/lib/plan-inputs"
@@ -29,9 +28,6 @@ import { getSettings } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 
 export const metadata: Metadata = { title: "Plan" }
-
-// Asking Cas for a plan is a server action on this page that can take a minute or two.
-export const maxDuration = 300
 
 const VERDICT: Record<PlanVerdict, { label: string; variant: "positive" | "warning" | "destructive"; bar: string }> = {
   realistic: { label: "Realistic", variant: "positive", bar: "bg-positive" },
@@ -87,7 +83,6 @@ export default async function PlanPage() {
   }
 
   const stale = current ? movedSince(current, inputs) : false
-  const cas = casEnabled()
   const madeOn = current ? formatDate(current.plan.createdAt.slice(0, 10), fmt.locale) : null
   const maker = current?.plan.madeBy === "claude" ? "Claude" : current?.plan.madeBy === "you" ? "you" : "Cas"
 
@@ -97,26 +92,20 @@ export default async function PlanPage() {
         title="Plan"
         description={
           current
-            ? `Started by ${maker} on ${madeOn} from your income, budgets, bills and one-off payments.${cas ? "" : " Claude keeps it up to date through Cascadale's tools, and changes wait for your approval."}`
-            : cas
-              ? "Cas plans from your income, budgets, bills and one-off payments, and says whether your goals fit."
-              : "Claude plans from your income, budgets, bills and one-off payments, through Cascadale's tools."
+            ? `Started by ${maker} on ${madeOn} from your income, budgets, bills and one-off payments. Claude keeps it up to date through Cascadale's tools, and changes wait for your approval.`
+            : "Claude plans from your income, budgets, bills and one-off payments, through Cascadale's tools."
         }
       >
-        {cas ? (
-          <AskCasButton goals={current?.plan.goals ?? null} hasPlan={!!current} />
-        ) : (
-          <Button
-            className="max-sm:w-full"
-            nativeButton={false}
-            render={<a href={PLAN_WITH_CLAUDE} target="_blank" rel="noopener noreferrer" />}
-          >
-            {current ? "Go over the plan with Claude" : "Plan with Claude"}
-          </Button>
-        )}
+        <Button
+          className="max-sm:w-full"
+          nativeButton={false}
+          render={<a href={PLAN_WITH_CLAUDE} target="_blank" rel="noopener noreferrer" />}
+        >
+          {current ? "Go over the plan with Claude" : "Plan with Claude"}
+        </Button>
       </PageHeader>
 
-      {current?.plan.verdict && <VerdictCard current={current} stale={stale} cas={cas} />}
+      {current?.plan.verdict && <VerdictCard current={current} stale={stale} />}
 
       <FiguresCard inputs={inputs} fmt={fmt} />
 
@@ -176,7 +165,7 @@ function movedSince(current: CurrentPlan, inputs: PlanInputs) {
   return moved(was.income, now.income) || moved(was.committed, now.committed) || moved(was.oneOffs, now.oneOffs)
 }
 
-function VerdictCard({ current, stale, cas }: { current: CurrentPlan; stale: boolean; cas: boolean }) {
+function VerdictCard({ current, stale }: { current: CurrentPlan; stale: boolean }) {
   const { plan } = current
   const v = VERDICT[plan.verdict!]
   return (
@@ -216,7 +205,7 @@ function VerdictCard({ current, stale, cas }: { current: CurrentPlan; stale: boo
           <p className="flex items-start gap-2 rounded-xl bg-warning/8 p-3 text-sm ring-1 ring-warning/20">
             <WarningIcon weight="fill" className="mt-0.5 shrink-0 text-warning" />
             Your income, budgets or one-offs have moved since this plan was made.{" "}
-            {cas ? "Ask Cas to redo it." : "Ask Claude to go over it."}
+            Ask Claude to go over it.
           </p>
         )}
       </CardContent>
